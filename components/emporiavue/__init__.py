@@ -34,6 +34,7 @@ CONF_RESET_HOLD_TIME = "reset_hold_time"
 CONF_RESET_RELEASE_TIME = "reset_release_time"
 CONF_CLOCK_DELAY = "clock_delay"
 CONF_RETRY_COUNT = "retry_count"
+CONF_INIT_PINS_ON_BOOT = "init_pins_on_boot"
 
 CONFIG_SCHEMA = cv.Schema(
     {
@@ -46,6 +47,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_RESET_RELEASE_TIME, default="50ms"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_CLOCK_DELAY, default=2): cv.int_range(min=0, max=50),
         cv.Optional(CONF_RETRY_COUNT, default=40): cv.int_range(min=1, max=255),
+        cv.Optional(CONF_INIT_PINS_ON_BOOT, default=False): cv.boolean,
         cv.Optional(
             CONF_SWD_IDCODE,
         ): text_sensor.text_sensor_schema(
@@ -98,6 +100,7 @@ async def to_code(config):
     cg.add(var.set_reset_release_time(config[CONF_RESET_RELEASE_TIME]))
     cg.add(var.set_clock_delay_us(config[CONF_CLOCK_DELAY]))
     cg.add(var.set_retry_count(config[CONF_RETRY_COUNT]))
+    cg.add(var.set_init_pins_on_boot(config[CONF_INIT_PINS_ON_BOOT]))
 
     if swd_idcode_config := config.get(CONF_SWD_IDCODE):
         sens = await text_sensor.new_text_sensor(swd_idcode_config)

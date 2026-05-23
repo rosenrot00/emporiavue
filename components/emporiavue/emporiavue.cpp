@@ -10,17 +10,9 @@ namespace emporiavue {
 static const char *const TAG = "emporiavue";
 
 void EmporiaVueComponent::setup() {
-  if (this->swclk_pin_ != nullptr) {
-    this->swclk_pin_->setup();
-    this->swclk_pin_->digital_write(true);
-  }
-  if (this->swdio_pin_ != nullptr) {
-    this->swdio_pin_->setup();
-    this->swdio_pin_->pin_mode(gpio::FLAG_INPUT | gpio::FLAG_PULLUP);
-  }
-  if (this->reset_pin_ != nullptr) {
-    this->reset_pin_->setup();
-    this->reset_pin_->digital_write(true);
+  if (this->init_pins_on_boot_) {
+    this->prepare_pins_();
+    this->release_pins_();
   }
 }
 
@@ -33,6 +25,7 @@ void EmporiaVueComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Reset hold time: %" PRIu32 " ms", this->reset_hold_time_ms_);
   ESP_LOGCONFIG(TAG, "  Reset release time: %" PRIu32 " ms", this->reset_release_time_ms_);
   ESP_LOGCONFIG(TAG, "  Clock delay: %u us", this->clock_delay_us_);
+  ESP_LOGCONFIG(TAG, "  Init pins on boot: %s", YESNO(this->init_pins_on_boot_));
   LOG_TEXT_SENSOR("  ", "SWD IDCODE", this->swd_idcode_sensor_);
   LOG_TEXT_SENSOR("  ", "DSU DID", this->dsu_did_sensor_);
   LOG_TEXT_SENSOR("  ", "Status", this->status_sensor_);
@@ -50,11 +43,12 @@ void EmporiaVueComponent::read_samd() {
     return;
   }
 
+  this->prepare_pins_();
   this->reset_target_();
 
   uint32_t swd_idcode = 0;
   if (!this->swd_initialize_(&swd_idcode)) {
-    this->idle_pins_();
+    this->release_pins_();
     this->publish_status_("failed: " + this->last_error_);
     ESP_LOGW(TAG, "SAMD09 read check failed: %s", this->last_error_.c_str());
     return;
@@ -64,14 +58,14 @@ void EmporiaVueComponent::read_samd() {
   }
 
   if (!this->power_up_debug_()) {
-    this->idle_pins_();
+    this->release_pins_();
     this->publish_status_("failed: " + this->last_error_);
     ESP_LOGW(TAG, "SAMD09 read check failed: %s", this->last_error_.c_str());
     return;
   }
 
   if (!this->verify_mem_ap_()) {
-    this->idle_pins_();
+    this->release_pins_();
     this->publish_status_("failed: " + this->last_error_);
     ESP_LOGW(TAG, "SAMD09 read check failed: %s", this->last_error_.c_str());
     return;
@@ -79,7 +73,7 @@ void EmporiaVueComponent::read_samd() {
 
   uint8_t dsu_statusb = 0;
   if (!this->mem_read8_(DSU_STATUSB, &dsu_statusb)) {
-    this->idle_pins_();
+    this->release_pins_();
     this->publish_status_("failed: " + this->last_error_);
     ESP_LOGW(TAG, "SAMD09 read check failed: %s", this->last_error_.c_str());
     return;
@@ -116,7 +110,7 @@ void EmporiaVueComponent::read_samd() {
     }
   }
 
-  this->idle_pins_();
+  this->release_pins_();
   this->publish_read_allowed_(read_allowed);
   this->publish_status_(status);
   ESP_LOGI(TAG, "SAMD09 read check: SWD IDCODE=%s, DSU DID=%s, read_allowed=%s, %s", hex32_(swd_idcode).c_str(),
@@ -161,12 +155,55 @@ bool EmporiaVueComponent::swd_initialize_(uint32_t *idcode) {
   return true;
 }
 
-void EmporiaVueComponent::idle_pins_() {
-  if (this->swdio_pin_ != nullptr) {
-    this->swdio_pin_->pin_mode(gpio::FLAG_INPUT | gpio::FLAG_PULLUP);
+void EmporiaVueComponent::prepare_pins_() {
+  if (this->reset_pin_ != nullptr) {
+    this->reset_pin_->digital_write(true);
   }
   if (this->swclk_pin_ != nullptr) {
     this->swclk_pin_->digital_write(true);
+  }
+  if (this->swdio_pin_ != nullptr) {
+    this->swdio_pin_->digital_write(true);
+  }
+
+  if (!this->pins_setup_) {
+    if (this->reset_pin_ != nullptr) {
+      this->reset_pin_->setup();
+    }
+    if (this->swclk_pin_ != nullptr) {
+      this->swclk_pin_->setup();
+    }
+    if (this->swdio_pin_ != nullptr) {
+      this->swdio_pin_->setup();
+    }
+    this->pins_setup_ = true;
+  }
+
+  if (this->reset_pin_ != nullptr) {
+    this->reset_pin_->pin_mode(gpio::FLAG_OUTPUT);
+    this->reset_pin_->digital_write(true);
+  }
+  if (this->swclk_pin_ != nullptr) {
+    this->swclk_pin_->pin_mode(gpio::FLAG_OUTPUT);
+    this->swclk_pin_->digital_write(true);
+  }
+  if (this->swdio_pin_ != nullptr) {
+    this->swdio_pin_->pin_mode(gpio::FLAG_INPUT | gpio::FLAG_PULLUP);
+  }
+}
+
+void EmporiaVueComponent::release_pins_() {
+  if (this->reset_pin_ != nullptr) {
+    this->reset_pin_->digital_write(true);
+    this->reset_pin_->pin_mode(gpio::FLAG_INPUT | gpio::FLAG_PULLUP);
+  }
+  if (this->swclk_pin_ != nullptr) {
+    this->swclk_pin_->digital_write(true);
+    this->swclk_pin_->pin_mode(gpio::FLAG_INPUT | gpio::FLAG_PULLUP);
+  }
+  if (this->swdio_pin_ != nullptr) {
+    this->swdio_pin_->digital_write(true);
+    this->swdio_pin_->pin_mode(gpio::FLAG_INPUT | gpio::FLAG_PULLUP);
   }
 }
 

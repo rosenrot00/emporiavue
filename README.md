@@ -53,6 +53,8 @@ external_components:
 
 The default config creates only the Home Assistant button. You need the normal ESPHome `api:` setup in your node config for Home Assistant to see that button. The read result appears in the ESPHome log/console at `INFO` level.
 
+By default the SWD pins are not initialized at boot. `init_pins_on_boot` defaults to `false`, so SWDIO/SWCLK/reset are only touched while the `Read SAMD09` button action is running. After the check, the component releases them back to input/pullup.
+
 Optional diagnostic entities can be enabled if you later want the values in Home Assistant too:
 
 ```yaml

@@ -27,6 +27,7 @@ class EmporiaVueComponent : public Component {
   void set_reset_release_time(uint32_t reset_release_time) { this->reset_release_time_ms_ = reset_release_time; }
   void set_clock_delay_us(uint8_t clock_delay_us) { this->clock_delay_us_ = clock_delay_us; }
   void set_retry_count(uint8_t retry_count) { this->retry_count_ = retry_count; }
+  void set_init_pins_on_boot(bool init_pins_on_boot) { this->init_pins_on_boot_ = init_pins_on_boot; }
 
   void set_swd_idcode_sensor(text_sensor::TextSensor *sensor) { this->swd_idcode_sensor_ = sensor; }
   void set_dsu_did_sensor(text_sensor::TextSensor *sensor) { this->dsu_did_sensor_ = sensor; }
@@ -68,7 +69,8 @@ class EmporiaVueComponent : public Component {
 
   void reset_target_();
   bool swd_initialize_(uint32_t *idcode);
-  void idle_pins_();
+  void prepare_pins_();
+  void release_pins_();
   void set_error_(const std::string &error);
   void publish_status_(const std::string &status);
   void publish_read_allowed_(bool value);
@@ -111,6 +113,8 @@ class EmporiaVueComponent : public Component {
   uint32_t reset_release_time_ms_{50};
   uint8_t clock_delay_us_{2};
   uint8_t retry_count_{40};
+  bool init_pins_on_boot_{false};
+  bool pins_setup_{false};
   bool direction_write_{true};
   bool selected_ap_valid_{false};
   uint8_t selected_ap_bank_{0};
