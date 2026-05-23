@@ -130,11 +130,11 @@ void EmporiaVueComponent::probe_swd() {
   const bool swdio_idle = this->swdio_pin_->digital_read();
   ESP_LOGI(TAG, "SAMD09 SWD line state before probe: SWDIO=%u", swdio_idle ? 1 : 0);
   this->reset_target_();
-  this->swd_enter_debug_();
 
   uint8_t ack = 0;
   uint32_t swd_idcode = 0;
-  if (this->transfer_(false, true, DP_IDCODE, 0, &swd_idcode, &ack)) {
+  if (this->probe_idcode_("SWD line reset", false, &swd_idcode, &ack) ||
+      this->probe_idcode_("SWJ JTAG-to-SWD", true, &swd_idcode, &ack)) {
     this->release_pins_();
     if (this->swd_idcode_sensor_ != nullptr) {
       this->swd_idcode_sensor_->publish_state(hex32_(swd_idcode));
@@ -166,7 +166,7 @@ void EmporiaVueComponent::reset_target_() {
   delay(this->reset_release_time_ms_);
 }
 
-void EmporiaVueComponent::swd_enter_debug_() {
+void EmporiaVueComponent::swd_enter_debug_(bool swj_select) {
   this->direction_write_ = true;
   this->selected_ap_valid_ = false;
   this->cached_csw_ = 0xFFFFFFFFUL;
@@ -177,22 +177,45 @@ void EmporiaVueComponent::swd_enter_debug_() {
 
   this->write_bits_(0xFFFFFFFFUL, 32);
   this->write_bits_(0xFFFFFFFFUL, 32);
-  this->write_bits_(0xE79EUL, 16);
-  this->write_bits_(0xFFFFFFFFUL, 32);
-  this->write_bits_(0xFFFFFFFFUL, 32);
+  if (swj_select) {
+    this->write_bits_(0xE79EUL, 16);
+    this->write_bits_(0xFFFFFFFFUL, 32);
+    this->write_bits_(0xFFFFFFFFUL, 32);
+  }
   this->write_bits_(0x00UL, 8);
 }
 
+bool EmporiaVueComponent::probe_idcode_(const char *sequence_name, bool swj_select, uint32_t *idcode, uint8_t *ack) {
+  ESP_LOGI(TAG, "Trying SAMD09 %s IDCODE probe", sequence_name);
+  this->last_error_.clear();
+  this->swd_enter_debug_(swj_select);
+  if (this->transfer_(false, true, DP_IDCODE, 0, idcode, ack)) {
+    return true;
+  }
+  ESP_LOGI(TAG, "SAMD09 %s IDCODE probe ACK=%s", sequence_name, hex8_(*ack).c_str());
+  return false;
+}
+
 bool EmporiaVueComponent::swd_initialize_(uint32_t *idcode) {
-  this->swd_enter_debug_();
-  if (!this->dp_read_(DP_IDCODE, idcode)) {
-    return false;
+  const bool sequences[] = {false, true};
+  const char *sequence_names[] = {"SWD line reset", "SWJ JTAG-to-SWD"};
+  for (uint8_t i = 0; i < 2; i++) {
+    ESP_LOGI(TAG, "Trying SAMD09 %s initialization", sequence_names[i]);
+    this->last_error_.clear();
+    this->swd_enter_debug_(sequences[i]);
+    if (!this->dp_read_(DP_IDCODE, idcode)) {
+      continue;
+    }
+    if (*idcode == 0x00000000UL || *idcode == 0xFFFFFFFFUL) {
+      this->set_error_(str_sprintf("invalid SWD IDCODE %s", hex32_(*idcode).c_str()));
+      continue;
+    }
+    return true;
   }
-  if (*idcode == 0x00000000UL || *idcode == 0xFFFFFFFFUL) {
-    this->set_error_(str_sprintf("invalid SWD IDCODE %s", hex32_(*idcode).c_str()));
-    return false;
+  if (this->last_error_.empty()) {
+    this->set_error_("SAMD09 SWD initialization failed");
   }
-  return true;
+  return false;
 }
 
 void EmporiaVueComponent::prepare_pins_() {

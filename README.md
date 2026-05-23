@@ -54,7 +54,7 @@ external_components:
 
 The default config creates two Home Assistant buttons:
 
-- `Probe SAMD09 SWD`: reads only the SWD Debug Port IDCODE and logs the raw ACK value.
+- `Probe SAMD09 SWD`: reads only the SWD Debug Port IDCODE and logs the raw ACK value. It tries a plain SWD line-reset sequence first and then the SWJ JTAG-to-SWD select sequence.
 - `Read SAMD09`: runs the fuller SWD read check, including DSU/NVM status reads after the Debug Port responds.
 
 You need the normal ESPHome `api:` setup in your node config for Home Assistant to see those buttons. The results appear in the ESPHome log/console at `INFO` level.
