@@ -1,0 +1,477 @@
+#include "emporiavue.h"
+
+#include "esphome/core/log.h"
+
+#include <cinttypes>
+
+namespace esphome {
+namespace emporiavue {
+
+static const char *const TAG = "emporiavue";
+
+void EmporiaVueComponent::setup() {
+  if (this->swclk_pin_ != nullptr) {
+    this->swclk_pin_->setup();
+    this->swclk_pin_->digital_write(true);
+  }
+  if (this->swdio_pin_ != nullptr) {
+    this->swdio_pin_->setup();
+    this->swdio_pin_->pin_mode(gpio::FLAG_INPUT | gpio::FLAG_PULLUP);
+  }
+  if (this->reset_pin_ != nullptr) {
+    this->reset_pin_->setup();
+    this->reset_pin_->digital_write(true);
+  }
+}
+
+void EmporiaVueComponent::dump_config() {
+  ESP_LOGCONFIG(TAG, "EmporiaVue SAMD09 SWD reader:");
+  LOG_PIN("  SWDIO Pin: ", this->swdio_pin_);
+  LOG_PIN("  SWCLK Pin: ", this->swclk_pin_);
+  LOG_PIN("  Reset Pin: ", this->reset_pin_);
+  ESP_LOGCONFIG(TAG, "  Reset before read: %s", YESNO(this->reset_before_read_));
+  ESP_LOGCONFIG(TAG, "  Reset hold time: %" PRIu32 " ms", this->reset_hold_time_ms_);
+  ESP_LOGCONFIG(TAG, "  Reset release time: %" PRIu32 " ms", this->reset_release_time_ms_);
+  ESP_LOGCONFIG(TAG, "  Clock delay: %u us", this->clock_delay_us_);
+  LOG_TEXT_SENSOR("  ", "SWD IDCODE", this->swd_idcode_sensor_);
+  LOG_TEXT_SENSOR("  ", "DSU DID", this->dsu_did_sensor_);
+  LOG_TEXT_SENSOR("  ", "Status", this->status_sensor_);
+  LOG_BINARY_SENSOR("  ", "Read allowed", this->read_allowed_sensor_);
+}
+
+void EmporiaVueComponent::read_samd() {
+  this->last_error_.clear();
+  ESP_LOGI(TAG, "Starting SAMD09 SWD read check");
+  this->publish_status_("reading");
+  this->publish_read_allowed_(false);
+
+  if (this->swdio_pin_ == nullptr || this->swclk_pin_ == nullptr) {
+    this->set_error_("SWD pins are not configured");
+    return;
+  }
+
+  this->reset_target_();
+
+  uint32_t swd_idcode = 0;
+  if (!this->swd_initialize_(&swd_idcode)) {
+    this->idle_pins_();
+    this->publish_status_("failed: " + this->last_error_);
+    ESP_LOGW(TAG, "SAMD09 read check failed: %s", this->last_error_.c_str());
+    return;
+  }
+  if (this->swd_idcode_sensor_ != nullptr) {
+    this->swd_idcode_sensor_->publish_state(hex32_(swd_idcode));
+  }
+
+  if (!this->power_up_debug_()) {
+    this->idle_pins_();
+    this->publish_status_("failed: " + this->last_error_);
+    ESP_LOGW(TAG, "SAMD09 read check failed: %s", this->last_error_.c_str());
+    return;
+  }
+
+  if (!this->verify_mem_ap_()) {
+    this->idle_pins_();
+    this->publish_status_("failed: " + this->last_error_);
+    ESP_LOGW(TAG, "SAMD09 read check failed: %s", this->last_error_.c_str());
+    return;
+  }
+
+  uint8_t dsu_statusb = 0;
+  if (!this->mem_read8_(DSU_STATUSB, &dsu_statusb)) {
+    this->idle_pins_();
+    this->publish_status_("failed: " + this->last_error_);
+    ESP_LOGW(TAG, "SAMD09 read check failed: %s", this->last_error_.c_str());
+    return;
+  }
+
+  uint32_t dsu_did = 0;
+  if (this->mem_read32_(DSU_DID, &dsu_did)) {
+    if (this->dsu_did_sensor_ != nullptr) {
+      this->dsu_did_sensor_->publish_state(hex32_(dsu_did));
+    }
+  } else if (this->dsu_did_sensor_ != nullptr) {
+    this->dsu_did_sensor_->publish_state("unreadable");
+  }
+
+  const bool dsu_protected = (dsu_statusb & 0x01) != 0;
+  bool read_allowed = !dsu_protected;
+  std::string status = str_sprintf("DSU STATUSB=%s, PROT=%u", hex8_(dsu_statusb).c_str(), dsu_protected ? 1 : 0);
+
+  if (read_allowed) {
+    uint32_t flash_probe = 0;
+    if (!this->mem_read32_(FLASH_START, &flash_probe)) {
+      read_allowed = false;
+      status += ", flash probe failed";
+      ESP_LOGW(TAG, "SAMD09 flash probe failed: %s", this->last_error_.c_str());
+    } else {
+      uint16_t nvm_status = 0;
+      if (this->mem_read16_(NVMCTRL_STATUS, &nvm_status)) {
+        const bool nvm_security_bit = (nvm_status & (1U << 8)) != 0;
+        read_allowed = read_allowed && !nvm_security_bit;
+        status += str_sprintf(", NVM STATUS=%s, SB=%u", hex16_(nvm_status).c_str(), nvm_security_bit ? 1 : 0);
+      } else {
+        status += ", NVM STATUS unreadable";
+      }
+    }
+  }
+
+  this->idle_pins_();
+  this->publish_read_allowed_(read_allowed);
+  this->publish_status_(status);
+  ESP_LOGI(TAG, "SAMD09 read check: SWD IDCODE=%s, DSU DID=%s, read_allowed=%s, %s", hex32_(swd_idcode).c_str(),
+           hex32_(dsu_did).c_str(), YESNO(read_allowed), status.c_str());
+}
+
+void EmporiaVueComponent::reset_target_() {
+  if (!this->reset_before_read_ || this->reset_pin_ == nullptr) {
+    return;
+  }
+  this->reset_pin_->pin_mode(gpio::FLAG_OUTPUT);
+  this->reset_pin_->digital_write(false);
+  delay(this->reset_hold_time_ms_);
+  this->reset_pin_->digital_write(true);
+  delay(this->reset_release_time_ms_);
+}
+
+bool EmporiaVueComponent::swd_initialize_(uint32_t *idcode) {
+  this->direction_write_ = true;
+  this->selected_ap_valid_ = false;
+  this->cached_csw_ = 0xFFFFFFFFUL;
+
+  this->swdio_pin_->pin_mode(gpio::FLAG_OUTPUT);
+  this->swclk_pin_->pin_mode(gpio::FLAG_OUTPUT);
+  this->swclk_pin_->digital_write(true);
+
+  this->write_bits_(0xFFFFFFFFUL, 32);
+  this->write_bits_(0xFFFFFFFFUL, 32);
+  this->write_bits_(0x0000E79EUL, 32);
+  this->write_bits_(0xFFFFFFFFUL, 32);
+  this->write_bits_(0xFFFFFFFFUL, 32);
+  this->write_bits_(0x00000000UL, 32);
+  this->write_bits_(0x00000000UL, 32);
+
+  if (!this->dp_read_(DP_IDCODE, idcode)) {
+    return false;
+  }
+  if (*idcode == 0x00000000UL || *idcode == 0xFFFFFFFFUL) {
+    this->set_error_(str_sprintf("invalid SWD IDCODE %s", hex32_(*idcode).c_str()));
+    return false;
+  }
+  return true;
+}
+
+void EmporiaVueComponent::idle_pins_() {
+  if (this->swdio_pin_ != nullptr) {
+    this->swdio_pin_->pin_mode(gpio::FLAG_INPUT | gpio::FLAG_PULLUP);
+  }
+  if (this->swclk_pin_ != nullptr) {
+    this->swclk_pin_->digital_write(true);
+  }
+}
+
+void EmporiaVueComponent::set_error_(const std::string &error) {
+  this->last_error_ = error;
+  ESP_LOGW(TAG, "%s", error.c_str());
+}
+
+void EmporiaVueComponent::publish_status_(const std::string &status) {
+  if (this->status_sensor_ != nullptr) {
+    this->status_sensor_->publish_state(status);
+  }
+}
+
+void EmporiaVueComponent::publish_read_allowed_(bool value) {
+  if (this->read_allowed_sensor_ != nullptr) {
+    this->read_allowed_sensor_->publish_state(value);
+  }
+}
+
+std::string EmporiaVueComponent::hex32_(uint32_t value) { return str_sprintf("0x%08" PRIx32, value); }
+
+std::string EmporiaVueComponent::hex16_(uint16_t value) { return str_sprintf("0x%04" PRIx16, value); }
+
+std::string EmporiaVueComponent::hex8_(uint8_t value) { return str_sprintf("0x%02" PRIx8, value); }
+
+void EmporiaVueComponent::clock_half_period_() {
+  if (this->clock_delay_us_ > 0) {
+    delayMicroseconds(this->clock_delay_us_);
+  }
+}
+
+void EmporiaVueComponent::swclk_pulse_() {
+  this->swclk_pin_->digital_write(false);
+  this->clock_half_period_();
+  this->swclk_pin_->digital_write(true);
+  this->clock_half_period_();
+}
+
+void EmporiaVueComponent::turnaround_(bool write) {
+  this->swdio_pin_->digital_write(true);
+  this->swdio_pin_->pin_mode(gpio::FLAG_INPUT | gpio::FLAG_PULLUP);
+  this->swclk_pulse_();
+  if (write) {
+    this->swdio_pin_->pin_mode(gpio::FLAG_OUTPUT);
+  }
+  this->direction_write_ = write;
+}
+
+void EmporiaVueComponent::write_bits_(uint32_t data, uint8_t bits) {
+  if (!this->direction_write_) {
+    this->turnaround_(true);
+  }
+  for (uint8_t i = 0; i < bits; i++) {
+    this->swdio_pin_->digital_write((data & 0x01UL) != 0);
+    this->swclk_pulse_();
+    data >>= 1;
+  }
+}
+
+uint32_t EmporiaVueComponent::read_bits_(uint8_t bits) {
+  if (this->direction_write_) {
+    this->turnaround_(false);
+  }
+  uint32_t value = 0;
+  for (uint8_t i = 0; i < bits; i++) {
+    if (this->swdio_pin_->digital_read()) {
+      value |= 1UL << i;
+    }
+    this->swclk_pulse_();
+  }
+  return value;
+}
+
+bool EmporiaVueComponent::parity32_(uint32_t value) {
+  value ^= value >> 16;
+  value ^= value >> 8;
+  value ^= value >> 4;
+  value &= 0x0FUL;
+  return ((0x6996U >> value) & 1U) != 0;
+}
+
+uint8_t EmporiaVueComponent::make_request_(bool ap, bool read, uint8_t addr) {
+  const uint8_t a2 = (addr >> 2) & 0x01;
+  const uint8_t a3 = (addr >> 3) & 0x01;
+  const uint8_t parity = (ap ? 1 : 0) ^ (read ? 1 : 0) ^ a2 ^ a3;
+  return 0x81 | (ap ? 0x02 : 0x00) | (read ? 0x04 : 0x00) | (a2 << 3) | (a3 << 4) | (parity << 5);
+}
+
+bool EmporiaVueComponent::transfer_(bool ap, bool read, uint8_t addr, uint32_t write_value, uint32_t *read_value,
+                                         uint8_t *ack) {
+  this->write_bits_(this->make_request_(ap, read, addr), 8);
+  *ack = this->read_bits_(3);
+
+  if (*ack == SWD_ACK_OK) {
+    if (read) {
+      const uint32_t value = this->read_bits_(32);
+      const bool parity = this->read_bits_(1) != 0;
+      this->write_bits_(0, 8);
+      if (parity != parity32_(value)) {
+        this->set_error_(str_sprintf("parity error reading %s register 0x%02X", ap ? "AP" : "DP", addr));
+        return false;
+      }
+      if (read_value != nullptr) {
+        *read_value = value;
+      }
+    } else {
+      this->write_bits_(write_value, 32);
+      this->write_bits_(parity32_(write_value) ? 1 : 0, 1);
+      this->write_bits_(0, 8);
+    }
+    return true;
+  }
+
+  this->write_bits_(0, 8);
+  return false;
+}
+
+bool EmporiaVueComponent::dp_read_(uint8_t addr, uint32_t *value) {
+  for (uint8_t attempt = 0; attempt < this->retry_count_; attempt++) {
+    uint8_t ack = 0;
+    if (this->transfer_(false, true, addr, 0, value, &ack)) {
+      return true;
+    }
+    if (ack == SWD_ACK_WAIT) {
+      delayMicroseconds(50);
+      continue;
+    }
+    if (ack == SWD_ACK_FAULT) {
+      this->clear_sticky_errors_();
+      this->set_error_(str_sprintf("SWD FAULT reading DP register 0x%02X", addr));
+      return false;
+    }
+    this->set_error_(str_sprintf("bad SWD ACK 0x%02X reading DP register 0x%02X", ack, addr));
+    return false;
+  }
+  this->set_error_(str_sprintf("timeout reading DP register 0x%02X", addr));
+  return false;
+}
+
+bool EmporiaVueComponent::dp_write_(uint8_t addr, uint32_t value) {
+  for (uint8_t attempt = 0; attempt < this->retry_count_; attempt++) {
+    uint8_t ack = 0;
+    uint32_t unused = 0;
+    if (this->transfer_(false, false, addr, value, &unused, &ack)) {
+      return true;
+    }
+    if (ack == SWD_ACK_WAIT) {
+      delayMicroseconds(50);
+      continue;
+    }
+    if (ack == SWD_ACK_FAULT) {
+      this->clear_sticky_errors_();
+      this->set_error_(str_sprintf("SWD FAULT writing DP register 0x%02X", addr));
+      return false;
+    }
+    this->set_error_(str_sprintf("bad SWD ACK 0x%02X writing DP register 0x%02X", ack, addr));
+    return false;
+  }
+  this->set_error_(str_sprintf("timeout writing DP register 0x%02X", addr));
+  return false;
+}
+
+bool EmporiaVueComponent::clear_sticky_errors_() {
+  uint8_t ack = 0;
+  uint32_t unused = 0;
+  return this->transfer_(false, false, DP_ABORT, 0x0000001EUL, &unused, &ack) && ack == SWD_ACK_OK;
+}
+
+bool EmporiaVueComponent::select_ap_bank_(uint8_t bank) {
+  if (this->selected_ap_valid_ && this->selected_ap_bank_ == bank) {
+    return true;
+  }
+  if (!this->dp_write_(DP_SELECT, (uint32_t(bank & 0x0F) << 4))) {
+    return false;
+  }
+  this->selected_ap_valid_ = true;
+  this->selected_ap_bank_ = bank;
+  return true;
+}
+
+bool EmporiaVueComponent::ap_read_(uint8_t addr, uint32_t *value) {
+  if (!this->select_ap_bank_((addr >> 4) & 0x0F)) {
+    return false;
+  }
+  uint32_t posted = 0;
+  bool request_accepted = false;
+  for (uint8_t attempt = 0; attempt < this->retry_count_; attempt++) {
+    uint8_t ack = 0;
+    if (this->transfer_(true, true, addr & 0x0C, 0, &posted, &ack)) {
+      request_accepted = true;
+      break;
+    }
+    if (ack == SWD_ACK_WAIT) {
+      delayMicroseconds(50);
+      continue;
+    }
+    if (ack == SWD_ACK_FAULT) {
+      this->clear_sticky_errors_();
+      this->set_error_(str_sprintf("SWD FAULT reading AP register 0x%02X", addr));
+      return false;
+    }
+    this->set_error_(str_sprintf("bad SWD ACK 0x%02X reading AP register 0x%02X", ack, addr));
+    return false;
+  }
+  if (!request_accepted) {
+    this->set_error_(str_sprintf("timeout reading AP register 0x%02X", addr));
+    return false;
+  }
+  return this->dp_read_(DP_RDBUFF, value);
+}
+
+bool EmporiaVueComponent::ap_write_(uint8_t addr, uint32_t value) {
+  if (!this->select_ap_bank_((addr >> 4) & 0x0F)) {
+    return false;
+  }
+  for (uint8_t attempt = 0; attempt < this->retry_count_; attempt++) {
+    uint8_t ack = 0;
+    uint32_t unused = 0;
+    if (this->transfer_(true, false, addr & 0x0C, value, &unused, &ack)) {
+      return true;
+    }
+    if (ack == SWD_ACK_WAIT) {
+      delayMicroseconds(50);
+      continue;
+    }
+    if (ack == SWD_ACK_FAULT) {
+      this->clear_sticky_errors_();
+      this->set_error_(str_sprintf("SWD FAULT writing AP register 0x%02X", addr));
+      return false;
+    }
+    this->set_error_(str_sprintf("bad SWD ACK 0x%02X writing AP register 0x%02X", ack, addr));
+    return false;
+  }
+  this->set_error_(str_sprintf("timeout writing AP register 0x%02X", addr));
+  return false;
+}
+
+bool EmporiaVueComponent::mem_read_(uint32_t address, MemSize size, uint32_t *value) {
+  const uint32_t csw = MEM_AP_CSW_BASE | uint32_t(size);
+  if (this->cached_csw_ != csw) {
+    if (!this->ap_write_(AP_CSW, csw)) {
+      return false;
+    }
+    this->cached_csw_ = csw;
+  }
+  if (!this->ap_write_(AP_TAR, address)) {
+    return false;
+  }
+  return this->ap_read_(AP_DRW, value);
+}
+
+bool EmporiaVueComponent::mem_read8_(uint32_t address, uint8_t *value) {
+  uint32_t raw = 0;
+  if (!this->mem_read_(address, MEM_SIZE_BYTE, &raw)) {
+    return false;
+  }
+  *value = static_cast<uint8_t>(raw & 0xFFU);
+  return true;
+}
+
+bool EmporiaVueComponent::mem_read16_(uint32_t address, uint16_t *value) {
+  uint32_t raw = 0;
+  if (!this->mem_read_(address, MEM_SIZE_HALFWORD, &raw)) {
+    return false;
+  }
+  *value = static_cast<uint16_t>(raw & 0xFFFFU);
+  return true;
+}
+
+bool EmporiaVueComponent::mem_read32_(uint32_t address, uint32_t *value) {
+  return this->mem_read_(address, MEM_SIZE_WORD, value);
+}
+
+bool EmporiaVueComponent::power_up_debug_() {
+  if (!this->dp_write_(DP_CTRL_STAT, DP_POWER_REQUEST)) {
+    return false;
+  }
+  for (uint8_t attempt = 0; attempt < this->retry_count_; attempt++) {
+    uint32_t status = 0;
+    if (!this->dp_read_(DP_CTRL_STAT, &status)) {
+      return false;
+    }
+    if ((status & DP_POWER_ACK) == DP_POWER_ACK) {
+      return true;
+    }
+    delayMicroseconds(100);
+  }
+  this->set_error_("debug power-up ACK timeout");
+  return false;
+}
+
+bool EmporiaVueComponent::verify_mem_ap_() {
+  uint32_t idr = 0;
+  if (!this->ap_read_(AP_IDR, &idr)) {
+    return false;
+  }
+  const uint8_t ap_class = (idr >> 13) & 0x0F;
+  if (ap_class != 0x08) {
+    this->set_error_(str_sprintf("unexpected MEM-AP IDR %s", hex32_(idr).c_str()));
+    return false;
+  }
+  ESP_LOGD(TAG, "MEM-AP IDR=%s", hex32_(idr).c_str());
+  return true;
+}
+
+}  // namespace emporiavue
+}  // namespace esphome

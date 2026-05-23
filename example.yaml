@@ -1,0 +1,25 @@
+esphome:
+  name: emporiavue-test
+  friendly_name: EmporiaVue SAMD Test
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+  level: DEBUG
+
+external_components:
+  - source:
+      type: local
+      path: ./components
+    components: [emporiavue]
+
+emporiavue:
+  id: samd_reader
+  swdio_pin: GPIO13
+  swclk_pin: GPIO14
+  reset_pin: GPIO26
+  read_button:
+    name: "Read SAMD09"

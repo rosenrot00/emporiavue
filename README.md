@@ -1,0 +1,73 @@
+# EmporiaVue SAMD09 SWD reader
+
+ESPHome external component for the Emporia Vue ESP32. It bit-bangs SWD on the pins from the Emporia Vue local discussion:
+
+- SWDIO: GPIO13
+- SWCLK: GPIO14
+- SAMD reset: GPIO26
+
+The first implementation only checks whether the SAMD09 can be read. Pressing the generated Home Assistant button logs:
+
+- the ARM SWD DP IDCODE
+- the SAMD DSU DID register
+- the DSU/NVM protection flags and whether a flash probe read succeeded
+
+## Use
+
+Add this repository directory as a local external component source:
+
+```yaml
+external_components:
+  - source:
+      type: local
+      path: ./components
+    components: [emporiavue]
+
+emporiavue:
+  id: samd_reader
+```
+
+Or use the private GitHub repository from a machine that has access to it:
+
+```yaml
+external_components:
+  - source: github://rosenrot00/emporiavue@main
+    components: [emporiavue]
+
+emporiavue:
+  id: samd_reader
+```
+
+If ESPHome runs somewhere that is not authenticated to your private GitHub account, use a GitHub token in `secrets.yaml`:
+
+```yaml
+external_components:
+  - source:
+      type: git
+      url: https://github.com/rosenrot00/emporiavue.git
+      ref: main
+      username: !secret github_username
+      password: !secret github_token
+    components: [emporiavue]
+```
+
+The default config creates only the Home Assistant button. You need the normal ESPHome `api:` setup in your node config for Home Assistant to see that button. The read result appears in the ESPHome log/console at `INFO` level.
+
+Optional diagnostic entities can be enabled if you later want the values in Home Assistant too:
+
+```yaml
+emporiavue:
+  id: samd_reader
+  swd_idcode:
+    name: "SAMD09 SWD IDCODE"
+  dsu_did:
+    name: "SAMD09 DSU DID"
+  read_allowed:
+    name: "SAMD09 Read Allowed"
+  status:
+    name: "SAMD09 SWD Status"
+```
+
+## Notes
+
+`read_allowed` is `true` only if DSU `STATUSB.PROT` is clear and a read from flash address `0x00000000` succeeds. The component does not dump flash yet.
