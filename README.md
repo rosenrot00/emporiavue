@@ -4,7 +4,8 @@ ESPHome external component for the Emporia Vue ESP32. It bit-bangs SWD on the pi
 
 - SWDIO: GPIO13
 - SWCLK: GPIO14
-- SAMD reset: GPIO26
+
+The SAMD reset line is intentionally not configured by default because public notes and board-level testing do not fully agree on the ESP32 GPIO. Configure it explicitly only when you want a reset pulse. GPIO26 is mentioned in the original discussion; GPIO4 is another candidate to test on some boards.
 
 The first implementation only checks whether the SAMD09 can be read. Pressing the generated Home Assistant button logs:
 
@@ -53,7 +54,16 @@ external_components:
 
 The default config creates only the Home Assistant button. You need the normal ESPHome `api:` setup in your node config for Home Assistant to see that button. The read result appears in the ESPHome log/console at `INFO` level.
 
-By default the SWD pins are not initialized at boot. `init_pins_on_boot` defaults to `false`, so SWDIO/SWCLK/reset are only touched while the `Read SAMD09` button action is running. After the check, the component releases them back to input/pullup.
+By default the SWD pins are not initialized at boot. `init_pins_on_boot` defaults to `false`, so SWDIO/SWCLK and the optional reset pin are only touched while the `Read SAMD09` button action is running. After the check, the component releases them back to input/pullup.
+
+To test a reset-assisted read, set the reset pin explicitly:
+
+```yaml
+emporiavue:
+  id: samd_reader
+  reset_pin: GPIO4
+  reset_before_read: true
+```
 
 Optional diagnostic entities can be enabled if you later want the values in Home Assistant too:
 

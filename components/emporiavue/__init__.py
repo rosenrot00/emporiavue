@@ -41,8 +41,8 @@ CONFIG_SCHEMA = cv.Schema(
         cv.GenerateID(): cv.declare_id(EmporiaVueComponent),
         cv.Optional(CONF_SWDIO_PIN, default="GPIO13"): pins.internal_gpio_input_pullup_pin_schema,
         cv.Optional(CONF_SWCLK_PIN, default="GPIO14"): pins.internal_gpio_output_pin_schema,
-        cv.Optional(CONF_RESET_PIN, default="GPIO26"): pins.internal_gpio_output_pin_schema,
-        cv.Optional(CONF_RESET_BEFORE_READ, default=True): cv.boolean,
+        cv.Optional(CONF_RESET_PIN): pins.internal_gpio_output_pin_schema,
+        cv.Optional(CONF_RESET_BEFORE_READ, default=False): cv.boolean,
         cv.Optional(CONF_RESET_HOLD_TIME, default="100ms"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_RESET_RELEASE_TIME, default="50ms"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_CLOCK_DELAY, default=2): cv.int_range(min=0, max=50),
@@ -92,8 +92,9 @@ async def to_code(config):
     cg.add(var.set_swdio_pin(swdio_pin))
     swclk_pin = await cg.gpio_pin_expression(config[CONF_SWCLK_PIN])
     cg.add(var.set_swclk_pin(swclk_pin))
-    reset_pin = await cg.gpio_pin_expression(config[CONF_RESET_PIN])
-    cg.add(var.set_reset_pin(reset_pin))
+    if reset_pin_config := config.get(CONF_RESET_PIN):
+        reset_pin = await cg.gpio_pin_expression(reset_pin_config)
+        cg.add(var.set_reset_pin(reset_pin))
 
     cg.add(var.set_reset_before_read(config[CONF_RESET_BEFORE_READ]))
     cg.add(var.set_reset_hold_time(config[CONF_RESET_HOLD_TIME]))
