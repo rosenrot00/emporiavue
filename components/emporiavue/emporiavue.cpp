@@ -139,11 +139,10 @@ bool EmporiaVueComponent::swd_initialize_(uint32_t *idcode) {
 
   this->write_bits_(0xFFFFFFFFUL, 32);
   this->write_bits_(0xFFFFFFFFUL, 32);
-  this->write_bits_(0x0000E79EUL, 32);
+  this->write_bits_(0xE79EUL, 16);
   this->write_bits_(0xFFFFFFFFUL, 32);
   this->write_bits_(0xFFFFFFFFUL, 32);
-  this->write_bits_(0x00000000UL, 32);
-  this->write_bits_(0x00000000UL, 32);
+  this->write_bits_(0x00UL, 8);
 
   if (!this->dp_read_(DP_IDCODE, idcode)) {
     return false;
@@ -270,10 +269,13 @@ uint32_t EmporiaVueComponent::read_bits_(uint8_t bits) {
   }
   uint32_t value = 0;
   for (uint8_t i = 0; i < bits; i++) {
+    this->swclk_pin_->digital_write(false);
+    this->clock_half_period_();
     if (this->swdio_pin_->digital_read()) {
       value |= 1UL << i;
     }
-    this->swclk_pulse_();
+    this->swclk_pin_->digital_write(true);
+    this->clock_half_period_();
   }
   return value;
 }
