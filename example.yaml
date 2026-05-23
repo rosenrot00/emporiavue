@@ -16,8 +16,16 @@ external_components:
       path: ./components
     components: [emporiavue]
 
+i2c:
+  id: i2c_a
+  sda: GPIO21
+  scl: GPIO22
+  scan: false
+  frequency: 400kHz
+
 emporiavue:
   id: samd_reader
+  i2c_id: i2c_a
   swdio_pin: GPIO13
   swclk_pin: GPIO14
   read_button:

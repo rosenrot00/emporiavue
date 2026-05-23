@@ -2,18 +2,20 @@
 
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/button/button.h"
+#include "esphome/components/i2c/i2c.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
 namespace esphome {
 namespace emporiavue {
 
-class EmporiaVueComponent : public Component {
+class EmporiaVueComponent : public Component, public i2c::I2CDevice {
  public:
   void setup() override;
   void dump_config() override;
@@ -35,6 +37,7 @@ class EmporiaVueComponent : public Component {
   void set_read_allowed_sensor(binary_sensor::BinarySensor *sensor) { this->read_allowed_sensor_ = sensor; }
 
   void read_samd();
+  void probe_i2c();
 
  protected:
   static constexpr uint8_t DP_ABORT = 0x00;
@@ -77,6 +80,7 @@ class EmporiaVueComponent : public Component {
   static std::string hex32_(uint32_t value);
   static std::string hex16_(uint16_t value);
   static std::string hex8_(uint8_t value);
+  static std::string hex_bytes_(const uint8_t *data, size_t len);
 
   void clock_half_period_();
   void swclk_pulse_();
@@ -108,7 +112,7 @@ class EmporiaVueComponent : public Component {
   text_sensor::TextSensor *status_sensor_{nullptr};
   binary_sensor::BinarySensor *read_allowed_sensor_{nullptr};
 
-  bool reset_before_read_{true};
+  bool reset_before_read_{false};
   uint32_t reset_hold_time_ms_{100};
   uint32_t reset_release_time_ms_{50};
   uint8_t clock_delay_us_{2};
@@ -125,6 +129,11 @@ class EmporiaVueComponent : public Component {
 class EmporiaVueReadButton : public button::Button, public Parented<EmporiaVueComponent> {
  protected:
   void press_action() override { this->parent_->read_samd(); }
+};
+
+class EmporiaVueI2CProbeButton : public button::Button, public Parented<EmporiaVueComponent> {
+ protected:
+  void press_action() override { this->parent_->probe_i2c(); }
 };
 
 }  // namespace emporiavue
