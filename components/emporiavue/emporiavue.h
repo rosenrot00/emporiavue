@@ -2,20 +2,18 @@
 
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/button/button.h"
-#include "esphome/components/i2c/i2c.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
 
-#include <cstddef>
 #include <cstdint>
 #include <string>
 
 namespace esphome {
 namespace emporiavue {
 
-class EmporiaVueComponent : public Component, public i2c::I2CDevice {
+class EmporiaVueComponent : public Component {
  public:
   void setup() override;
   void dump_config() override;
@@ -37,7 +35,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void set_read_allowed_sensor(binary_sensor::BinarySensor *sensor) { this->read_allowed_sensor_ = sensor; }
 
   void read_samd();
-  void probe_i2c();
+  void probe_swd();
 
  protected:
   static constexpr uint8_t DP_ABORT = 0x00;
@@ -71,6 +69,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   };
 
   void reset_target_();
+  void swd_enter_debug_();
   bool swd_initialize_(uint32_t *idcode);
   void prepare_pins_();
   void release_pins_();
@@ -80,7 +79,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   static std::string hex32_(uint32_t value);
   static std::string hex16_(uint16_t value);
   static std::string hex8_(uint8_t value);
-  static std::string hex_bytes_(const uint8_t *data, size_t len);
 
   void clock_half_period_();
   void swclk_pulse_();
@@ -131,9 +129,9 @@ class EmporiaVueReadButton : public button::Button, public Parented<EmporiaVueCo
   void press_action() override { this->parent_->read_samd(); }
 };
 
-class EmporiaVueI2CProbeButton : public button::Button, public Parented<EmporiaVueComponent> {
+class EmporiaVueProbeButton : public button::Button, public Parented<EmporiaVueComponent> {
  protected:
-  void press_action() override { this->parent_->probe_i2c(); }
+  void press_action() override { this->parent_->probe_swd(); }
 };
 
 }  // namespace emporiavue

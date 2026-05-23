@@ -1,7 +1,7 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import pins
-from esphome.components import binary_sensor, button, i2c, text_sensor
+from esphome.components import binary_sensor, button, text_sensor
 from esphome.const import (
     CONF_ID,
     CONF_NAME,
@@ -12,24 +12,24 @@ from esphome.const import (
     ICON_DATABASE,
 )
 
-DEPENDENCIES = ["esp32", "i2c"]
-AUTO_LOAD = ["binary_sensor", "button", "i2c", "text_sensor"]
+DEPENDENCIES = ["esp32"]
+AUTO_LOAD = ["binary_sensor", "button", "text_sensor"]
 
 emporiavue_ns = cg.esphome_ns.namespace("emporiavue")
 EmporiaVueComponent = emporiavue_ns.class_(
-    "EmporiaVueComponent", cg.Component, i2c.I2CDevice
+    "EmporiaVueComponent", cg.Component
 )
 EmporiaVueReadButton = emporiavue_ns.class_(
     "EmporiaVueReadButton", button.Button
 )
-EmporiaVueI2CProbeButton = emporiavue_ns.class_(
-    "EmporiaVueI2CProbeButton", button.Button
+EmporiaVueProbeButton = emporiavue_ns.class_(
+    "EmporiaVueProbeButton", button.Button
 )
 
 CONF_SWCLK_PIN = "swclk_pin"
 CONF_SWDIO_PIN = "swdio_pin"
 CONF_READ_BUTTON = "read_button"
-CONF_I2C_PROBE_BUTTON = "i2c_probe_button"
+CONF_PROBE_BUTTON = "probe_button"
 CONF_SWD_IDCODE = "swd_idcode"
 CONF_DSU_DID = "dsu_did"
 CONF_READ_ALLOWED = "read_allowed"
@@ -85,21 +85,20 @@ CONFIG_SCHEMA = cv.Schema(
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
         cv.Optional(
-            CONF_I2C_PROBE_BUTTON,
-            default={CONF_NAME: "Probe SAMD09 I2C"},
+            CONF_PROBE_BUTTON,
+            default={CONF_NAME: "Probe SAMD09 SWD"},
         ): button.button_schema(
-            EmporiaVueI2CProbeButton,
-            icon="mdi:i2c",
+            EmporiaVueProbeButton,
+            icon=ICON_CHIP,
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
     }
-).extend(cv.COMPONENT_SCHEMA).extend(i2c.i2c_device_schema(0x64))
+).extend(cv.COMPONENT_SCHEMA)
 
 
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
-    await i2c.register_i2c_device(var, config)
 
     swdio_pin = await cg.gpio_pin_expression(config[CONF_SWDIO_PIN])
     cg.add(var.set_swdio_pin(swdio_pin))
@@ -131,6 +130,6 @@ async def to_code(config):
     if read_button_config := config.get(CONF_READ_BUTTON):
         btn = await button.new_button(read_button_config)
         await cg.register_parented(btn, var)
-    if i2c_probe_button_config := config.get(CONF_I2C_PROBE_BUTTON):
-        btn = await button.new_button(i2c_probe_button_config)
+    if probe_button_config := config.get(CONF_PROBE_BUTTON):
+        btn = await button.new_button(probe_button_config)
         await cg.register_parented(btn, var)

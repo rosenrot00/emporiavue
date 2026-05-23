@@ -9,31 +9,6 @@ namespace emporiavue {
 
 static const char *const TAG = "emporiavue";
 
-namespace {
-
-struct __attribute__((packed)) EmporiaVueI2CPowerEntry {
-  int32_t phase_black;
-  int32_t phase_red;
-  int32_t phase_blue;
-};
-
-struct __attribute__((packed)) EmporiaVueI2CReading {
-  uint8_t is_unread;
-  uint8_t checksum;
-  uint8_t unknown;
-  uint8_t sequence_num;
-  EmporiaVueI2CPowerEntry power[19];
-  uint16_t voltage[3];
-  uint16_t frequency;
-  uint16_t degrees[2];
-  uint16_t current[19];
-  uint16_t end;
-};
-
-static_assert(sizeof(EmporiaVueI2CReading) == 284, "Unexpected Emporia Vue I2C reading size");
-
-}  // namespace
-
 void EmporiaVueComponent::setup() {
   if (this->init_pins_on_boot_) {
     this->prepare_pins_();
@@ -43,7 +18,6 @@ void EmporiaVueComponent::setup() {
 
 void EmporiaVueComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "EmporiaVue SAMD09 SWD reader:");
-  LOG_I2C_DEVICE(this);
   LOG_PIN("  SWDIO Pin: ", this->swdio_pin_);
   LOG_PIN("  SWCLK Pin: ", this->swclk_pin_);
   LOG_PIN("  Reset Pin: ", this->reset_pin_);
@@ -56,34 +30,6 @@ void EmporiaVueComponent::dump_config() {
   LOG_TEXT_SENSOR("  ", "DSU DID", this->dsu_did_sensor_);
   LOG_TEXT_SENSOR("  ", "Status", this->status_sensor_);
   LOG_BINARY_SENSOR("  ", "Read allowed", this->read_allowed_sensor_);
-}
-
-void EmporiaVueComponent::probe_i2c() {
-  EmporiaVueI2CReading reading{};
-  ESP_LOGI(TAG, "Starting SAMD09 I2C probe at address 0x%02X", this->address_);
-
-  const i2c::ErrorCode err = this->read(reinterpret_cast<uint8_t *>(&reading), sizeof(reading));
-  if (err != i2c::ErrorCode::ERROR_OK) {
-    ESP_LOGW(TAG, "SAMD09 I2C probe failed: I2C error %d", err);
-    return;
-  }
-
-  const auto *raw = reinterpret_cast<const uint8_t *>(&reading);
-  ESP_LOGI(TAG, "SAMD09 I2C probe: read %u bytes, first 16 bytes: %s", static_cast<unsigned>(sizeof(reading)),
-           hex_bytes_(raw, 16).c_str());
-  ESP_LOGI(TAG, "SAMD09 I2C packet: unread=%u checksum=%s unknown=%s sequence=%u end=%s",
-           static_cast<unsigned>(reading.is_unread), hex8_(reading.checksum).c_str(), hex8_(reading.unknown).c_str(),
-           static_cast<unsigned>(reading.sequence_num), hex16_(reading.end).c_str());
-  ESP_LOGI(TAG, "SAMD09 I2C values: voltage_raw=[%u,%u,%u] frequency_raw=%u current0_raw=%u",
-           static_cast<unsigned>(reading.voltage[0]), static_cast<unsigned>(reading.voltage[1]),
-           static_cast<unsigned>(reading.voltage[2]), static_cast<unsigned>(reading.frequency),
-           static_cast<unsigned>(reading.current[0]));
-
-  if (reading.end != 0) {
-    ESP_LOGW(TAG, "SAMD09 I2C packet is malformed: end field is %s", hex16_(reading.end).c_str());
-    return;
-  }
-  ESP_LOGI(TAG, "SAMD09 I2C probe OK: measurement packet is readable");
 }
 
 void EmporiaVueComponent::read_samd() {
@@ -171,6 +117,44 @@ void EmporiaVueComponent::read_samd() {
            hex32_(dsu_did).c_str(), YESNO(read_allowed), status.c_str());
 }
 
+void EmporiaVueComponent::probe_swd() {
+  this->last_error_.clear();
+  ESP_LOGI(TAG, "Starting SAMD09 SWD probe");
+
+  if (this->swdio_pin_ == nullptr || this->swclk_pin_ == nullptr) {
+    this->set_error_("SWD pins are not configured");
+    return;
+  }
+
+  this->prepare_pins_();
+  const bool swdio_idle = this->swdio_pin_->digital_read();
+  ESP_LOGI(TAG, "SAMD09 SWD line state before probe: SWDIO=%u", swdio_idle ? 1 : 0);
+  this->reset_target_();
+  this->swd_enter_debug_();
+
+  uint8_t ack = 0;
+  uint32_t swd_idcode = 0;
+  if (this->transfer_(false, true, DP_IDCODE, 0, &swd_idcode, &ack)) {
+    this->release_pins_();
+    if (this->swd_idcode_sensor_ != nullptr) {
+      this->swd_idcode_sensor_->publish_state(hex32_(swd_idcode));
+    }
+    ESP_LOGI(TAG, "SAMD09 SWD probe OK: DP IDCODE=%s, ACK=%s", hex32_(swd_idcode).c_str(), hex8_(ack).c_str());
+    return;
+  }
+
+  this->release_pins_();
+  if (ack == SWD_ACK_WAIT) {
+    ESP_LOGW(TAG, "SAMD09 SWD probe got WAIT ACK=%s while reading DP IDCODE", hex8_(ack).c_str());
+  } else if (ack == SWD_ACK_FAULT) {
+    ESP_LOGW(TAG, "SAMD09 SWD probe got FAULT ACK=%s while reading DP IDCODE", hex8_(ack).c_str());
+  } else if (!this->last_error_.empty()) {
+    ESP_LOGW(TAG, "SAMD09 SWD probe failed: ACK=%s, %s", hex8_(ack).c_str(), this->last_error_.c_str());
+  } else {
+    ESP_LOGW(TAG, "SAMD09 SWD probe failed: invalid ACK=%s while reading DP IDCODE", hex8_(ack).c_str());
+  }
+}
+
 void EmporiaVueComponent::reset_target_() {
   if (!this->reset_before_read_ || this->reset_pin_ == nullptr) {
     return;
@@ -182,7 +166,7 @@ void EmporiaVueComponent::reset_target_() {
   delay(this->reset_release_time_ms_);
 }
 
-bool EmporiaVueComponent::swd_initialize_(uint32_t *idcode) {
+void EmporiaVueComponent::swd_enter_debug_() {
   this->direction_write_ = true;
   this->selected_ap_valid_ = false;
   this->cached_csw_ = 0xFFFFFFFFUL;
@@ -197,7 +181,10 @@ bool EmporiaVueComponent::swd_initialize_(uint32_t *idcode) {
   this->write_bits_(0xFFFFFFFFUL, 32);
   this->write_bits_(0xFFFFFFFFUL, 32);
   this->write_bits_(0x00UL, 8);
+}
 
+bool EmporiaVueComponent::swd_initialize_(uint32_t *idcode) {
+  this->swd_enter_debug_();
   if (!this->dp_read_(DP_IDCODE, idcode)) {
     return false;
   }
@@ -282,18 +269,6 @@ std::string EmporiaVueComponent::hex32_(uint32_t value) { return str_sprintf("0x
 std::string EmporiaVueComponent::hex16_(uint16_t value) { return str_sprintf("0x%04" PRIx16, value); }
 
 std::string EmporiaVueComponent::hex8_(uint8_t value) { return str_sprintf("0x%02" PRIx8, value); }
-
-std::string EmporiaVueComponent::hex_bytes_(const uint8_t *data, size_t len) {
-  std::string out;
-  out.reserve(len * 3);
-  for (size_t i = 0; i < len; i++) {
-    if (i != 0) {
-      out += ' ';
-    }
-    out += str_sprintf("%02" PRIx8, data[i]);
-  }
-  return out;
-}
 
 void EmporiaVueComponent::clock_half_period_() {
   if (this->clock_delay_us_ > 0) {

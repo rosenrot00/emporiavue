@@ -26,7 +26,6 @@ external_components:
 
 emporiavue:
   id: samd_reader
-  i2c_id: i2c_a
 ```
 
 Or use the private GitHub repository from a machine that has access to it:
@@ -38,7 +37,6 @@ external_components:
 
 emporiavue:
   id: samd_reader
-  i2c_id: i2c_a
 ```
 
 If ESPHome runs somewhere that is not authenticated to your private GitHub account, use a GitHub token in `secrets.yaml`:
@@ -56,8 +54,8 @@ external_components:
 
 The default config creates two Home Assistant buttons:
 
-- `Read SAMD09`: tries the SWD read check.
-- `Probe SAMD09 I2C`: reads one normal measurement packet from I2C address `0x64` and logs raw packet fields. This proves that the SAMD09 is alive on I2C, but it does not prove that SWD is wired correctly.
+- `Probe SAMD09 SWD`: reads only the SWD Debug Port IDCODE and logs the raw ACK value.
+- `Read SAMD09`: runs the fuller SWD read check, including DSU/NVM status reads after the Debug Port responds.
 
 You need the normal ESPHome `api:` setup in your node config for Home Assistant to see those buttons. The results appear in the ESPHome log/console at `INFO` level.
 
@@ -68,7 +66,6 @@ To test a reset-assisted read, set the reset pin explicitly:
 ```yaml
 emporiavue:
   id: samd_reader
-  i2c_id: i2c_a
   reset_pin: GPIO4
   reset_before_read: true
 ```
@@ -78,7 +75,6 @@ Optional diagnostic entities can be enabled if you later want the values in Home
 ```yaml
 emporiavue:
   id: samd_reader
-  i2c_id: i2c_a
   swd_idcode:
     name: "SAMD09 SWD IDCODE"
   dsu_did:
