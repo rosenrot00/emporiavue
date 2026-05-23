@@ -219,7 +219,8 @@ bool EmporiaVueComponent::swd_initialize_(uint32_t *idcode) {
 }
 
 void EmporiaVueComponent::prepare_pins_() {
-  if (this->reset_pin_ != nullptr) {
+  const bool use_reset_pin = this->reset_before_read_ && this->reset_pin_ != nullptr;
+  if (use_reset_pin) {
     this->reset_pin_->digital_write(true);
   }
   if (this->swclk_pin_ != nullptr) {
@@ -230,7 +231,7 @@ void EmporiaVueComponent::prepare_pins_() {
   }
 
   if (!this->pins_setup_) {
-    if (this->reset_pin_ != nullptr) {
+    if (use_reset_pin) {
       this->reset_pin_->setup();
     }
     if (this->swclk_pin_ != nullptr) {
@@ -242,7 +243,7 @@ void EmporiaVueComponent::prepare_pins_() {
     this->pins_setup_ = true;
   }
 
-  if (this->reset_pin_ != nullptr) {
+  if (use_reset_pin) {
     this->reset_pin_->pin_mode(gpio::FLAG_OUTPUT);
     this->reset_pin_->digital_write(true);
   }
@@ -256,7 +257,7 @@ void EmporiaVueComponent::prepare_pins_() {
 }
 
 void EmporiaVueComponent::release_pins_() {
-  if (this->reset_pin_ != nullptr) {
+  if (this->reset_before_read_ && this->reset_pin_ != nullptr) {
     this->reset_pin_->digital_write(true);
     this->reset_pin_->pin_mode(gpio::FLAG_INPUT | gpio::FLAG_PULLUP);
   }
