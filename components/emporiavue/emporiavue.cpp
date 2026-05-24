@@ -133,8 +133,10 @@ void EmporiaVueComponent::probe_swd() {
 
   uint8_t ack = 0;
   uint32_t swd_idcode = 0;
-  if (this->probe_idcode_("SWD line reset", false, &swd_idcode, &ack) ||
-      this->probe_idcode_("SWJ JTAG-to-SWD", true, &swd_idcode, &ack)) {
+  if (this->probe_idcode_("SWD line reset, DAPLink sample", false, false, &swd_idcode, &ack) ||
+      this->probe_idcode_("SWJ JTAG-to-SWD, DAPLink sample", true, false, &swd_idcode, &ack) ||
+      this->probe_idcode_("SWD line reset, ATC sample", false, true, &swd_idcode, &ack) ||
+      this->probe_idcode_("SWJ JTAG-to-SWD, ATC sample", true, true, &swd_idcode, &ack)) {
     this->release_pins_();
     if (this->swd_idcode_sensor_ != nullptr) {
       this->swd_idcode_sensor_->publish_state(hex32_(swd_idcode));
@@ -182,12 +184,15 @@ void EmporiaVueComponent::swd_enter_debug_(bool swj_select) {
     this->write_bits_(0xFFFFFFFFUL, 32);
     this->write_bits_(0xFFFFFFFFUL, 32);
   }
-  this->write_bits_(0x00UL, 8);
+  this->write_bits_(0x00UL, 32);
+  this->write_bits_(0x00UL, 32);
 }
 
-bool EmporiaVueComponent::probe_idcode_(const char *sequence_name, bool swj_select, uint32_t *idcode, uint8_t *ack) {
+bool EmporiaVueComponent::probe_idcode_(const char *sequence_name, bool swj_select, bool sample_before_clock,
+                                        uint32_t *idcode, uint8_t *ack) {
   ESP_LOGI(TAG, "Trying SAMD09 %s IDCODE probe", sequence_name);
   this->last_error_.clear();
+  this->sample_before_clock_ = sample_before_clock;
   this->swd_enter_debug_(swj_select);
   if (this->transfer_(false, true, DP_IDCODE, 0, idcode, ack)) {
     return true;
@@ -197,12 +202,22 @@ bool EmporiaVueComponent::probe_idcode_(const char *sequence_name, bool swj_sele
 }
 
 bool EmporiaVueComponent::swd_initialize_(uint32_t *idcode) {
-  const bool sequences[] = {false, true};
-  const char *sequence_names[] = {"SWD line reset", "SWJ JTAG-to-SWD"};
-  for (uint8_t i = 0; i < 2; i++) {
-    ESP_LOGI(TAG, "Trying SAMD09 %s initialization", sequence_names[i]);
+  struct ProbeVariant {
+    const char *name;
+    bool swj_select;
+    bool sample_before_clock;
+  };
+  const ProbeVariant variants[] = {
+      {"SWD line reset, DAPLink sample", false, false},
+      {"SWJ JTAG-to-SWD, DAPLink sample", true, false},
+      {"SWD line reset, ATC sample", false, true},
+      {"SWJ JTAG-to-SWD, ATC sample", true, true},
+  };
+  for (const auto &variant : variants) {
+    ESP_LOGI(TAG, "Trying SAMD09 %s initialization", variant.name);
     this->last_error_.clear();
-    this->swd_enter_debug_(sequences[i]);
+    this->sample_before_clock_ = variant.sample_before_clock;
+    this->swd_enter_debug_(variant.swj_select);
     if (!this->dp_read_(DP_IDCODE, idcode)) {
       continue;
     }
@@ -334,9 +349,12 @@ uint32_t EmporiaVueComponent::read_bits_(uint8_t bits) {
   }
   uint32_t value = 0;
   for (uint8_t i = 0; i < bits; i++) {
+    if (this->sample_before_clock_ && this->swdio_pin_->digital_read()) {
+      value |= 1UL << i;
+    }
     this->swclk_pin_->digital_write(false);
     this->clock_half_period_();
-    if (this->swdio_pin_->digital_read()) {
+    if (!this->sample_before_clock_ && this->swdio_pin_->digital_read()) {
       value |= 1UL << i;
     }
     this->swclk_pin_->digital_write(true);

@@ -70,7 +70,8 @@ class EmporiaVueComponent : public Component {
 
   void reset_target_();
   void swd_enter_debug_(bool swj_select);
-  bool probe_idcode_(const char *sequence_name, bool swj_select, uint32_t *idcode, uint8_t *ack);
+  bool probe_idcode_(const char *sequence_name, bool swj_select, bool sample_before_clock, uint32_t *idcode,
+                     uint8_t *ack);
   bool swd_initialize_(uint32_t *idcode);
   void prepare_pins_();
   void release_pins_();
@@ -119,6 +120,7 @@ class EmporiaVueComponent : public Component {
   bool init_pins_on_boot_{false};
   bool pins_setup_{false};
   bool direction_write_{true};
+  bool sample_before_clock_{false};
   bool selected_ap_valid_{false};
   uint8_t selected_ap_bank_{0};
   uint32_t cached_csw_{0xFFFFFFFFUL};
