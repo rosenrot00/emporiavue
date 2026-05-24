@@ -34,6 +34,7 @@ CONF_SWD_IDCODE = "swd_idcode"
 CONF_DSU_DID = "dsu_did"
 CONF_READ_ALLOWED = "read_allowed"
 CONF_RESET_BEFORE_READ = "reset_before_read"
+CONF_CONNECT_UNDER_RESET = "connect_under_reset"
 CONF_RESET_HOLD_TIME = "reset_hold_time"
 CONF_RESET_RELEASE_TIME = "reset_release_time"
 CONF_CLOCK_DELAY = "clock_delay"
@@ -47,6 +48,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_SWCLK_PIN, default="GPIO14"): pins.internal_gpio_output_pin_schema,
         cv.Optional(CONF_RESET_PIN): pins.internal_gpio_output_pin_schema,
         cv.Optional(CONF_RESET_BEFORE_READ, default=False): cv.boolean,
+        cv.Optional(CONF_CONNECT_UNDER_RESET, default=False): cv.boolean,
         cv.Optional(CONF_RESET_HOLD_TIME, default="100ms"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_RESET_RELEASE_TIME, default="50ms"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_CLOCK_DELAY, default=2): cv.int_range(min=0, max=50),
@@ -109,6 +111,7 @@ async def to_code(config):
         cg.add(var.set_reset_pin(reset_pin))
 
     cg.add(var.set_reset_before_read(config[CONF_RESET_BEFORE_READ]))
+    cg.add(var.set_connect_under_reset(config[CONF_CONNECT_UNDER_RESET]))
     cg.add(var.set_reset_hold_time(config[CONF_RESET_HOLD_TIME]))
     cg.add(var.set_reset_release_time(config[CONF_RESET_RELEASE_TIME]))
     cg.add(var.set_clock_delay_us(config[CONF_CLOCK_DELAY]))

@@ -59,7 +59,7 @@ The default config creates two Home Assistant buttons:
 
 You need the normal ESPHome `api:` setup in your node config for Home Assistant to see those buttons. The results appear in the ESPHome log/console at `INFO` level.
 
-By default the SWD pins are not initialized at boot. `init_pins_on_boot` defaults to `false`, so SWDIO/SWCLK are only touched while a SAMD09 button action is running. The optional reset pin is only touched when `reset_before_read: true` is set. After the check, the component releases the touched pins back to input/pullup.
+By default the SWD pins are not initialized at boot. `init_pins_on_boot` defaults to `false`, so SWDIO/SWCLK are only touched while a SAMD09 button action is running. The optional reset pin is only touched when `reset_before_read: true` or `connect_under_reset: true` is set. After the check, the component releases the touched pins back to input/pullup.
 
 To test a reset-assisted read, set the reset pin explicitly:
 
@@ -68,6 +68,15 @@ emporiavue:
   id: samd_reader
   reset_pin: GPIO4
   reset_before_read: true
+```
+
+If the SAMD firmware appears to take over the SWD pins before the probe can connect, try connect-under-reset. This keeps reset asserted while the SWD Debug Port IDCODE is probed, then releases reset again:
+
+```yaml
+emporiavue:
+  id: samd_reader
+  reset_pin: GPIO4
+  connect_under_reset: true
 ```
 
 Optional diagnostic entities can be enabled if you later want the values in Home Assistant too:

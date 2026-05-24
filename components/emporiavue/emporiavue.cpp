@@ -22,6 +22,7 @@ void EmporiaVueComponent::dump_config() {
   LOG_PIN("  SWCLK Pin: ", this->swclk_pin_);
   LOG_PIN("  Reset Pin: ", this->reset_pin_);
   ESP_LOGCONFIG(TAG, "  Reset before read: %s", YESNO(this->reset_before_read_));
+  ESP_LOGCONFIG(TAG, "  Connect under reset: %s", YESNO(this->connect_under_reset_));
   ESP_LOGCONFIG(TAG, "  Reset hold time: %" PRIu32 " ms", this->reset_hold_time_ms_);
   ESP_LOGCONFIG(TAG, "  Reset release time: %" PRIu32 " ms", this->reset_release_time_ms_);
   ESP_LOGCONFIG(TAG, "  Clock delay: %u us", this->clock_delay_us_);
@@ -44,10 +45,11 @@ void EmporiaVueComponent::read_samd() {
   }
 
   this->prepare_pins_();
-  this->reset_target_();
+  this->begin_swd_session_();
 
   uint32_t swd_idcode = 0;
   if (!this->swd_initialize_(&swd_idcode)) {
+    this->finish_swd_session_();
     this->release_pins_();
     this->publish_status_("failed: " + this->last_error_);
     ESP_LOGW(TAG, "SAMD09 read check failed: %s", this->last_error_.c_str());
@@ -58,11 +60,13 @@ void EmporiaVueComponent::read_samd() {
   }
 
   if (!this->power_up_debug_()) {
+    this->finish_swd_session_();
     this->release_pins_();
     this->publish_status_("failed: " + this->last_error_);
     ESP_LOGW(TAG, "SAMD09 read check failed: %s", this->last_error_.c_str());
     return;
   }
+  this->finish_swd_session_();
 
   if (!this->verify_mem_ap_()) {
     this->release_pins_();
@@ -129,7 +133,7 @@ void EmporiaVueComponent::probe_swd() {
   this->prepare_pins_();
   const bool swdio_idle = this->swdio_pin_->digital_read();
   ESP_LOGI(TAG, "SAMD09 SWD line state before probe: SWDIO=%u", swdio_idle ? 1 : 0);
-  this->reset_target_();
+  this->begin_swd_session_();
 
   uint8_t ack = 0;
   uint32_t swd_idcode = 0;
@@ -137,6 +141,7 @@ void EmporiaVueComponent::probe_swd() {
       this->probe_idcode_("SWJ JTAG-to-SWD, DAPLink sample", true, false, &swd_idcode, &ack) ||
       this->probe_idcode_("SWD line reset, ATC sample", false, true, &swd_idcode, &ack) ||
       this->probe_idcode_("SWJ JTAG-to-SWD, ATC sample", true, true, &swd_idcode, &ack)) {
+    this->finish_swd_session_();
     this->release_pins_();
     if (this->swd_idcode_sensor_ != nullptr) {
       this->swd_idcode_sensor_->publish_state(hex32_(swd_idcode));
@@ -145,6 +150,7 @@ void EmporiaVueComponent::probe_swd() {
     return;
   }
 
+  this->finish_swd_session_();
   this->release_pins_();
   if (ack == SWD_ACK_WAIT) {
     ESP_LOGW(TAG, "SAMD09 SWD probe got WAIT ACK=%s while reading DP IDCODE", hex8_(ack).c_str());
@@ -161,11 +167,42 @@ void EmporiaVueComponent::reset_target_() {
   if (!this->reset_before_read_ || this->reset_pin_ == nullptr) {
     return;
   }
+  this->assert_reset_();
+  this->deassert_reset_();
+}
+
+void EmporiaVueComponent::assert_reset_() {
   this->reset_pin_->pin_mode(gpio::FLAG_OUTPUT);
   this->reset_pin_->digital_write(false);
   delay(this->reset_hold_time_ms_);
+}
+
+void EmporiaVueComponent::deassert_reset_() {
   this->reset_pin_->digital_write(true);
   delay(this->reset_release_time_ms_);
+}
+
+bool EmporiaVueComponent::connect_under_reset_active_() const {
+  return this->connect_under_reset_ && this->reset_pin_ != nullptr;
+}
+
+void EmporiaVueComponent::begin_swd_session_() {
+  if (this->connect_under_reset_active_()) {
+    ESP_LOGI(TAG, "Asserting SAMD09 reset for connect-under-reset");
+    this->assert_reset_();
+    return;
+  }
+  if (this->connect_under_reset_ && this->reset_pin_ == nullptr) {
+    ESP_LOGW(TAG, "connect_under_reset is enabled but reset_pin is not configured");
+  }
+  this->reset_target_();
+}
+
+void EmporiaVueComponent::finish_swd_session_() {
+  if (this->connect_under_reset_active_()) {
+    ESP_LOGI(TAG, "Releasing SAMD09 reset after connect-under-reset");
+    this->deassert_reset_();
+  }
 }
 
 void EmporiaVueComponent::swd_enter_debug_(bool swj_select) {
@@ -234,7 +271,7 @@ bool EmporiaVueComponent::swd_initialize_(uint32_t *idcode) {
 }
 
 void EmporiaVueComponent::prepare_pins_() {
-  const bool use_reset_pin = this->reset_before_read_ && this->reset_pin_ != nullptr;
+  const bool use_reset_pin = (this->reset_before_read_ || this->connect_under_reset_) && this->reset_pin_ != nullptr;
   if (use_reset_pin) {
     this->reset_pin_->digital_write(true);
   }
@@ -272,7 +309,7 @@ void EmporiaVueComponent::prepare_pins_() {
 }
 
 void EmporiaVueComponent::release_pins_() {
-  if (this->reset_before_read_ && this->reset_pin_ != nullptr) {
+  if ((this->reset_before_read_ || this->connect_under_reset_) && this->reset_pin_ != nullptr) {
     this->reset_pin_->digital_write(true);
     this->reset_pin_->pin_mode(gpio::FLAG_INPUT | gpio::FLAG_PULLUP);
   }
