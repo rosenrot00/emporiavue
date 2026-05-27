@@ -56,6 +56,7 @@ The default config creates two Home Assistant buttons:
 
 - `Probe SAMD09 SWD`: reads only the SWD Debug Port IDCODE and logs the raw ACK value. It tries a plain SWD line-reset sequence, the standard 16-bit SWJ JTAG-to-SWD select sequence, and the 32-bit `0xe79e` variant used by odewdney's MicroPython SWD script.
 - `Read SAMD09`: runs the fuller SWD read check, including DSU/NVM status reads after the Debug Port responds.
+- `Dump SAMD09 Flash Blocks`: reads a small number of flash blocks and logs numbered hex chunks that can later be reassembled.
 
 You need the normal ESPHome `api:` setup in your node config for Home Assistant to see those buttons. The results appear in the ESPHome log/console at `INFO` level.
 
@@ -70,6 +71,22 @@ emporiavue:
   reset_before_read: true
   reset_hold_time: 300ms
   reset_release_time: 1ms
+```
+
+The flash dump button defaults to five 64-byte blocks starting at flash address `0x00000000`. It does not reset after each block; the component attaches once over SWD, powers up the Debug Port, then reads the blocks sequentially. Each block is logged as one line:
+
+```text
+SAMD09_FLASH_DUMP block=0000 addr=0x00000000 len=64 data=...
+```
+
+The initial test size can be changed:
+
+```yaml
+emporiavue:
+  id: samd_reader
+  dump_start_address: 0
+  dump_block_size: 64
+  dump_block_count: 5
 ```
 
 If the SAMD firmware appears to take over the SWD pins before the probe can connect, try connect-under-reset. This keeps reset asserted while the SWD Debug Port IDCODE is probed, then releases reset again:

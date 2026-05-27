@@ -29,6 +29,9 @@ class EmporiaVueComponent : public Component {
   void set_clock_delay_us(uint8_t clock_delay_us) { this->clock_delay_us_ = clock_delay_us; }
   void set_retry_count(uint8_t retry_count) { this->retry_count_ = retry_count; }
   void set_init_pins_on_boot(bool init_pins_on_boot) { this->init_pins_on_boot_ = init_pins_on_boot; }
+  void set_dump_start_address(uint32_t dump_start_address) { this->dump_start_address_ = dump_start_address; }
+  void set_dump_block_size(uint16_t dump_block_size) { this->dump_block_size_ = dump_block_size; }
+  void set_dump_block_count(uint16_t dump_block_count) { this->dump_block_count_ = dump_block_count; }
 
   void set_swd_idcode_sensor(text_sensor::TextSensor *sensor) { this->swd_idcode_sensor_ = sensor; }
   void set_dsu_did_sensor(text_sensor::TextSensor *sensor) { this->dsu_did_sensor_ = sensor; }
@@ -37,6 +40,7 @@ class EmporiaVueComponent : public Component {
 
   void read_samd();
   void probe_swd();
+  void dump_flash();
 
  protected:
   static constexpr uint8_t DP_ABORT = 0x00;
@@ -87,6 +91,7 @@ class EmporiaVueComponent : public Component {
   static std::string hex32_(uint32_t value);
   static std::string hex16_(uint16_t value);
   static std::string hex8_(uint8_t value);
+  static void append_hex_byte_(std::string *output, uint8_t value);
 
   void clock_half_period_();
   void swclk_pulse_();
@@ -107,6 +112,7 @@ class EmporiaVueComponent : public Component {
   bool mem_read8_(uint32_t address, uint8_t *value);
   bool mem_read16_(uint32_t address, uint16_t *value);
   bool mem_read32_(uint32_t address, uint32_t *value);
+  bool dump_flash_block_(uint32_t address, uint16_t length, std::string *hex_data);
   bool power_up_debug_();
   bool verify_mem_ap_();
 
@@ -124,6 +130,9 @@ class EmporiaVueComponent : public Component {
   uint32_t reset_release_time_ms_{50};
   uint8_t clock_delay_us_{2};
   uint8_t retry_count_{40};
+  uint32_t dump_start_address_{FLASH_START};
+  uint16_t dump_block_size_{64};
+  uint16_t dump_block_count_{5};
   bool init_pins_on_boot_{false};
   bool pins_setup_{false};
   bool direction_write_{true};
@@ -142,6 +151,11 @@ class EmporiaVueReadButton : public button::Button, public Parented<EmporiaVueCo
 class EmporiaVueProbeButton : public button::Button, public Parented<EmporiaVueComponent> {
  protected:
   void press_action() override { this->parent_->probe_swd(); }
+};
+
+class EmporiaVueDumpFlashButton : public button::Button, public Parented<EmporiaVueComponent> {
+ protected:
+  void press_action() override { this->parent_->dump_flash(); }
 };
 
 }  // namespace emporiavue

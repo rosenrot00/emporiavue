@@ -25,14 +25,21 @@ EmporiaVueReadButton = emporiavue_ns.class_(
 EmporiaVueProbeButton = emporiavue_ns.class_(
     "EmporiaVueProbeButton", button.Button
 )
+EmporiaVueDumpFlashButton = emporiavue_ns.class_(
+    "EmporiaVueDumpFlashButton", button.Button
+)
 
 CONF_SWCLK_PIN = "swclk_pin"
 CONF_SWDIO_PIN = "swdio_pin"
 CONF_READ_BUTTON = "read_button"
 CONF_PROBE_BUTTON = "probe_button"
+CONF_DUMP_FLASH_BUTTON = "dump_flash_button"
 CONF_SWD_IDCODE = "swd_idcode"
 CONF_DSU_DID = "dsu_did"
 CONF_READ_ALLOWED = "read_allowed"
+CONF_DUMP_START_ADDRESS = "dump_start_address"
+CONF_DUMP_BLOCK_SIZE = "dump_block_size"
+CONF_DUMP_BLOCK_COUNT = "dump_block_count"
 CONF_RESET_BEFORE_READ = "reset_before_read"
 CONF_CONNECT_UNDER_RESET = "connect_under_reset"
 CONF_RESET_HOLD_TIME = "reset_hold_time"
@@ -54,6 +61,9 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_CLOCK_DELAY, default=2): cv.int_range(min=0, max=50),
         cv.Optional(CONF_RETRY_COUNT, default=40): cv.int_range(min=1, max=255),
         cv.Optional(CONF_INIT_PINS_ON_BOOT, default=False): cv.boolean,
+        cv.Optional(CONF_DUMP_START_ADDRESS, default=0): cv.int_range(min=0, max=0xFFFFFFFF),
+        cv.Optional(CONF_DUMP_BLOCK_SIZE, default=64): cv.int_range(min=1, max=128),
+        cv.Optional(CONF_DUMP_BLOCK_COUNT, default=5): cv.int_range(min=1, max=32),
         cv.Optional(
             CONF_SWD_IDCODE,
         ): text_sensor.text_sensor_schema(
@@ -94,6 +104,14 @@ CONFIG_SCHEMA = cv.Schema(
             icon=ICON_CHIP,
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
+        cv.Optional(
+            CONF_DUMP_FLASH_BUTTON,
+            default={CONF_NAME: "Dump SAMD09 Flash Blocks"},
+        ): button.button_schema(
+            EmporiaVueDumpFlashButton,
+            icon=ICON_DATABASE,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -117,6 +135,9 @@ async def to_code(config):
     cg.add(var.set_clock_delay_us(config[CONF_CLOCK_DELAY]))
     cg.add(var.set_retry_count(config[CONF_RETRY_COUNT]))
     cg.add(var.set_init_pins_on_boot(config[CONF_INIT_PINS_ON_BOOT]))
+    cg.add(var.set_dump_start_address(config[CONF_DUMP_START_ADDRESS]))
+    cg.add(var.set_dump_block_size(config[CONF_DUMP_BLOCK_SIZE]))
+    cg.add(var.set_dump_block_count(config[CONF_DUMP_BLOCK_COUNT]))
 
     if swd_idcode_config := config.get(CONF_SWD_IDCODE):
         sens = await text_sensor.new_text_sensor(swd_idcode_config)
@@ -135,4 +156,7 @@ async def to_code(config):
         await cg.register_parented(btn, var)
     if probe_button_config := config.get(CONF_PROBE_BUTTON):
         btn = await button.new_button(probe_button_config)
+        await cg.register_parented(btn, var)
+    if dump_flash_button_config := config.get(CONF_DUMP_FLASH_BUTTON):
+        btn = await button.new_button(dump_flash_button_config)
         await cg.register_parented(btn, var)

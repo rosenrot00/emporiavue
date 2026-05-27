@@ -26,6 +26,9 @@ void EmporiaVueComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Reset hold time: %" PRIu32 " ms", this->reset_hold_time_ms_);
   ESP_LOGCONFIG(TAG, "  Reset release time: %" PRIu32 " ms", this->reset_release_time_ms_);
   ESP_LOGCONFIG(TAG, "  Clock delay: %u us", this->clock_delay_us_);
+  ESP_LOGCONFIG(TAG, "  Dump start address: %s", hex32_(this->dump_start_address_).c_str());
+  ESP_LOGCONFIG(TAG, "  Dump block size: %u bytes", static_cast<unsigned>(this->dump_block_size_));
+  ESP_LOGCONFIG(TAG, "  Dump block count: %u", static_cast<unsigned>(this->dump_block_count_));
   ESP_LOGCONFIG(TAG, "  Init pins on boot: %s", YESNO(this->init_pins_on_boot_));
   LOG_TEXT_SENSOR("  ", "SWD IDCODE", this->swd_idcode_sensor_);
   LOG_TEXT_SENSOR("  ", "DSU DID", this->dsu_did_sensor_);
@@ -162,6 +165,69 @@ void EmporiaVueComponent::probe_swd() {
   } else {
     ESP_LOGW(TAG, "SAMD09 SWD probe failed: invalid ACK=%s while reading DP IDCODE", hex8_(ack).c_str());
   }
+}
+
+void EmporiaVueComponent::dump_flash() {
+  this->last_error_.clear();
+  ESP_LOGI(TAG, "Starting SAMD09 flash dump: start=%s, blocks=%u, block_size=%u", hex32_(this->dump_start_address_).c_str(),
+           static_cast<unsigned>(this->dump_block_count_), static_cast<unsigned>(this->dump_block_size_));
+  this->publish_status_("dumping flash");
+
+  if (this->swdio_pin_ == nullptr || this->swclk_pin_ == nullptr) {
+    this->set_error_("SWD pins are not configured");
+    this->publish_status_("failed: " + this->last_error_);
+    return;
+  }
+
+  this->prepare_pins_();
+  this->begin_swd_session_();
+
+  uint32_t swd_idcode = 0;
+  if (!this->swd_initialize_(&swd_idcode)) {
+    this->finish_swd_session_();
+    this->release_pins_();
+    this->publish_status_("failed: " + this->last_error_);
+    ESP_LOGW(TAG, "SAMD09 flash dump failed: %s", this->last_error_.c_str());
+    return;
+  }
+  if (this->swd_idcode_sensor_ != nullptr) {
+    this->swd_idcode_sensor_->publish_state(hex32_(swd_idcode));
+  }
+
+  if (!this->power_up_debug_()) {
+    this->finish_swd_session_();
+    this->release_pins_();
+    this->publish_status_("failed: " + this->last_error_);
+    ESP_LOGW(TAG, "SAMD09 flash dump failed: %s", this->last_error_.c_str());
+    return;
+  }
+  this->finish_swd_session_();
+
+  if (!this->verify_mem_ap_()) {
+    this->release_pins_();
+    this->publish_status_("failed: " + this->last_error_);
+    ESP_LOGW(TAG, "SAMD09 flash dump failed: %s", this->last_error_.c_str());
+    return;
+  }
+
+  for (uint16_t block = 0; block < this->dump_block_count_; block++) {
+    const uint32_t address = this->dump_start_address_ + (uint32_t(block) * this->dump_block_size_);
+    std::string hex_data;
+    if (!this->dump_flash_block_(address, this->dump_block_size_, &hex_data)) {
+      this->release_pins_();
+      this->publish_status_("failed: " + this->last_error_);
+      ESP_LOGW(TAG, "SAMD09 flash dump failed at block=%u addr=%s: %s", static_cast<unsigned>(block),
+               hex32_(address).c_str(), this->last_error_.c_str());
+      return;
+    }
+    ESP_LOGI(TAG, "SAMD09_FLASH_DUMP block=%04u addr=%s len=%u data=%s", static_cast<unsigned>(block),
+             hex32_(address).c_str(), static_cast<unsigned>(this->dump_block_size_), hex_data.c_str());
+  }
+
+  this->release_pins_();
+  this->publish_status_("flash dump done");
+  ESP_LOGI(TAG, "SAMD09 flash dump complete: blocks=%u, block_size=%u",
+           static_cast<unsigned>(this->dump_block_count_), static_cast<unsigned>(this->dump_block_size_));
 }
 
 void EmporiaVueComponent::reset_target_() {
@@ -348,6 +414,12 @@ std::string EmporiaVueComponent::hex32_(uint32_t value) { return str_sprintf("0x
 std::string EmporiaVueComponent::hex16_(uint16_t value) { return str_sprintf("0x%04" PRIx16, value); }
 
 std::string EmporiaVueComponent::hex8_(uint8_t value) { return str_sprintf("0x%02" PRIx8, value); }
+
+void EmporiaVueComponent::append_hex_byte_(std::string *output, uint8_t value) {
+  static const char HEX[] = "0123456789abcdef";
+  output->push_back(HEX[(value >> 4) & 0x0F]);
+  output->push_back(HEX[value & 0x0F]);
+}
 
 void EmporiaVueComponent::clock_half_period_() {
   if (this->clock_delay_us_ > 0) {
@@ -601,6 +673,36 @@ bool EmporiaVueComponent::mem_read16_(uint32_t address, uint16_t *value) {
 
 bool EmporiaVueComponent::mem_read32_(uint32_t address, uint32_t *value) {
   return this->mem_read_(address, MEM_SIZE_WORD, value);
+}
+
+bool EmporiaVueComponent::dump_flash_block_(uint32_t address, uint16_t length, std::string *hex_data) {
+  hex_data->clear();
+  hex_data->reserve(uint32_t(length) * 2U);
+
+  uint16_t offset = 0;
+  while (offset < length) {
+    const uint32_t current_address = address + offset;
+    const uint16_t remaining = length - offset;
+    if ((current_address & 0x03U) == 0 && remaining >= 4) {
+      uint32_t word = 0;
+      if (!this->mem_read32_(current_address, &word)) {
+        return false;
+      }
+      append_hex_byte_(hex_data, static_cast<uint8_t>(word & 0xFFU));
+      append_hex_byte_(hex_data, static_cast<uint8_t>((word >> 8) & 0xFFU));
+      append_hex_byte_(hex_data, static_cast<uint8_t>((word >> 16) & 0xFFU));
+      append_hex_byte_(hex_data, static_cast<uint8_t>((word >> 24) & 0xFFU));
+      offset += 4;
+    } else {
+      uint8_t byte = 0;
+      if (!this->mem_read8_(current_address, &byte)) {
+        return false;
+      }
+      append_hex_byte_(hex_data, byte);
+      offset++;
+    }
+  }
+  return true;
 }
 
 bool EmporiaVueComponent::power_up_debug_() {
