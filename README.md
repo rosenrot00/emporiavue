@@ -73,7 +73,7 @@ emporiavue:
   reset_release_time: 1ms
 ```
 
-The flash dump button defaults to five 64-byte blocks starting at flash address `0x00000000`. It does not reset after each block; the component attaches once over SWD, powers up the Debug Port, then reads one block per ESPHome `loop()` cycle so other components get scheduler time between blocks. Each block is logged as one line:
+The flash dump button defaults to five 64-byte blocks starting at flash address `0x00000000`. It does not reset after each block; the component attaches once over SWD, powers up the Debug Port, then reads one block per ESPHome `loop()` cycle so other components get scheduler time between blocks. By default it halts the SAMD09 core only while reading each block and resumes it between blocks. Each block is logged as one line:
 
 ```text
 SAMD09_FLASH_DUMP block=0000 addr=0x00000000 len=64 data=...
@@ -87,6 +87,8 @@ emporiavue:
   dump_start_address: 0
   dump_block_size: 64
   dump_block_count: 5
+  dump_halt_core: true
+  dump_resume_between_blocks: true
 ```
 
 If the SAMD firmware appears to take over the SWD pins before the probe can connect, try connect-under-reset. This keeps reset asserted while the SWD Debug Port IDCODE is probed, then releases reset again:

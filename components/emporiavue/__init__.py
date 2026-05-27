@@ -40,6 +40,8 @@ CONF_READ_ALLOWED = "read_allowed"
 CONF_DUMP_START_ADDRESS = "dump_start_address"
 CONF_DUMP_BLOCK_SIZE = "dump_block_size"
 CONF_DUMP_BLOCK_COUNT = "dump_block_count"
+CONF_DUMP_HALT_CORE = "dump_halt_core"
+CONF_DUMP_RESUME_BETWEEN_BLOCKS = "dump_resume_between_blocks"
 CONF_RESET_BEFORE_READ = "reset_before_read"
 CONF_CONNECT_UNDER_RESET = "connect_under_reset"
 CONF_RESET_HOLD_TIME = "reset_hold_time"
@@ -64,6 +66,8 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_DUMP_START_ADDRESS, default=0): cv.int_range(min=0, max=0xFFFFFFFF),
         cv.Optional(CONF_DUMP_BLOCK_SIZE, default=64): cv.int_range(min=1, max=128),
         cv.Optional(CONF_DUMP_BLOCK_COUNT, default=5): cv.int_range(min=1, max=32),
+        cv.Optional(CONF_DUMP_HALT_CORE, default=True): cv.boolean,
+        cv.Optional(CONF_DUMP_RESUME_BETWEEN_BLOCKS, default=True): cv.boolean,
         cv.Optional(
             CONF_SWD_IDCODE,
         ): text_sensor.text_sensor_schema(
@@ -138,6 +142,8 @@ async def to_code(config):
     cg.add(var.set_dump_start_address(config[CONF_DUMP_START_ADDRESS]))
     cg.add(var.set_dump_block_size(config[CONF_DUMP_BLOCK_SIZE]))
     cg.add(var.set_dump_block_count(config[CONF_DUMP_BLOCK_COUNT]))
+    cg.add(var.set_dump_halt_core(config[CONF_DUMP_HALT_CORE]))
+    cg.add(var.set_dump_resume_between_blocks(config[CONF_DUMP_RESUME_BETWEEN_BLOCKS]))
 
     if swd_idcode_config := config.get(CONF_SWD_IDCODE):
         sens = await text_sensor.new_text_sensor(swd_idcode_config)

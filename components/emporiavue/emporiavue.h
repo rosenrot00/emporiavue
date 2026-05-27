@@ -33,6 +33,10 @@ class EmporiaVueComponent : public Component {
   void set_dump_start_address(uint32_t dump_start_address) { this->dump_start_address_ = dump_start_address; }
   void set_dump_block_size(uint16_t dump_block_size) { this->dump_block_size_ = dump_block_size; }
   void set_dump_block_count(uint16_t dump_block_count) { this->dump_block_count_ = dump_block_count; }
+  void set_dump_halt_core(bool dump_halt_core) { this->dump_halt_core_ = dump_halt_core; }
+  void set_dump_resume_between_blocks(bool dump_resume_between_blocks) {
+    this->dump_resume_between_blocks_ = dump_resume_between_blocks;
+  }
 
   void set_swd_idcode_sensor(text_sensor::TextSensor *sensor) { this->swd_idcode_sensor_ = sensor; }
   void set_dsu_did_sensor(text_sensor::TextSensor *sensor) { this->dsu_did_sensor_ = sensor; }
@@ -67,6 +71,10 @@ class EmporiaVueComponent : public Component {
   static constexpr uint32_t DSU_DID = DSU_EXTERNAL_BASE + 0x18UL;
   static constexpr uint32_t NVMCTRL_STATUS = 0x41004018UL;
   static constexpr uint32_t FLASH_START = 0x00000000UL;
+  static constexpr uint32_t DHCSR = 0xE000EDF0UL;
+  static constexpr uint32_t DHCSR_DBGKEY = 0xA05F0000UL;
+  static constexpr uint32_t DHCSR_C_DEBUGEN = 0x00000001UL;
+  static constexpr uint32_t DHCSR_C_HALT = 0x00000002UL;
 
   enum MemSize : uint8_t {
     MEM_SIZE_BYTE = 0,
@@ -113,6 +121,10 @@ class EmporiaVueComponent : public Component {
   bool mem_read8_(uint32_t address, uint8_t *value);
   bool mem_read16_(uint32_t address, uint16_t *value);
   bool mem_read32_(uint32_t address, uint32_t *value);
+  bool mem_write_(uint32_t address, MemSize size, uint32_t value);
+  bool mem_write32_(uint32_t address, uint32_t value);
+  bool halt_core_();
+  bool resume_core_();
   bool dump_flash_block_(uint32_t address, uint16_t length, std::string *hex_data);
   bool power_up_debug_();
   bool verify_mem_ap_();
@@ -134,6 +146,8 @@ class EmporiaVueComponent : public Component {
   uint32_t dump_start_address_{FLASH_START};
   uint16_t dump_block_size_{64};
   uint16_t dump_block_count_{5};
+  bool dump_halt_core_{true};
+  bool dump_resume_between_blocks_{true};
   bool dump_active_{false};
   uint16_t dump_next_block_{0};
   bool init_pins_on_boot_{false};
