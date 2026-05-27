@@ -73,7 +73,7 @@ emporiavue:
   reset_release_time: 1ms
 ```
 
-The flash dump button defaults to five 64-byte blocks starting at flash address `0x00000000`. It does not reset after each block; the component attaches once over SWD, powers up the Debug Port, then reads the blocks sequentially. Each block is logged as one line:
+The flash dump button defaults to five 64-byte blocks starting at flash address `0x00000000`. It does not reset after each block; the component attaches once over SWD, powers up the Debug Port, then reads one block per ESPHome `loop()` cycle so other components get scheduler time between blocks. Each block is logged as one line:
 
 ```text
 SAMD09_FLASH_DUMP block=0000 addr=0x00000000 len=64 data=...

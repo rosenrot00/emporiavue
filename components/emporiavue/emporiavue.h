@@ -16,6 +16,7 @@ namespace emporiavue {
 class EmporiaVueComponent : public Component {
  public:
   void setup() override;
+  void loop() override;
   void dump_config() override;
   float get_setup_priority() const override { return setup_priority::DATA; }
 
@@ -133,6 +134,8 @@ class EmporiaVueComponent : public Component {
   uint32_t dump_start_address_{FLASH_START};
   uint16_t dump_block_size_{64};
   uint16_t dump_block_count_{5};
+  bool dump_active_{false};
+  uint16_t dump_next_block_{0};
   bool init_pins_on_boot_{false};
   bool pins_setup_{false};
   bool direction_write_{true};

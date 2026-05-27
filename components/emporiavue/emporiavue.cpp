@@ -16,6 +16,36 @@ void EmporiaVueComponent::setup() {
   }
 }
 
+void EmporiaVueComponent::loop() {
+  if (!this->dump_active_) {
+    return;
+  }
+
+  const uint16_t block = this->dump_next_block_;
+  const uint32_t address = this->dump_start_address_ + (uint32_t(block) * this->dump_block_size_);
+  std::string hex_data;
+  if (!this->dump_flash_block_(address, this->dump_block_size_, &hex_data)) {
+    this->dump_active_ = false;
+    this->release_pins_();
+    this->publish_status_("failed: " + this->last_error_);
+    ESP_LOGW(TAG, "SAMD09 flash dump failed at block=%u addr=%s: %s", static_cast<unsigned>(block),
+             hex32_(address).c_str(), this->last_error_.c_str());
+    return;
+  }
+
+  ESP_LOGI(TAG, "SAMD09_FLASH_DUMP block=%04u addr=%s len=%u data=%s", static_cast<unsigned>(block),
+           hex32_(address).c_str(), static_cast<unsigned>(this->dump_block_size_), hex_data.c_str());
+  this->dump_next_block_++;
+
+  if (this->dump_next_block_ >= this->dump_block_count_) {
+    this->dump_active_ = false;
+    this->release_pins_();
+    this->publish_status_("flash dump done");
+    ESP_LOGI(TAG, "SAMD09 flash dump complete: blocks=%u, block_size=%u",
+             static_cast<unsigned>(this->dump_block_count_), static_cast<unsigned>(this->dump_block_size_));
+  }
+}
+
 void EmporiaVueComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "EmporiaVue SAMD09 SWD reader:");
   LOG_PIN("  SWDIO Pin: ", this->swdio_pin_);
@@ -37,6 +67,11 @@ void EmporiaVueComponent::dump_config() {
 }
 
 void EmporiaVueComponent::read_samd() {
+  if (this->dump_active_) {
+    ESP_LOGW(TAG, "SAMD09 flash dump is running; read check ignored");
+    return;
+  }
+
   this->last_error_.clear();
   ESP_LOGI(TAG, "Starting SAMD09 SWD read check");
   this->publish_status_("reading");
@@ -125,6 +160,11 @@ void EmporiaVueComponent::read_samd() {
 }
 
 void EmporiaVueComponent::probe_swd() {
+  if (this->dump_active_) {
+    ESP_LOGW(TAG, "SAMD09 flash dump is running; SWD probe ignored");
+    return;
+  }
+
   this->last_error_.clear();
   ESP_LOGI(TAG, "Starting SAMD09 SWD probe");
 
@@ -168,6 +208,11 @@ void EmporiaVueComponent::probe_swd() {
 }
 
 void EmporiaVueComponent::dump_flash() {
+  if (this->dump_active_) {
+    ESP_LOGW(TAG, "SAMD09 flash dump is already running");
+    return;
+  }
+
   this->last_error_.clear();
   ESP_LOGI(TAG, "Starting SAMD09 flash dump: start=%s, blocks=%u, block_size=%u", hex32_(this->dump_start_address_).c_str(),
            static_cast<unsigned>(this->dump_block_count_), static_cast<unsigned>(this->dump_block_size_));
@@ -210,24 +255,9 @@ void EmporiaVueComponent::dump_flash() {
     return;
   }
 
-  for (uint16_t block = 0; block < this->dump_block_count_; block++) {
-    const uint32_t address = this->dump_start_address_ + (uint32_t(block) * this->dump_block_size_);
-    std::string hex_data;
-    if (!this->dump_flash_block_(address, this->dump_block_size_, &hex_data)) {
-      this->release_pins_();
-      this->publish_status_("failed: " + this->last_error_);
-      ESP_LOGW(TAG, "SAMD09 flash dump failed at block=%u addr=%s: %s", static_cast<unsigned>(block),
-               hex32_(address).c_str(), this->last_error_.c_str());
-      return;
-    }
-    ESP_LOGI(TAG, "SAMD09_FLASH_DUMP block=%04u addr=%s len=%u data=%s", static_cast<unsigned>(block),
-             hex32_(address).c_str(), static_cast<unsigned>(this->dump_block_size_), hex_data.c_str());
-  }
-
-  this->release_pins_();
-  this->publish_status_("flash dump done");
-  ESP_LOGI(TAG, "SAMD09 flash dump complete: blocks=%u, block_size=%u",
-           static_cast<unsigned>(this->dump_block_count_), static_cast<unsigned>(this->dump_block_size_));
+  this->dump_next_block_ = 0;
+  this->dump_active_ = true;
+  ESP_LOGI(TAG, "SAMD09 flash dump job started; blocks will be read one per loop cycle");
 }
 
 void EmporiaVueComponent::reset_target_() {
