@@ -50,8 +50,8 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_RESET_BEFORE_READ, default=False): cv.boolean,
         cv.Optional(CONF_CONNECT_UNDER_RESET, default=False): cv.boolean,
         cv.Optional(CONF_RESET_HOLD_TIME, default="100ms"): cv.positive_time_period_milliseconds,
-        cv.Optional(CONF_RESET_RELEASE_TIME, default="1ms"): cv.positive_time_period_milliseconds,
-        cv.Optional(CONF_CLOCK_DELAY, default=2): cv.int_range(min=0, max=1000),
+        cv.Optional(CONF_RESET_RELEASE_TIME, default="50ms"): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_CLOCK_DELAY, default=2): cv.int_range(min=0, max=50),
         cv.Optional(CONF_RETRY_COUNT, default=40): cv.int_range(min=1, max=255),
         cv.Optional(CONF_INIT_PINS_ON_BOOT, default=False): cv.boolean,
         cv.Optional(

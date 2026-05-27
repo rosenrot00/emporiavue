@@ -26,7 +26,7 @@ class EmporiaVueComponent : public Component {
   void set_connect_under_reset(bool connect_under_reset) { this->connect_under_reset_ = connect_under_reset; }
   void set_reset_hold_time(uint32_t reset_hold_time) { this->reset_hold_time_ms_ = reset_hold_time; }
   void set_reset_release_time(uint32_t reset_release_time) { this->reset_release_time_ms_ = reset_release_time; }
-  void set_clock_delay_us(uint16_t clock_delay_us) { this->clock_delay_us_ = clock_delay_us; }
+  void set_clock_delay_us(uint8_t clock_delay_us) { this->clock_delay_us_ = clock_delay_us; }
   void set_retry_count(uint8_t retry_count) { this->retry_count_ = retry_count; }
   void set_init_pins_on_boot(bool init_pins_on_boot) { this->init_pins_on_boot_ = init_pins_on_boot; }
 
@@ -75,7 +75,6 @@ class EmporiaVueComponent : public Component {
   bool connect_under_reset_active_() const;
   void begin_swd_session_();
   void finish_swd_session_();
-  void begin_swd_attempt_(const char *sequence_name);
   void swd_enter_debug_(uint8_t swj_select_bits);
   bool probe_idcode_(const char *sequence_name, uint8_t swj_select_bits, bool sample_before_clock, uint32_t *idcode,
                      uint8_t *ack);
@@ -122,8 +121,8 @@ class EmporiaVueComponent : public Component {
   bool reset_before_read_{false};
   bool connect_under_reset_{false};
   uint32_t reset_hold_time_ms_{100};
-  uint32_t reset_release_time_ms_{1};
-  uint16_t clock_delay_us_{2};
+  uint32_t reset_release_time_ms_{50};
+  uint8_t clock_delay_us_{2};
   uint8_t retry_count_{40};
   bool init_pins_on_boot_{false};
   bool pins_setup_{false};
