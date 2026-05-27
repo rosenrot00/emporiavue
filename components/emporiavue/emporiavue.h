@@ -75,8 +75,8 @@ class EmporiaVueComponent : public Component {
   bool connect_under_reset_active_() const;
   void begin_swd_session_();
   void finish_swd_session_();
-  void swd_enter_debug_(bool swj_select);
-  bool probe_idcode_(const char *sequence_name, bool swj_select, bool sample_before_clock, uint32_t *idcode,
+  void swd_enter_debug_(uint8_t swj_select_bits);
+  bool probe_idcode_(const char *sequence_name, uint8_t swj_select_bits, bool sample_before_clock, uint32_t *idcode,
                      uint8_t *ack);
   bool swd_initialize_(uint32_t *idcode);
   void prepare_pins_();

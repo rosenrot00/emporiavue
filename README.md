@@ -54,7 +54,7 @@ external_components:
 
 The default config creates two Home Assistant buttons:
 
-- `Probe SAMD09 SWD`: reads only the SWD Debug Port IDCODE and logs the raw ACK value. It tries a plain SWD line-reset sequence and the SWJ JTAG-to-SWD select sequence with both DAPLink-style and ATC-style SWD read sampling.
+- `Probe SAMD09 SWD`: reads only the SWD Debug Port IDCODE and logs the raw ACK value. It tries a plain SWD line-reset sequence, the standard 16-bit SWJ JTAG-to-SWD select sequence, and the 32-bit `0xe79e` variant used by odewdney's MicroPython SWD script.
 - `Read SAMD09`: runs the fuller SWD read check, including DSU/NVM status reads after the Debug Port responds.
 
 You need the normal ESPHome `api:` setup in your node config for Home Assistant to see those buttons. The results appear in the ESPHome log/console at `INFO` level.
@@ -66,8 +66,10 @@ To test a reset-assisted read, set the reset pin explicitly:
 ```yaml
 emporiavue:
   id: samd_reader
-  reset_pin: GPIO4
+  reset_pin: GPIO26
   reset_before_read: true
+  reset_hold_time: 300ms
+  reset_release_time: 1ms
 ```
 
 If the SAMD firmware appears to take over the SWD pins before the probe can connect, try connect-under-reset. This keeps reset asserted while the SWD Debug Port IDCODE is probed, then releases reset again:
@@ -75,7 +77,7 @@ If the SAMD firmware appears to take over the SWD pins before the probe can conn
 ```yaml
 emporiavue:
   id: samd_reader
-  reset_pin: GPIO4
+  reset_pin: GPIO26
   connect_under_reset: true
 ```
 
