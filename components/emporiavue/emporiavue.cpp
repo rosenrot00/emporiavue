@@ -196,13 +196,24 @@ void EmporiaVueComponent::begin_swd_session_() {
   if (this->connect_under_reset_ && this->reset_pin_ == nullptr) {
     ESP_LOGW(TAG, "connect_under_reset is enabled but reset_pin is not configured");
   }
-  this->reset_target_();
 }
 
 void EmporiaVueComponent::finish_swd_session_() {
   if (this->connect_under_reset_active_()) {
     ESP_LOGI(TAG, "Releasing SAMD09 reset after connect-under-reset");
     this->deassert_reset_();
+  }
+}
+
+void EmporiaVueComponent::begin_swd_attempt_(const char *sequence_name) {
+  if (this->connect_under_reset_active_()) {
+    return;
+  }
+  if (this->reset_before_read_ && this->reset_pin_ != nullptr) {
+    ESP_LOGI(TAG, "Pulsing SAMD09 reset before %s", sequence_name);
+    this->reset_target_();
+  } else if (this->reset_before_read_ && this->reset_pin_ == nullptr) {
+    ESP_LOGW(TAG, "reset_before_read is enabled but reset_pin is not configured");
   }
 }
 
@@ -232,6 +243,7 @@ bool EmporiaVueComponent::probe_idcode_(const char *sequence_name, uint8_t swj_s
   ESP_LOGI(TAG, "Trying SAMD09 %s IDCODE probe", sequence_name);
   this->last_error_.clear();
   this->sample_before_clock_ = sample_before_clock;
+  this->begin_swd_attempt_(sequence_name);
   this->swd_enter_debug_(swj_select_bits);
   if (this->transfer_(false, true, DP_IDCODE, 0, idcode, ack)) {
     return true;
@@ -257,6 +269,7 @@ bool EmporiaVueComponent::swd_initialize_(uint32_t *idcode) {
     ESP_LOGI(TAG, "Trying SAMD09 %s initialization", variant.name);
     this->last_error_.clear();
     this->sample_before_clock_ = variant.sample_before_clock;
+    this->begin_swd_attempt_(variant.name);
     this->swd_enter_debug_(variant.swj_select_bits);
     if (!this->dp_read_(DP_IDCODE, idcode)) {
       continue;
