@@ -67,7 +67,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_DUMP_BLOCK_SIZE, default=64): cv.int_range(min=1, max=128),
         cv.Optional(CONF_DUMP_BLOCK_COUNT, default=5): cv.int_range(min=1, max=32),
         cv.Optional(CONF_DUMP_HALT_CORE, default=True): cv.boolean,
-        cv.Optional(CONF_DUMP_RESUME_BETWEEN_BLOCKS, default=True): cv.boolean,
+        cv.Optional(CONF_DUMP_RESUME_BETWEEN_BLOCKS, default=False): cv.boolean,
         cv.Optional(
             CONF_SWD_IDCODE,
         ): text_sensor.text_sensor_schema(

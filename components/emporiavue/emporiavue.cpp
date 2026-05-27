@@ -23,8 +23,7 @@ void EmporiaVueComponent::loop() {
 
   const uint16_t block = this->dump_next_block_;
   const uint32_t address = this->dump_start_address_ + (uint32_t(block) * this->dump_block_size_);
-  bool core_halted = false;
-  if (this->dump_halt_core_) {
+  if (this->dump_halt_core_ && !this->dump_core_halted_) {
     if (!this->halt_core_()) {
       this->dump_active_ = false;
       this->release_pins_();
@@ -33,15 +32,16 @@ void EmporiaVueComponent::loop() {
                this->last_error_.c_str());
       return;
     }
-    core_halted = true;
+    this->dump_core_halted_ = true;
   }
 
   std::string hex_data;
   if (!this->dump_flash_block_(address, this->dump_block_size_, &hex_data)) {
     this->dump_active_ = false;
-    if (core_halted && !this->resume_core_()) {
+    if (this->dump_core_halted_ && !this->resume_core_()) {
       ESP_LOGW(TAG, "Failed to resume SAMD09 core after dump error: %s", this->last_error_.c_str());
     }
+    this->dump_core_halted_ = false;
     this->release_pins_();
     this->publish_status_("failed: " + this->last_error_);
     ESP_LOGW(TAG, "SAMD09 flash dump failed at block=%u addr=%s: %s", static_cast<unsigned>(block),
@@ -49,16 +49,17 @@ void EmporiaVueComponent::loop() {
     return;
   }
 
-  if (core_halted && this->dump_resume_between_blocks_) {
+  if (this->dump_core_halted_ && this->dump_resume_between_blocks_) {
     if (!this->resume_core_()) {
       this->dump_active_ = false;
+      this->dump_core_halted_ = false;
       this->release_pins_();
       this->publish_status_("failed: " + this->last_error_);
       ESP_LOGW(TAG, "SAMD09 flash dump failed resuming after block=%u: %s", static_cast<unsigned>(block),
                this->last_error_.c_str());
       return;
     }
-    core_halted = false;
+    this->dump_core_halted_ = false;
   }
 
   ESP_LOGI(TAG, "SAMD09_FLASH_DUMP block=%04u addr=%s len=%u data=%s", static_cast<unsigned>(block),
@@ -67,9 +68,10 @@ void EmporiaVueComponent::loop() {
 
   if (this->dump_next_block_ >= this->dump_block_count_) {
     this->dump_active_ = false;
-    if (core_halted && !this->resume_core_()) {
+    if (this->dump_core_halted_ && !this->resume_core_()) {
       ESP_LOGW(TAG, "Failed to resume SAMD09 core after flash dump: %s", this->last_error_.c_str());
     }
+    this->dump_core_halted_ = false;
     this->release_pins_();
     this->publish_status_("flash dump done");
     ESP_LOGI(TAG, "SAMD09 flash dump complete: blocks=%u, block_size=%u",
@@ -245,6 +247,7 @@ void EmporiaVueComponent::dump_flash() {
     ESP_LOGW(TAG, "SAMD09 flash dump is already running");
     return;
   }
+  this->dump_core_halted_ = false;
 
   this->last_error_.clear();
   ESP_LOGI(TAG, "Starting SAMD09 flash dump: start=%s, blocks=%u, block_size=%u", hex32_(this->dump_start_address_).c_str(),
@@ -286,6 +289,16 @@ void EmporiaVueComponent::dump_flash() {
     this->publish_status_("failed: " + this->last_error_);
     ESP_LOGW(TAG, "SAMD09 flash dump failed: %s", this->last_error_.c_str());
     return;
+  }
+
+  if (this->dump_halt_core_) {
+    if (!this->halt_core_()) {
+      this->release_pins_();
+      this->publish_status_("failed: " + this->last_error_);
+      ESP_LOGW(TAG, "SAMD09 flash dump failed while halting core: %s", this->last_error_.c_str());
+      return;
+    }
+    this->dump_core_halted_ = true;
   }
 
   this->dump_next_block_ = 0;

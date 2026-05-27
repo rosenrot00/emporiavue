@@ -147,8 +147,9 @@ class EmporiaVueComponent : public Component {
   uint16_t dump_block_size_{64};
   uint16_t dump_block_count_{5};
   bool dump_halt_core_{true};
-  bool dump_resume_between_blocks_{true};
+  bool dump_resume_between_blocks_{false};
   bool dump_active_{false};
+  bool dump_core_halted_{false};
   uint16_t dump_next_block_{0};
   bool init_pins_on_boot_{false};
   bool pins_setup_{false};
