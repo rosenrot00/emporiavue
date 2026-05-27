@@ -73,6 +73,19 @@ emporiavue:
   reset_release_time: 1ms
 ```
 
+If you want the ESP32 to recover the SAMD09 after a reboot, enable `reset_on_boot`. This only touches the configured
+reset pin during ESPHome setup, holds reset for `reset_hold_time`, releases it for `reset_release_time`, then returns
+the reset pin to input/pullup:
+
+```yaml
+emporiavue:
+  id: samd_reader
+  reset_pin: GPIO26
+  reset_on_boot: true
+  reset_hold_time: 200ms
+  reset_release_time: 1ms
+```
+
 The flash dump button defaults to five 64-byte blocks starting at flash address `0x00000000`. It does not reset after each block; the component attaches once over SWD, powers up the Debug Port, halts the SAMD09 core, then reads one block per ESPHome `loop()` cycle so other components get scheduler time between blocks. By default the core is resumed after the full dump. Each block is logged as one line:
 
 ```text

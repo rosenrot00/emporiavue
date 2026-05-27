@@ -10,6 +10,7 @@ namespace emporiavue {
 static const char *const TAG = "emporiavue";
 
 void EmporiaVueComponent::setup() {
+  this->perform_boot_reset_();
   if (this->init_pins_on_boot_) {
     this->prepare_pins_();
     this->release_pins_();
@@ -94,6 +95,7 @@ void EmporiaVueComponent::dump_config() {
   LOG_PIN("  SWCLK Pin: ", this->swclk_pin_);
   LOG_PIN("  Reset Pin: ", this->reset_pin_);
   ESP_LOGCONFIG(TAG, "  Reset before read: %s", YESNO(this->reset_before_read_));
+  ESP_LOGCONFIG(TAG, "  Reset on boot: %s", YESNO(this->reset_on_boot_));
   ESP_LOGCONFIG(TAG, "  Connect under reset: %s", YESNO(this->connect_under_reset_));
   ESP_LOGCONFIG(TAG, "  Reset hold time: %" PRIu32 " ms", this->reset_hold_time_ms_);
   ESP_LOGCONFIG(TAG, "  Reset release time: %" PRIu32 " ms", this->reset_release_time_ms_);
@@ -399,6 +401,24 @@ void EmporiaVueComponent::finish_swd_session_() {
     ESP_LOGI(TAG, "Releasing SAMD09 reset after connect-under-reset");
     this->deassert_reset_();
   }
+}
+
+void EmporiaVueComponent::perform_boot_reset_() {
+  if (!this->reset_on_boot_) {
+    return;
+  }
+  if (this->reset_pin_ == nullptr) {
+    ESP_LOGW(TAG, "reset_on_boot is enabled but reset_pin is not configured");
+    return;
+  }
+
+  ESP_LOGI(TAG, "Resetting SAMD09 on ESP32 boot for %" PRIu32 " ms", this->reset_hold_time_ms_);
+  this->reset_pin_->digital_write(true);
+  this->reset_pin_->setup();
+  this->assert_reset_();
+  this->deassert_reset_();
+  this->reset_pin_->digital_write(true);
+  this->reset_pin_->pin_mode(gpio::FLAG_INPUT | gpio::FLAG_PULLUP);
 }
 
 void EmporiaVueComponent::swd_enter_debug_(uint8_t swj_select_bits) {

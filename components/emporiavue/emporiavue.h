@@ -24,6 +24,7 @@ class EmporiaVueComponent : public Component {
   void set_swclk_pin(InternalGPIOPin *pin) { this->swclk_pin_ = pin; }
   void set_reset_pin(InternalGPIOPin *pin) { this->reset_pin_ = pin; }
   void set_reset_before_read(bool reset_before_read) { this->reset_before_read_ = reset_before_read; }
+  void set_reset_on_boot(bool reset_on_boot) { this->reset_on_boot_ = reset_on_boot; }
   void set_connect_under_reset(bool connect_under_reset) { this->connect_under_reset_ = connect_under_reset; }
   void set_reset_hold_time(uint32_t reset_hold_time) { this->reset_hold_time_ms_ = reset_hold_time; }
   void set_reset_release_time(uint32_t reset_release_time) { this->reset_release_time_ms_ = reset_release_time; }
@@ -131,6 +132,7 @@ class EmporiaVueComponent : public Component {
   bool dump_flash_block_(uint32_t address, uint16_t length, std::string *hex_data);
   bool power_up_debug_();
   bool verify_mem_ap_();
+  void perform_boot_reset_();
 
   InternalGPIOPin *swdio_pin_{nullptr};
   InternalGPIOPin *swclk_pin_{nullptr};
@@ -141,6 +143,7 @@ class EmporiaVueComponent : public Component {
   binary_sensor::BinarySensor *read_allowed_sensor_{nullptr};
 
   bool reset_before_read_{false};
+  bool reset_on_boot_{false};
   bool connect_under_reset_{false};
   uint32_t reset_hold_time_ms_{100};
   uint32_t reset_release_time_ms_{50};
