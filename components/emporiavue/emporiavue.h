@@ -32,7 +32,8 @@ class EmporiaVueComponent : public Component {
   void set_init_pins_on_boot(bool init_pins_on_boot) { this->init_pins_on_boot_ = init_pins_on_boot; }
   void set_dump_start_address(uint32_t dump_start_address) { this->dump_start_address_ = dump_start_address; }
   void set_dump_block_size(uint16_t dump_block_size) { this->dump_block_size_ = dump_block_size; }
-  void set_dump_block_count(uint16_t dump_block_count) { this->dump_block_count_ = dump_block_count; }
+  void set_dump_block_count(uint32_t dump_block_count) { this->dump_block_count_ = dump_block_count; }
+  void set_dump_full_flash(bool dump_full_flash) { this->dump_full_flash_ = dump_full_flash; }
   void set_dump_halt_core(bool dump_halt_core) { this->dump_halt_core_ = dump_halt_core; }
   void set_dump_resume_between_blocks(bool dump_resume_between_blocks) {
     this->dump_resume_between_blocks_ = dump_resume_between_blocks;
@@ -69,6 +70,7 @@ class EmporiaVueComponent : public Component {
   static constexpr uint32_t DSU_EXTERNAL_BASE = 0x41002100UL;
   static constexpr uint32_t DSU_STATUSB = DSU_EXTERNAL_BASE + 0x02UL;
   static constexpr uint32_t DSU_DID = DSU_EXTERNAL_BASE + 0x18UL;
+  static constexpr uint32_t NVMCTRL_PARAM = 0x41004008UL;
   static constexpr uint32_t NVMCTRL_STATUS = 0x41004018UL;
   static constexpr uint32_t FLASH_START = 0x00000000UL;
   static constexpr uint32_t DHCSR = 0xE000EDF0UL;
@@ -125,6 +127,7 @@ class EmporiaVueComponent : public Component {
   bool mem_write32_(uint32_t address, uint32_t value);
   bool halt_core_();
   bool resume_core_();
+  bool read_flash_geometry_(uint32_t *param, uint32_t *page_size, uint32_t *page_count, uint32_t *flash_size);
   bool dump_flash_block_(uint32_t address, uint16_t length, std::string *hex_data);
   bool power_up_debug_();
   bool verify_mem_ap_();
@@ -145,12 +148,15 @@ class EmporiaVueComponent : public Component {
   uint8_t retry_count_{40};
   uint32_t dump_start_address_{FLASH_START};
   uint16_t dump_block_size_{64};
-  uint16_t dump_block_count_{5};
+  uint32_t dump_block_count_{5};
+  uint32_t dump_effective_block_count_{5};
+  uint32_t dump_total_size_{320};
+  bool dump_full_flash_{false};
   bool dump_halt_core_{true};
   bool dump_resume_between_blocks_{false};
   bool dump_active_{false};
   bool dump_core_halted_{false};
-  uint16_t dump_next_block_{0};
+  uint32_t dump_next_block_{0};
   bool init_pins_on_boot_{false};
   bool pins_setup_{false};
   bool direction_write_{true};

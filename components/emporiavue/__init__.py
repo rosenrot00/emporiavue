@@ -40,6 +40,7 @@ CONF_READ_ALLOWED = "read_allowed"
 CONF_DUMP_START_ADDRESS = "dump_start_address"
 CONF_DUMP_BLOCK_SIZE = "dump_block_size"
 CONF_DUMP_BLOCK_COUNT = "dump_block_count"
+CONF_DUMP_FULL_FLASH = "dump_full_flash"
 CONF_DUMP_HALT_CORE = "dump_halt_core"
 CONF_DUMP_RESUME_BETWEEN_BLOCKS = "dump_resume_between_blocks"
 CONF_RESET_BEFORE_READ = "reset_before_read"
@@ -65,7 +66,8 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_INIT_PINS_ON_BOOT, default=False): cv.boolean,
         cv.Optional(CONF_DUMP_START_ADDRESS, default=0): cv.int_range(min=0, max=0xFFFFFFFF),
         cv.Optional(CONF_DUMP_BLOCK_SIZE, default=64): cv.int_range(min=1, max=128),
-        cv.Optional(CONF_DUMP_BLOCK_COUNT, default=5): cv.int_range(min=1, max=32),
+        cv.Optional(CONF_DUMP_BLOCK_COUNT, default=5): cv.int_range(min=1, max=4096),
+        cv.Optional(CONF_DUMP_FULL_FLASH, default=False): cv.boolean,
         cv.Optional(CONF_DUMP_HALT_CORE, default=True): cv.boolean,
         cv.Optional(CONF_DUMP_RESUME_BETWEEN_BLOCKS, default=False): cv.boolean,
         cv.Optional(
@@ -142,6 +144,7 @@ async def to_code(config):
     cg.add(var.set_dump_start_address(config[CONF_DUMP_START_ADDRESS]))
     cg.add(var.set_dump_block_size(config[CONF_DUMP_BLOCK_SIZE]))
     cg.add(var.set_dump_block_count(config[CONF_DUMP_BLOCK_COUNT]))
+    cg.add(var.set_dump_full_flash(config[CONF_DUMP_FULL_FLASH]))
     cg.add(var.set_dump_halt_core(config[CONF_DUMP_HALT_CORE]))
     cg.add(var.set_dump_resume_between_blocks(config[CONF_DUMP_RESUME_BETWEEN_BLOCKS]))
 

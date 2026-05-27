@@ -21,14 +21,23 @@ void EmporiaVueComponent::loop() {
     return;
   }
 
-  const uint16_t block = this->dump_next_block_;
+  const uint32_t block = this->dump_next_block_;
   const uint32_t address = this->dump_start_address_ + (uint32_t(block) * this->dump_block_size_);
+  uint16_t length = this->dump_block_size_;
+  if (this->dump_total_size_ > 0) {
+    const uint32_t bytes_read = block * uint32_t(this->dump_block_size_);
+    const uint32_t remaining = this->dump_total_size_ - bytes_read;
+    if (remaining < length) {
+      length = static_cast<uint16_t>(remaining);
+    }
+  }
+
   if (this->dump_halt_core_ && !this->dump_core_halted_) {
     if (!this->halt_core_()) {
       this->dump_active_ = false;
       this->release_pins_();
       this->publish_status_("failed: " + this->last_error_);
-      ESP_LOGW(TAG, "SAMD09 flash dump failed before block=%u: %s", static_cast<unsigned>(block),
+      ESP_LOGW(TAG, "SAMD09 flash dump failed before block=%" PRIu32 ": %s", block,
                this->last_error_.c_str());
       return;
     }
@@ -36,7 +45,7 @@ void EmporiaVueComponent::loop() {
   }
 
   std::string hex_data;
-  if (!this->dump_flash_block_(address, this->dump_block_size_, &hex_data)) {
+  if (!this->dump_flash_block_(address, length, &hex_data)) {
     this->dump_active_ = false;
     if (this->dump_core_halted_ && !this->resume_core_()) {
       ESP_LOGW(TAG, "Failed to resume SAMD09 core after dump error: %s", this->last_error_.c_str());
@@ -44,7 +53,7 @@ void EmporiaVueComponent::loop() {
     this->dump_core_halted_ = false;
     this->release_pins_();
     this->publish_status_("failed: " + this->last_error_);
-    ESP_LOGW(TAG, "SAMD09 flash dump failed at block=%u addr=%s: %s", static_cast<unsigned>(block),
+    ESP_LOGW(TAG, "SAMD09 flash dump failed at block=%" PRIu32 " addr=%s: %s", block,
              hex32_(address).c_str(), this->last_error_.c_str());
     return;
   }
@@ -55,18 +64,18 @@ void EmporiaVueComponent::loop() {
       this->dump_core_halted_ = false;
       this->release_pins_();
       this->publish_status_("failed: " + this->last_error_);
-      ESP_LOGW(TAG, "SAMD09 flash dump failed resuming after block=%u: %s", static_cast<unsigned>(block),
+      ESP_LOGW(TAG, "SAMD09 flash dump failed resuming after block=%" PRIu32 ": %s", block,
                this->last_error_.c_str());
       return;
     }
     this->dump_core_halted_ = false;
   }
 
-  ESP_LOGI(TAG, "SAMD09_FLASH_DUMP block=%04u addr=%s len=%u data=%s", static_cast<unsigned>(block),
-           hex32_(address).c_str(), static_cast<unsigned>(this->dump_block_size_), hex_data.c_str());
+  ESP_LOGI(TAG, "SAMD09_FLASH_DUMP block=%04" PRIu32 " addr=%s len=%u data=%s", block, hex32_(address).c_str(),
+           static_cast<unsigned>(length), hex_data.c_str());
   this->dump_next_block_++;
 
-  if (this->dump_next_block_ >= this->dump_block_count_) {
+  if (this->dump_next_block_ >= this->dump_effective_block_count_) {
     this->dump_active_ = false;
     if (this->dump_core_halted_ && !this->resume_core_()) {
       ESP_LOGW(TAG, "Failed to resume SAMD09 core after flash dump: %s", this->last_error_.c_str());
@@ -74,8 +83,8 @@ void EmporiaVueComponent::loop() {
     this->dump_core_halted_ = false;
     this->release_pins_();
     this->publish_status_("flash dump done");
-    ESP_LOGI(TAG, "SAMD09 flash dump complete: blocks=%u, block_size=%u",
-             static_cast<unsigned>(this->dump_block_count_), static_cast<unsigned>(this->dump_block_size_));
+    ESP_LOGI(TAG, "SAMD09 flash dump complete: blocks=%" PRIu32 ", block_size=%u, total_size=%" PRIu32,
+             this->dump_effective_block_count_, static_cast<unsigned>(this->dump_block_size_), this->dump_total_size_);
   }
 }
 
@@ -91,7 +100,8 @@ void EmporiaVueComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Clock delay: %u us", this->clock_delay_us_);
   ESP_LOGCONFIG(TAG, "  Dump start address: %s", hex32_(this->dump_start_address_).c_str());
   ESP_LOGCONFIG(TAG, "  Dump block size: %u bytes", static_cast<unsigned>(this->dump_block_size_));
-  ESP_LOGCONFIG(TAG, "  Dump block count: %u", static_cast<unsigned>(this->dump_block_count_));
+  ESP_LOGCONFIG(TAG, "  Dump block count: %" PRIu32, this->dump_block_count_);
+  ESP_LOGCONFIG(TAG, "  Dump full flash: %s", YESNO(this->dump_full_flash_));
   ESP_LOGCONFIG(TAG, "  Dump halt core: %s", YESNO(this->dump_halt_core_));
   ESP_LOGCONFIG(TAG, "  Dump resume between blocks: %s", YESNO(this->dump_resume_between_blocks_));
   ESP_LOGCONFIG(TAG, "  Init pins on boot: %s", YESNO(this->init_pins_on_boot_));
@@ -250,8 +260,11 @@ void EmporiaVueComponent::dump_flash() {
   this->dump_core_halted_ = false;
 
   this->last_error_.clear();
-  ESP_LOGI(TAG, "Starting SAMD09 flash dump: start=%s, blocks=%u, block_size=%u", hex32_(this->dump_start_address_).c_str(),
-           static_cast<unsigned>(this->dump_block_count_), static_cast<unsigned>(this->dump_block_size_));
+  this->dump_effective_block_count_ = this->dump_block_count_;
+  this->dump_total_size_ = this->dump_block_count_ * uint32_t(this->dump_block_size_);
+  ESP_LOGI(TAG, "Starting SAMD09 flash dump: start=%s, blocks=%" PRIu32 ", block_size=%u, full_flash=%s",
+           hex32_(this->dump_start_address_).c_str(), this->dump_block_count_,
+           static_cast<unsigned>(this->dump_block_size_), YESNO(this->dump_full_flash_));
   this->publish_status_("dumping flash");
 
   if (this->swdio_pin_ == nullptr || this->swclk_pin_ == nullptr) {
@@ -301,9 +314,49 @@ void EmporiaVueComponent::dump_flash() {
     this->dump_core_halted_ = true;
   }
 
+  if (this->dump_full_flash_) {
+    uint32_t nvm_param = 0;
+    uint32_t page_size = 0;
+    uint32_t page_count = 0;
+    uint32_t flash_size = 0;
+    if (!this->read_flash_geometry_(&nvm_param, &page_size, &page_count, &flash_size)) {
+      const std::string error = this->last_error_;
+      if (this->dump_core_halted_ && !this->resume_core_()) {
+        ESP_LOGW(TAG, "Failed to resume SAMD09 core after geometry read error: %s", this->last_error_.c_str());
+      }
+      this->dump_core_halted_ = false;
+      this->release_pins_();
+      this->publish_status_("failed: " + error);
+      ESP_LOGW(TAG, "SAMD09 flash dump failed reading flash geometry: %s", error.c_str());
+      return;
+    }
+    if (this->dump_start_address_ >= flash_size) {
+      this->set_error_(str_sprintf("dump_start_address %s is outside flash size %" PRIu32,
+                                   hex32_(this->dump_start_address_).c_str(), flash_size));
+      const std::string error = this->last_error_;
+      if (this->dump_core_halted_ && !this->resume_core_()) {
+        ESP_LOGW(TAG, "Failed to resume SAMD09 core after flash geometry error: %s", this->last_error_.c_str());
+      }
+      this->dump_core_halted_ = false;
+      this->release_pins_();
+      this->publish_status_("failed: " + error);
+      ESP_LOGW(TAG, "SAMD09 flash dump failed: %s", error.c_str());
+      return;
+    }
+    this->dump_total_size_ = flash_size - this->dump_start_address_;
+    this->dump_effective_block_count_ =
+        (this->dump_total_size_ + uint32_t(this->dump_block_size_) - 1U) / uint32_t(this->dump_block_size_);
+    ESP_LOGI(TAG,
+             "SAMD09 flash geometry: NVM PARAM=%s, page_size=%" PRIu32 ", page_count=%" PRIu32
+             ", flash_size=%" PRIu32 ", dump_size=%" PRIu32 ", blocks=%" PRIu32,
+             hex32_(nvm_param).c_str(), page_size, page_count, flash_size, this->dump_total_size_,
+             this->dump_effective_block_count_);
+  }
+
   this->dump_next_block_ = 0;
   this->dump_active_ = true;
-  ESP_LOGI(TAG, "SAMD09 flash dump job started; blocks will be read one per loop cycle");
+  ESP_LOGI(TAG, "SAMD09 flash dump job started; %" PRIu32 " blocks will be read one per loop cycle",
+           this->dump_effective_block_count_);
 }
 
 void EmporiaVueComponent::reset_target_() {
@@ -777,6 +830,34 @@ bool EmporiaVueComponent::halt_core_() {
 bool EmporiaVueComponent::resume_core_() {
   ESP_LOGD(TAG, "Resuming SAMD09 core after flash dump block");
   return this->mem_write32_(DHCSR, DHCSR_DBGKEY | DHCSR_C_DEBUGEN);
+}
+
+bool EmporiaVueComponent::read_flash_geometry_(uint32_t *param, uint32_t *page_size, uint32_t *page_count,
+                                               uint32_t *flash_size) {
+  uint32_t raw_param = 0;
+  if (!this->mem_read32_(NVMCTRL_PARAM, &raw_param)) {
+    return false;
+  }
+
+  const uint32_t computed_page_size = 8UL << ((raw_param >> 16) & 0x07U);
+  const uint32_t computed_page_count = raw_param & 0xFFFFU;
+  if (computed_page_size == 0 || computed_page_count == 0) {
+    this->set_error_(str_sprintf("invalid NVM PARAM %s", hex32_(raw_param).c_str()));
+    return false;
+  }
+
+  const uint64_t computed_flash_size = uint64_t(computed_page_size) * uint64_t(computed_page_count);
+  if (computed_flash_size > 0xFFFFFFFFULL) {
+    this->set_error_(str_sprintf("NVM flash size too large: page_size=%" PRIu32 ", page_count=%" PRIu32,
+                                 computed_page_size, computed_page_count));
+    return false;
+  }
+
+  *param = raw_param;
+  *page_size = computed_page_size;
+  *page_count = computed_page_count;
+  *flash_size = static_cast<uint32_t>(computed_flash_size);
+  return true;
 }
 
 bool EmporiaVueComponent::dump_flash_block_(uint32_t address, uint16_t length, std::string *hex_data) {

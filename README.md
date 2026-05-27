@@ -91,6 +91,23 @@ emporiavue:
   dump_resume_between_blocks: false
 ```
 
+To dump the full flash in one button action, enable `dump_full_flash`. The component reads `NVMCTRL.PARAM` at
+`0x41004008`, computes `flash_size = page_size * page_count`, and derives the required block count from the
+configured block size:
+
+```yaml
+emporiavue:
+  id: samd_reader
+  dump_start_address: 0
+  dump_block_size: 64
+  dump_full_flash: true
+  dump_halt_core: true
+  dump_resume_between_blocks: false
+```
+
+The full dump still runs one block per ESPHome `loop()` cycle. That keeps the ESP32 scheduler responsive, but the
+SAMD09 core remains halted until the dump finishes unless `dump_resume_between_blocks` is enabled.
+
 If the SAMD firmware appears to take over the SWD pins before the probe can connect, try connect-under-reset. This keeps reset asserted while the SWD Debug Port IDCODE is probed, then releases reset again:
 
 ```yaml
@@ -117,4 +134,4 @@ emporiavue:
 
 ## Notes
 
-`read_allowed` is `true` only if DSU `STATUSB.PROT` is clear and a read from flash address `0x00000000` succeeds. The component does not dump flash yet.
+`read_allowed` is `true` only if DSU `STATUSB.PROT` is clear and a read from flash address `0x00000000` succeeds.
