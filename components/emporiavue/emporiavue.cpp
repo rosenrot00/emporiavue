@@ -1333,7 +1333,8 @@ bool EmporiaVueComponent::transfer_(bool ap, bool read, uint8_t addr, uint32_t w
       const bool parity = this->read_bits_(1) != 0;
       this->write_bits_(0, 8);
       if (parity != parity32_(value)) {
-        this->set_error_(str_sprintf("parity error reading %s register 0x%02X", ap ? "AP" : "DP", addr));
+        this->last_error_ = str_sprintf("parity error reading %s register 0x%02X", ap ? "AP" : "DP", addr);
+        ESP_LOGD(TAG, "%s", this->last_error_.c_str());
         return false;
       }
       if (read_value != nullptr) {
@@ -1358,6 +1359,10 @@ bool EmporiaVueComponent::dp_read_(uint8_t addr, uint32_t *value) {
       return true;
     }
     if (ack == SWD_ACK_WAIT) {
+      delayMicroseconds(50);
+      continue;
+    }
+    if (ack == SWD_ACK_OK) {
       delayMicroseconds(50);
       continue;
     }
@@ -1427,6 +1432,10 @@ bool EmporiaVueComponent::ap_read_(uint8_t addr, uint32_t *value) {
       break;
     }
     if (ack == SWD_ACK_WAIT) {
+      delayMicroseconds(50);
+      continue;
+    }
+    if (ack == SWD_ACK_OK) {
       delayMicroseconds(50);
       continue;
     }
