@@ -19,6 +19,7 @@ emporiavue:
   id: samd_reader
   hardware: vue2
   backup_partition: samd_bak
+  connect_under_reset: true
   allow_samd_write: false
   require_backup_before_install: true
 

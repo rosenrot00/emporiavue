@@ -273,7 +273,7 @@ uint8_t SensorSequence = 0;
 
 #define ESPpacketlength       0x11C
 #define EMPORIAVUE_HARDWARE_ID       2
-#define EMPORIAVUE_FIRMWARE_VERSION  16
+#define EMPORIAVUE_FIRMWARE_VERSION  17
 #define EMPORIAVUE_I2C_INFO_COMMAND  0xF0
 
 struct __attribute__((__packed__)) ManagedInfoType
@@ -1003,8 +1003,7 @@ void config_PORT()
 	REG_PINCFG25 = 4;
 	REG_PINCFG27 = 4;
 	REG_PINCFG28 = 4;
-	REG_PINCFG30 = 4;
-	REG_PINCFG31 = 4;
+	// PA30/PA31 are SWD. Keep them untouched so development builds stay attachable.
 	REG_PORT_PMUX1 = 0x11;
 	REG_PORT_PMUX2 = 0x11;
 	REG_PORT_PMUX3 = 0x11;
