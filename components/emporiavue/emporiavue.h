@@ -390,6 +390,8 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   bool install_active_{false};
   bool install_core_halted_{false};
   bool install_started_writing_{false};
+  FirmwareInfo detected_firmware_info_{};
+  bool detected_firmware_info_valid_{false};
   FirmwareAction install_action_{FirmwareAction::UNKNOWN};
   FlashSource install_source_{FlashSource::NONE};
   InstallStage install_stage_{InstallStage::IDLE};
