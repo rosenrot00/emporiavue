@@ -161,7 +161,7 @@ emporiavue:
   connect_under_reset: true
 ```
 
-Optional diagnostic entities can be enabled if you later want the values in Home Assistant too:
+Optional low-level diagnostic entities can be enabled if you later want the values in Home Assistant too:
 
 ```yaml
 emporiavue:
@@ -180,7 +180,8 @@ emporiavue:
 
 The repository includes `packages/vue2-managed.yaml`. It configures the Vue 2 internal SWD pins through
 `hardware: vue2`, adds a 64 KiB `samd_bak` data partition, and enables the firmware status/action entities plus the
-backup, update, and restore buttons.
+SAMD09 DSU DID entity plus the backup, update, and restore buttons. Low-level probe/read diagnostics such as SWD IDCODE,
+SWD status, and read-allowed stay opt-in and are not exposed by the package.
 
 Keep your private `external_components` block in the main node YAML, then include the package:
 
