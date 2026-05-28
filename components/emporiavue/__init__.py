@@ -105,6 +105,7 @@ def _apply_hardware_defaults(config):
         config.setdefault(CONF_RESET_PIN, "GPIO26")
         config.setdefault(CONF_RESET_BEFORE_READ, True)
         config.setdefault(CONF_RESET_ON_BOOT, True)
+        config.setdefault(CONF_CONNECT_UNDER_RESET, True)
         config.setdefault(CONF_RESET_HOLD_TIME, "200ms")
         config.setdefault(CONF_RESET_RELEASE_TIME, "1ms")
         config.setdefault(CONF_CLOCK_DELAY, 2)
