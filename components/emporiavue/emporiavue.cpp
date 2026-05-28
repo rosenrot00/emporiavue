@@ -555,6 +555,167 @@ void EmporiaVueComponent::install_firmware() { this->start_firmware_action_(Firm
 
 void EmporiaVueComponent::restore_firmware() { this->start_firmware_action_(FirmwareAction::RESTORE_STOCK); }
 
+void EmporiaVueComponent::test_flash_write() {
+  if (this->install_active_) {
+    ESP_LOGW(TAG, "SAMD09 firmware install is running; test write ignored");
+    return;
+  }
+  if (this->backup_active_) {
+    ESP_LOGW(TAG, "SAMD09 firmware backup is running; test write ignored");
+    return;
+  }
+  if (this->dump_active_) {
+    ESP_LOGW(TAG, "SAMD09 flash dump is running; test write ignored");
+    return;
+  }
+
+  this->last_error_.clear();
+  ESP_LOGI(TAG, "Starting SAMD09 flash write test");
+  this->publish_status_("test write: checking");
+  this->publish_firmware_status_("test write checking");
+
+  if (!this->allow_samd_write_) {
+    this->publish_firmware_status_("test write blocked: allow_samd_write is false");
+    ESP_LOGW(TAG, "SAMD09 flash write test blocked because allow_samd_write is false");
+    return;
+  }
+  if (this->swdio_pin_ == nullptr || this->swclk_pin_ == nullptr) {
+    this->set_error_("SWD pins are not configured");
+    this->publish_firmware_status_("test write failed: SWD pins missing");
+    return;
+  }
+
+  bool core_halted = false;
+  auto fail = [&](const std::string &error) {
+    if (core_halted) {
+      if (!this->resume_core_()) {
+        ESP_LOGW(TAG, "Failed to resume SAMD09 core after test write error: %s", this->last_error_.c_str());
+      }
+      core_halted = false;
+    }
+    this->release_pins_();
+    this->publish_status_("test write failed: " + error);
+    this->publish_firmware_status_("test write failed: " + error);
+    ESP_LOGW(TAG, "SAMD09 flash write test failed: %s", error.c_str());
+  };
+
+  this->prepare_pins_();
+  this->begin_swd_session_();
+
+  uint32_t swd_idcode = 0;
+  if (!this->swd_initialize_(&swd_idcode)) {
+    this->finish_swd_session_();
+    fail(this->last_error_);
+    return;
+  }
+  if (this->swd_idcode_sensor_ != nullptr) {
+    this->swd_idcode_sensor_->publish_state(hex32_(swd_idcode));
+  }
+
+  if (!this->power_up_debug_()) {
+    this->finish_swd_session_();
+    fail(this->last_error_);
+    return;
+  }
+  this->finish_swd_session_();
+
+  if (!this->verify_mem_ap_()) {
+    fail(this->last_error_);
+    return;
+  }
+
+  uint32_t nvm_param = 0;
+  uint32_t page_size = 0;
+  uint32_t page_count = 0;
+  uint32_t flash_size = 0;
+  if (!this->read_flash_geometry_(&nvm_param, &page_size, &page_count, &flash_size)) {
+    fail("geometry read failed: " + this->last_error_);
+    return;
+  }
+  const uint32_t row_size = page_size * NVM_PAGES_PER_ROW;
+  if (page_size == 0 || (page_size % 4U) != 0 || page_size > BACKUP_IO_BLOCK_SIZE || row_size == 0 ||
+      flash_size < row_size || (flash_size % row_size) != 0) {
+    fail("unsupported flash geometry");
+    return;
+  }
+
+  ManagedFirmwareInfo managed_info{};
+  bool managed_found = false;
+  if (!this->read_managed_firmware_info_(flash_size, &managed_info, &managed_found)) {
+    fail("managed marker check failed: " + this->last_error_);
+    return;
+  }
+
+  uint32_t row_address = FLASH_START + flash_size - row_size;
+  if (managed_found) {
+    if (flash_size < (2U * row_size)) {
+      fail("flash too small for managed test row");
+      return;
+    }
+    row_address = FLASH_START + flash_size - (2U * row_size);
+  }
+
+  bool row_erased = false;
+  if (!this->flash_row_erased_(row_address, row_size, &row_erased)) {
+    fail("test row read failed at " + hex32_(row_address) + ": " + this->last_error_);
+    return;
+  }
+  if (!row_erased) {
+    fail("test row is not erased at " + hex32_(row_address));
+    return;
+  }
+
+  if (!this->halt_core_()) {
+    fail("halt failed: " + this->last_error_);
+    return;
+  }
+  core_halted = true;
+
+  if (!this->nvm_clear_errors_()) {
+    fail("NVM error clear failed: " + this->last_error_);
+    return;
+  }
+  if (!this->mem_write32_(NVMCTRL_CTRLB, 0x00000082UL)) {
+    fail("NVM manual write setup failed: " + this->last_error_);
+    return;
+  }
+  if (!this->nvm_wait_ready_()) {
+    fail("NVM not ready: " + this->last_error_);
+    return;
+  }
+
+  this->publish_firmware_status_("test write writing " + hex32_(row_address));
+  if (!this->test_write_flash_page_(row_address, page_size)) {
+    fail("test page write failed at " + hex32_(row_address) + ": " + this->last_error_);
+    return;
+  }
+
+  this->publish_firmware_status_("test write erasing " + hex32_(row_address));
+  if (!this->erase_flash_row_(row_address)) {
+    fail("test row cleanup erase failed at " + hex32_(row_address) + ": " + this->last_error_);
+    return;
+  }
+  if (!this->flash_row_erased_(row_address, row_size, &row_erased)) {
+    fail("test row cleanup read failed at " + hex32_(row_address) + ": " + this->last_error_);
+    return;
+  }
+  if (!row_erased) {
+    fail("test row cleanup verify failed at " + hex32_(row_address));
+    return;
+  }
+
+  if (!this->resume_core_()) {
+    ESP_LOGW(TAG, "Failed to resume SAMD09 core after flash write test: %s", this->last_error_.c_str());
+  }
+  core_halted = false;
+  this->release_pins_();
+
+  this->publish_status_("test write complete");
+  this->publish_firmware_status_("test write complete");
+  ESP_LOGI(TAG, "SAMD09 flash write test complete: row=%s, page_size=%" PRIu32 ", row_size=%" PRIu32,
+           hex32_(row_address).c_str(), page_size, row_size);
+}
+
 void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action) {
   if (requested_action != FirmwareAction::UPDATE_MANAGED && requested_action != FirmwareAction::RESTORE_STOCK) {
     ESP_LOGW(TAG, "Unsupported SAMD09 firmware action requested");
@@ -1465,6 +1626,26 @@ bool EmporiaVueComponent::read_flash_bytes_(uint32_t address, uint16_t length, u
   return true;
 }
 
+bool EmporiaVueComponent::flash_row_erased_(uint32_t address, uint32_t row_size, bool *erased) {
+  *erased = false;
+  uint8_t buffer[BACKUP_IO_BLOCK_SIZE]{};
+  uint32_t offset = 0;
+  while (offset < row_size) {
+    const uint16_t length = static_cast<uint16_t>(std::min<uint32_t>(sizeof(buffer), row_size - offset));
+    if (!this->read_flash_bytes_(address + offset, length, buffer)) {
+      return false;
+    }
+    for (uint16_t i = 0; i < length; i++) {
+      if (buffer[i] != 0xFF) {
+        return true;
+      }
+    }
+    offset += length;
+  }
+  *erased = true;
+  return true;
+}
+
 bool EmporiaVueComponent::power_up_debug_() {
   if (!this->dp_write_(DP_CTRL_STAT, DP_POWER_REQUEST)) {
     return false;
@@ -2020,6 +2201,61 @@ bool EmporiaVueComponent::erase_flash_row_(uint32_t address) {
     return false;
   }
   return this->nvm_command_(NVM_CMD_ERASE_ROW);
+}
+
+bool EmporiaVueComponent::write_raw_flash_page_(uint32_t address, const uint8_t *data, uint32_t length) {
+  if (length == 0 || length > BACKUP_IO_BLOCK_SIZE || (length % 4U) != 0) {
+    this->set_error_("raw page write length unsupported");
+    return false;
+  }
+  if (!this->nvm_clear_errors_()) {
+    return false;
+  }
+  if (!this->nvm_command_(NVM_CMD_PAGE_BUFFER_CLEAR)) {
+    return false;
+  }
+
+  for (uint32_t i = 0; i < length; i += 4) {
+    const uint32_t word = uint32_t(data[i]) | (uint32_t(data[i + 1]) << 8) |
+                          (uint32_t(data[i + 2]) << 16) | (uint32_t(data[i + 3]) << 24);
+    if (!this->mem_write32_(address + i, word)) {
+      return false;
+    }
+  }
+
+  if (!this->mem_write32_(NVMCTRL_ADDR, (address - FLASH_START) >> 1)) {
+    return false;
+  }
+  return this->nvm_command_(NVM_CMD_WRITE_PAGE);
+}
+
+bool EmporiaVueComponent::test_write_flash_page_(uint32_t address, uint32_t page_size) {
+  if (page_size == 0 || page_size > BACKUP_IO_BLOCK_SIZE || (page_size % 4U) != 0) {
+    this->set_error_("test write page size unsupported");
+    return false;
+  }
+
+  uint8_t expected[BACKUP_IO_BLOCK_SIZE]{};
+  uint8_t actual[BACKUP_IO_BLOCK_SIZE]{};
+  for (uint32_t i = 0; i < page_size; i++) {
+    const uint8_t address_byte = static_cast<uint8_t>((address >> ((i & 0x03U) * 8U)) & 0xFFU);
+    expected[i] = static_cast<uint8_t>(0xA5U ^ ((i * 17U) & 0xFFU) ^ address_byte);
+  }
+
+  if (!this->write_raw_flash_page_(address, expected, page_size)) {
+    return false;
+  }
+  if (!this->read_flash_bytes_(address, static_cast<uint16_t>(page_size), actual)) {
+    return false;
+  }
+  for (uint32_t i = 0; i < page_size; i++) {
+    if (actual[i] != expected[i]) {
+      this->set_error_(str_sprintf("test write mismatch at %s: read=%s expected=%s", hex32_(address + i).c_str(),
+                                   hex8_(actual[i]).c_str(), hex8_(expected[i]).c_str()));
+      return false;
+    }
+  }
+  return true;
 }
 
 bool EmporiaVueComponent::read_install_source_(uint32_t offset, uint32_t length, uint8_t *buffer) {

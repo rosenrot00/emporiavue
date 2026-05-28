@@ -73,6 +73,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void backup_firmware();
   void install_firmware();
   void restore_firmware();
+  void test_flash_write();
 
  protected:
   static constexpr uint8_t DP_ABORT = 0x00;
@@ -287,6 +288,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   bool read_flash_geometry_(uint32_t *param, uint32_t *page_size, uint32_t *page_count, uint32_t *flash_size);
   bool dump_flash_block_(uint32_t address, uint16_t length, std::string *hex_data);
   bool read_flash_bytes_(uint32_t address, uint16_t length, uint8_t *data);
+  bool flash_row_erased_(uint32_t address, uint32_t row_size, bool *erased);
   bool power_up_debug_();
   bool verify_mem_ap_();
   void perform_boot_reset_();
@@ -321,6 +323,8 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   bool nvm_check_errors_();
   bool nvm_command_(uint8_t command);
   bool erase_flash_row_(uint32_t address);
+  bool write_raw_flash_page_(uint32_t address, const uint8_t *data, uint32_t length);
+  bool test_write_flash_page_(uint32_t address, uint32_t page_size);
   bool read_install_source_(uint32_t offset, uint32_t length, uint8_t *buffer);
   bool write_flash_page_(uint32_t address, uint32_t offset, uint32_t length);
   bool verify_flash_page_(uint32_t address, uint32_t offset, uint32_t length);
@@ -432,6 +436,11 @@ class EmporiaVueInstallFirmwareButton : public button::Button, public Parented<E
 class EmporiaVueRestoreFirmwareButton : public button::Button, public Parented<EmporiaVueComponent> {
  protected:
   void press_action() override { this->parent_->restore_firmware(); }
+};
+
+class EmporiaVueTestWriteButton : public button::Button, public Parented<EmporiaVueComponent> {
+ protected:
+  void press_action() override { this->parent_->test_flash_write(); }
 };
 
 }  // namespace emporiavue
