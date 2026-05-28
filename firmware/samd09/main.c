@@ -209,11 +209,11 @@ int16_t DMAresults[6][8]; //We copy the 8 ADC results to this buffer using DMA
 //uint16_t testresults[0x200];
 
 uint8_t MuxCounter = 0; //Varies between 0 and 7 to switch between the 8 muxes, each serving 2 50A CT's
-uint32_t outputpinTable [8] = { 0x1000000, 0x1010000, 0x1020000, 0x1030000, 0, 0x10000, 0x20000, 0x30000 }; //all possible combinations of pin 16, 17 and 24.
+const uint32_t outputpinTable [8] = { 0x1000000, 0x1010000, 0x1020000, 0x1030000, 0, 0x10000, 0x20000, 0x30000 }; //all possible combinations of pin 16, 17 and 24.
 int16_t averages[22]; //Here we save the averages: 3x voltages, 3x  Main CT current, 16x small CT current
 int32_t OffsetEstimateQ8[22];
 uint8_t OffsetWarmupWindows = 0;
-uint8_t MuxTable[16] = { 12, 4, 13, 5, 14, 6, 11, 3, 15, 7, 18, 10, 16, 8, 17, 9 }; //used for the order of saving Current data to the final output packet
+const uint8_t MuxTable[16] = { 12, 4, 13, 5, 14, 6, 11, 3, 15, 7, 18, 10, 16, 8, 17, 9 }; //used for the order of saving Current data to the final output packet
 
 volatile uint32_t DiagSequence = 0;
 volatile uint32_t DiagSampleBlocks = 0;
@@ -226,7 +226,7 @@ volatile uint32_t DiagI2cOversizeReads = 0;
 volatile uint16_t DiagLastSampleCount = 0;
 volatile uint16_t DiagLastI2cReadLen = 0;
 
-uint32_t EORTable[64] = { 0x90E0700, 0x15121B1C, 0x31363F38, 0x2D2A2324, 0x797E7770, 0x65626B6C, 0x41464F48, 0x5D5A5354,
+const uint32_t EORTable[64] = { 0x90E0700, 0x15121B1C, 0x31363F38, 0x2D2A2324, 0x797E7770, 0x65626B6C, 0x41464F48, 0x5D5A5354,
 			   0xE9EEE7E0, 0xF5F2FBFC, 0xD1D6DFD8, 0xCDCAC3C4, 0x999E9790, 0x85828B8C, 0xA1A6AFA8, 0xBDBAB3B4,
 			   0xCEC9C0C7, 0xD2D5DCDB, 0xF6F1F8FF, 0xEAEDE4E3, 0xBEB9B0B7, 0xA2A5ACAB, 0x8681888F, 0x9A9D9493,
 			   0x2E292027, 0x32353C3B, 0x1611181F, 0xA0D0403, 0x5E595057, 0x42454C4B, 0x6661686F, 0x7A7D7473,
@@ -265,7 +265,7 @@ uint8_t SensorSequence = 0;
 
 #define ESPpacketlength       0x11C
 #define EMPORIAVUE_HARDWARE_ID       2
-#define EMPORIAVUE_FIRMWARE_VERSION  22
+#define EMPORIAVUE_FIRMWARE_VERSION  23
 #define EMPORIAVUE_I2C_INFO_COMMAND  0xF0
 #define EMPORIAVUE_I2C_DIAGNOSTIC_COMMAND 0xF1
 
@@ -1050,7 +1050,7 @@ void Check_and_sendESPpacket()
 		//Calculate the header's checksum byte
 		uint8_t EORvalue = 0x1D;
 		uint8_t* NextSensorbyte = (uint8_t*) SensorReading;
-		uint8_t* EORbyte = (uint8_t *) &EORTable;
+			const uint8_t* EORbyte = (const uint8_t *) &EORTable;
 
 		NextSensorbyte = NextSensorbyte + 2; //Skip first 2 bytes
 		for (int i = 0; i < ESPpacketlength-2; i++)

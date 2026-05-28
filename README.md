@@ -108,6 +108,8 @@ That keeps the ESP32 and ESPHome reachable while avoiding a reset into a partial
   result used for the published frame values.
 - Divisions by the fixed sampling windows (`12987` and `1623`) use small exact constant-divisor routines instead of the
   generic 32/64-bit division runtime. Variable divisions, such as cycle-count averaging, are left unchanged.
+- Lookup tables for mux ordering, mux output pins, and packet checksum are stored in flash as constants instead of being
+  copied into SAMD RAM at startup.
 
 By default the SWD pins are not initialized at boot. `init_pins_on_boot` defaults to `false`, so SWDIO/SWCLK are only touched while a SAMD09 button action is running. The optional reset pin is only touched when `reset_before_read: true` or `connect_under_reset: true` is set. After the check, the component releases the touched pins back to input/pullup.
 
