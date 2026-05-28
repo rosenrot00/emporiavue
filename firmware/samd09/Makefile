@@ -17,6 +17,7 @@ endif
 
 CFLAGS += -W -Wall --std=gnu99 -Ofast
 CFLAGS += -fno-diagnostics-show-caret
+CFLAGS += -ffreestanding -fno-builtin -fno-tree-loop-distribute-patterns
 CFLAGS += -fdata-sections -ffunction-sections
 CFLAGS += -funsigned-char -funsigned-bitfields
 CFLAGS += -mcpu=cortex-m0plus -mthumb

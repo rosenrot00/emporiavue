@@ -16,7 +16,8 @@ the firmware licensing is clarified.
 Local build patches are intentionally small:
 
 - remove unused hosted C library includes because the Homebrew `arm-none-eabi-gcc` package does not ship Newlib headers;
-- add freestanding fixed-width typedefs plus tiny `memset`/`memcpy`;
+- add freestanding fixed-width typedefs plus tiny `memset`/`memcpy`, built with no-builtin flags so GCC cannot rewrite
+  those routines into recursive library calls;
 - add explicit pointer casts required by current GCC;
 - link without startup/default libraries and explicitly link `libgcc`.
 

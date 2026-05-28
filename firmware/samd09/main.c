@@ -13,18 +13,20 @@ typedef uint8_t bool;
 #define CHAR_BIT 8
 #define UINT32_C(value) value##UL
 
+__attribute__((used, noinline, optimize("O0")))
 void *memset(void *dst, int value, unsigned int length)
 {
-	uint8_t *out = (uint8_t *) dst;
+	volatile uint8_t *out = (volatile uint8_t *) dst;
 	while (length-- > 0)
 		*out++ = (uint8_t) value;
 	return dst;
 }
 
+__attribute__((used, noinline, optimize("O0")))
 void *memcpy(void *dst, const void *src, unsigned int length)
 {
-	uint8_t *out = (uint8_t *) dst;
-	const uint8_t *in = (const uint8_t *) src;
+	volatile uint8_t *out = (volatile uint8_t *) dst;
+	const volatile uint8_t *in = (const volatile uint8_t *) src;
 	while (length-- > 0)
 		*out++ = *in++;
 	return dst;
@@ -264,7 +266,7 @@ struct __attribute__((__packed__)) SensorReadingType
 
 #define ESPpacketlength       0x11C
 #define EMPORIAVUE_HARDWARE_ID       2
-#define EMPORIAVUE_FIRMWARE_VERSION  13
+#define EMPORIAVUE_FIRMWARE_VERSION  14
 #define EMPORIAVUE_I2C_INFO_COMMAND  0xF0
 
 struct __attribute__((__packed__)) ManagedInfoType
