@@ -144,6 +144,49 @@ typedef volatile       uint32_t RoReg;   /**< Read only 32-bit register (volatil
 
 #define DUMMY __attribute__ ((weak, alias ("irq_handler_dummy")))
 
+#define BOOT_DIAG_MAGIC 0x45565344UL
+#define BOOT_STAGE_RESET_ENTRY 1
+#define BOOT_STAGE_MAIN_ENTRY 10
+#define BOOT_STAGE_NVM_READ_WAIT 11
+#define BOOT_STAGE_CALCBLOCK_CLEARED 12
+#define BOOT_STAGE_SENSOR_CLEARED 13
+#define BOOT_STAGE_MANAGED_INFO_READY 14
+#define BOOT_STAGE_AVERAGES_CLEARED 15
+#define BOOT_STAGE_PORT_CONFIGURED 16
+#define BOOT_STAGE_CLOCK_CONFIGURED 17
+#define BOOT_STAGE_NVM_MANUAL_WRITE 18
+#define BOOT_STAGE_EVENT_SYSTEM_CONFIGURED 19
+#define BOOT_STAGE_DMAC_CONFIGURED 20
+#define BOOT_STAGE_ADC_CONFIGURED 21
+#define BOOT_STAGE_TC1_CONFIGURED 22
+#define BOOT_STAGE_NVIC_CONFIGURED 23
+#define BOOT_STAGE_DMA_ENABLED 24
+#define BOOT_STAGE_ADC_ENABLED 25
+#define BOOT_STAGE_TC1_ENABLED 26
+#define BOOT_STAGE_SERCOM1_CONFIGURED 27
+#define BOOT_STAGE_MAIN_LOOP 28
+#define BOOT_STAGE_HARDFAULT 0xff
+
+struct BootDiagnosticType
+{
+	uint32_t magic;
+	uint32_t stage;
+	uint32_t hardfault_lr;
+	uint32_t hardfault_msp;
+	uint32_t hardfault_psp;
+	uint32_t stacked_pc;
+	uint32_t stacked_lr;
+	uint32_t reserved;
+};
+
+__attribute__((used, section(".bss.$RESERVED")))
+volatile struct BootDiagnosticType BootDiagnostic;
+
+static inline void set_boot_stage(uint32_t stage)
+{
+	BootDiagnostic.magic = BOOT_DIAG_MAGIC;
+	BootDiagnostic.stage = stage;
+}
 
 bool alldataready = false;
 bool dmabool = false;
@@ -221,7 +264,7 @@ struct __attribute__((__packed__)) SensorReadingType
 
 #define ESPpacketlength       0x11C
 #define EMPORIAVUE_HARDWARE_ID       2
-#define EMPORIAVUE_FIRMWARE_VERSION  11
+#define EMPORIAVUE_FIRMWARE_VERSION  13
 #define EMPORIAVUE_I2C_INFO_COMMAND  0xF0
 
 struct __attribute__((__packed__)) ManagedInfoType
@@ -277,7 +320,7 @@ void irq_handler_sercom1(void);
 uint32_t crc32(const uint8_t *data, unsigned int length);
 void configure_managed_i2c_info(void);
 DUMMY void irq_handler_nmi(void);
-DUMMY void irq_handler_hard_fault(void);
+void irq_handler_hard_fault(void);
 DUMMY void irq_handler_sv_call(void);
 DUMMY void irq_handler_pend_sv(void);
 DUMMY void irq_handler_sys_tick(void);
@@ -455,8 +498,39 @@ void irq_handler_dummy(void)
   while (1);
 }
 
+__attribute__((naked, used)) void irq_handler_hard_fault(void)
+{
+	__asm__ __volatile__(
+		"ldr r0, =BootDiagnostic\n"
+		"ldr r1, =0x45565344\n"
+		"str r1, [r0, #0]\n"
+		"movs r1, #255\n"
+		"str r1, [r0, #4]\n"
+		"mov r1, lr\n"
+		"str r1, [r0, #8]\n"
+		"mrs r2, msp\n"
+		"str r2, [r0, #12]\n"
+		"mrs r1, psp\n"
+		"str r1, [r0, #16]\n"
+		"ldr r3, =0x20000000\n"
+		"cmp r2, r3\n"
+		"blo 1f\n"
+		"ldr r3, =0x20001000\n"
+		"cmp r2, r3\n"
+		"bhs 1f\n"
+		"ldr r1, [r2, #24]\n"
+		"str r1, [r0, #20]\n"
+		"ldr r1, [r2, #20]\n"
+		"str r1, [r0, #24]\n"
+		"1:\n"
+		"b 1b\n"
+	);
+}
+
 void irq_handler_reset(void)
 {
+  set_boot_stage(BOOT_STAGE_RESET_ENTRY);
+
   unsigned int *src, *dst;
 
   src = &_etext;
@@ -1007,37 +1081,56 @@ void adc_config() {
 
 int main(void)
 {
+	set_boot_stage(BOOT_STAGE_MAIN_ENTRY);
 	REG_NVMCTRL_CTRLB = 6;
+	set_boot_stage(BOOT_STAGE_NVM_READ_WAIT);
 
 	//Let's start with clean blocks
 	uint8_t* idp = (uint8_t*) &calcblock;
 	for (int x = 0; x < __SIZE_OF_VAR__(calcblock); x++)
 		*(uint8_t*)(idp+x) = 0;
+	set_boot_stage(BOOT_STAGE_CALCBLOCK_CLEARED);
 
 	idp = (uint8_t*) &SensorReading;
 	for (int x = 0; x < __SIZE_OF_VAR__(SensorReading); x++)
 		*(uint8_t*)(idp+x) = 0;
+	set_boot_stage(BOOT_STAGE_SENSOR_CLEARED);
 
 	configure_managed_i2c_info();
+	set_boot_stage(BOOT_STAGE_MANAGED_INFO_READY);
 
 	for (int i = 0; i < 22; i++)
 		averages[i] = 0;
+	set_boot_stage(BOOT_STAGE_AVERAGES_CLEARED);
 
 	config_PORT();
+	set_boot_stage(BOOT_STAGE_PORT_CONFIGURED);
 	config_Sysctrl_PM_and_GCLK ();
+	set_boot_stage(BOOT_STAGE_CLOCK_CONFIGURED);
 	Config_NVMCTRL();
+	set_boot_stage(BOOT_STAGE_NVM_MANUAL_WRITE);
 	config_EventSystem();
+	set_boot_stage(BOOT_STAGE_EVENT_SYSTEM_CONFIGURED);
 	configureDirectMemoryAccessController();
+	set_boot_stage(BOOT_STAGE_DMAC_CONFIGURED);
 	adc_config();
+	set_boot_stage(BOOT_STAGE_ADC_CONFIGURED);
 	ConfigureTimerCounter1 ();
+	set_boot_stage(BOOT_STAGE_TC1_CONFIGURED);
 	configureNestedVectoredInterruptController();
+	set_boot_stage(BOOT_STAGE_NVIC_CONFIGURED);
 	enableDMA ();
+	set_boot_stage(BOOT_STAGE_DMA_ENABLED);
 	enableADC ();
+	set_boot_stage(BOOT_STAGE_ADC_ENABLED);
 	enable_TC1();
+	set_boot_stage(BOOT_STAGE_TC1_ENABLED);
 	COnfigSerCom1();
+	set_boot_stage(BOOT_STAGE_SERCOM1_CONFIGURED);
 
 	for (;;) //main program loop
 	{
+		set_boot_stage(BOOT_STAGE_MAIN_LOOP);
 		Check_and_sendESPpacket();
 	}
 	return 0;

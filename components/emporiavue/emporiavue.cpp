@@ -1764,6 +1764,13 @@ bool EmporiaVueComponent::collect_runtime_diagnostic_(std::string *summary) {
   uint8_t sercom_intenset = 0;
   uint8_t sercom_intflag = 0;
   uint16_t sercom_status = 0;
+  uint32_t boot_diag_magic = 0;
+  uint32_t boot_diag_stage = 0;
+  uint32_t boot_diag_hardfault_lr = 0;
+  uint32_t boot_diag_hardfault_msp = 0;
+  uint32_t boot_diag_hardfault_psp = 0;
+  uint32_t boot_diag_stacked_pc = 0;
+  uint32_t boot_diag_stacked_lr = 0;
 
   bool ok = true;
   ok = this->read_core_register_(CORE_REG_SP, &sp) && ok;
@@ -1783,6 +1790,14 @@ bool EmporiaVueComponent::collect_runtime_diagnostic_(std::string *summary) {
   ok = this->mem_read8_(SERCOM1_I2CS_INTENSET, &sercom_intenset) && ok;
   ok = this->mem_read8_(SERCOM1_I2CS_INTFLAG, &sercom_intflag) && ok;
   ok = this->mem_read16_(SERCOM1_I2CS_STATUS, &sercom_status) && ok;
+  const bool boot_diag_ok = this->mem_read32_(SAMD_BOOT_DIAG_BASE + 0, &boot_diag_magic) &&
+                            this->mem_read32_(SAMD_BOOT_DIAG_BASE + 4, &boot_diag_stage) &&
+                            this->mem_read32_(SAMD_BOOT_DIAG_BASE + 8, &boot_diag_hardfault_lr) &&
+                            this->mem_read32_(SAMD_BOOT_DIAG_BASE + 12, &boot_diag_hardfault_msp) &&
+                            this->mem_read32_(SAMD_BOOT_DIAG_BASE + 16, &boot_diag_hardfault_psp) &&
+                            this->mem_read32_(SAMD_BOOT_DIAG_BASE + 20, &boot_diag_stacked_pc) &&
+                            this->mem_read32_(SAMD_BOOT_DIAG_BASE + 24, &boot_diag_stacked_lr);
+  const bool has_boot_diag = boot_diag_ok && boot_diag_magic == SAMD_BOOT_DIAG_MAGIC;
 
   const bool resumed = this->resume_core_();
   core_halted = false;
@@ -1808,12 +1823,33 @@ bool EmporiaVueComponent::collect_runtime_diagnostic_(std::string *summary) {
            hex32_(sercom_ctrla).c_str(), hex32_(sercom_ctrlb).c_str(), hex32_(sercom_syncbusy).c_str(),
            hex32_(sercom_addr).c_str(), hex8_(sercom_intenset).c_str(), hex8_(sercom_intflag).c_str(),
            hex16_(sercom_status).c_str());
+  if (has_boot_diag) {
+    ESP_LOGW(TAG,
+             "SAMD09 runtime diag boot: stage=%" PRIu32 " hardfault_lr=%s hardfault_msp=%s hardfault_psp=%s "
+             "stacked_pc=%s stacked_lr=%s",
+             boot_diag_stage, hex32_(boot_diag_hardfault_lr).c_str(), hex32_(boot_diag_hardfault_msp).c_str(),
+             hex32_(boot_diag_hardfault_psp).c_str(), hex32_(boot_diag_stacked_pc).c_str(),
+             hex32_(boot_diag_stacked_lr).c_str());
+  } else {
+    ESP_LOGW(TAG, "SAMD09 runtime diag boot: no managed boot diagnostic magic (%s)",
+             hex32_(boot_diag_magic).c_str());
+  }
 
   if (summary != nullptr) {
-    *summary = str_sprintf("pc=%s lr=%s xpsr=%s exc=%" PRIu32 " gclk=%s adc=%s tc1=%s sercom_sync=%s int=%s",
-                           hex32_(pc).c_str(), hex32_(lr).c_str(), hex32_(xpsr).c_str(), active_exception,
-                           hex8_(gclk_status).c_str(), hex8_(adc_status).c_str(), hex8_(tc1_status).c_str(),
-                           hex32_(sercom_syncbusy).c_str(), hex8_(sercom_intenset).c_str());
+    if (has_boot_diag) {
+      *summary = str_sprintf("pc=%s lr=%s xpsr=%s exc=%" PRIu32 " boot_stage=%" PRIu32 " hf_msp=%s stacked_pc=%s "
+                             "gclk=%s adc=%s tc1=%s sercom_sync=%s int=%s",
+                             hex32_(pc).c_str(), hex32_(lr).c_str(), hex32_(xpsr).c_str(), active_exception,
+                             boot_diag_stage, hex32_(boot_diag_hardfault_msp).c_str(),
+                             hex32_(boot_diag_stacked_pc).c_str(), hex8_(gclk_status).c_str(),
+                             hex8_(adc_status).c_str(), hex8_(tc1_status).c_str(), hex32_(sercom_syncbusy).c_str(),
+                             hex8_(sercom_intenset).c_str());
+    } else {
+      *summary = str_sprintf("pc=%s lr=%s xpsr=%s exc=%" PRIu32 " gclk=%s adc=%s tc1=%s sercom_sync=%s int=%s",
+                             hex32_(pc).c_str(), hex32_(lr).c_str(), hex32_(xpsr).c_str(), active_exception,
+                             hex8_(gclk_status).c_str(), hex8_(adc_status).c_str(), hex8_(tc1_status).c_str(),
+                             hex32_(sercom_syncbusy).c_str(), hex8_(sercom_intenset).c_str());
+    }
   }
   return true;
 }

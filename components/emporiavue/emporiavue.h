@@ -144,6 +144,8 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   static constexpr uint32_t SERCOM1_I2CS_STATUS = 0x42000C1AUL;
   static constexpr uint32_t SERCOM1_I2CS_SYNCBUSY = 0x42000C1CUL;
   static constexpr uint32_t SERCOM1_I2CS_ADDR = 0x42000C24UL;
+  static constexpr uint32_t SAMD_BOOT_DIAG_BASE = 0x20000000UL;
+  static constexpr uint32_t SAMD_BOOT_DIAG_MAGIC = 0x45565344UL;  // "EVSD"
 
   static constexpr uint32_t BACKUP_MAGIC = 0x45565342UL;   // "EVSB"
   static constexpr uint32_t BACKUP_FOOTER_MAGIC = 0x45565346UL;  // "EVSF"
