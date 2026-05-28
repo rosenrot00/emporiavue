@@ -14,7 +14,7 @@ OUT = ROOT / "components" / "emporiavue" / "samd09_firmware.h"
 
 FLASH_SIZE = 16 * 1024
 HARDWARE_ID = 2
-FIRMWARE_VERSION = 1
+FIRMWARE_VERSION = 10
 MAGIC = 0x4556534D
 FORMAT_VERSION = 1
 MARKER = b"EMPORIAVUE-SAMD"
@@ -81,7 +81,10 @@ static constexpr uint8_t BUNDLED_SAMD_FIRMWARE[BUNDLED_SAMD_FIRMWARE_SIZE] = {{
 """
     OUT.write_text(header)
     print(f"wrote {OUT}")
-    print(f"hardware_id={HARDWARE_ID} firmware_version={FIRMWARE_VERSION}")
+    print(
+        f"hardware_id={HARDWARE_ID} firmware_version={FIRMWARE_VERSION} "
+        f"display=v{FIRMWARE_VERSION // 10}.{FIRMWARE_VERSION % 10}"
+    )
     print(f"source_size={len(raw)} image_size={len(image)}")
     print(f"image_sha256={image_sha.hex()}")
     print(f"payload_sha256={payload_sha.hex()}")

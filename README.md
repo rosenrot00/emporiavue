@@ -72,8 +72,10 @@ hide a button entity based on partition-table state.
 The install check identifies managed firmware through a footer at the end of SAMD flash. Firmware without that footer is
 treated as stock/legacy and therefore as `hardware_id=0`, `firmware_version=0`. Managed firmware currently uses only
 `hardware_id` and `firmware_version` as compatibility keys; the bundled Vue 2 image is `hardware_id=2`,
-`firmware_version=1`. The current upstream `emporia_vue` I2C frame is 284 bytes; a future managed SAMD firmware can
-expose these values in its I2C payload too, but this SWD component does not depend on that yet.
+`firmware_version=10`, displayed as `v1.0`. Internally the version is a monotonic integer in tenths, so `11` is shown
+as `v1.1` and `100` as `v10.0`; comparisons and update decisions use the raw integer. The current upstream
+`emporia_vue` I2C frame is 284 bytes; a future managed SAMD firmware can expose these values in its I2C payload too,
+but this SWD component does not depend on that yet.
 Because Home Assistant buttons cannot be disabled dynamically by an external component, use `SAMD Firmware Action`,
 `SAMD Firmware Update Available`, `SAMD Stock Restore Available`, and `SAMD Firmware Status` as the authoritative state.
 The update and restore buttons exit without writing if their action is not applicable, SAMD writes are not explicitly

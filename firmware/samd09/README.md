@@ -28,5 +28,5 @@ python3 tools/package_samd09_firmware.py
 
 The generated image is padded to the full 16 KiB SAMD09D14 flash size and ends with the EmporiaVue managed firmware
 footer used by the ESPHome component for `hardware_id` and `firmware_version` detection. This first managed image is
-Vue 2 firmware (`hardware_id=2`, `firmware_version=1`) and intentionally keeps the upstream measurement behavior as the
-baseline before we add new measurement features.
+Vue 2 firmware (`hardware_id=2`, `firmware_version=10`, displayed as `v1.0`) and intentionally keeps the upstream
+measurement behavior as the baseline before we add new measurement features.

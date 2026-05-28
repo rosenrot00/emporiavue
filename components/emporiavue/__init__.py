@@ -120,7 +120,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_RETRY_COUNT, default=40): cv.int_range(min=1, max=255),
         cv.Optional(CONF_INIT_PINS_ON_BOOT, default=False): cv.boolean,
         cv.Optional(CONF_BACKUP_PARTITION, default="samd_bak"): cv.string_strict,
-        cv.Optional(CONF_REQUIRED_FIRMWARE_VERSION, default=1): cv.int_range(min=1, max=0xFFFFFFFF),
+        cv.Optional(CONF_REQUIRED_FIRMWARE_VERSION, default=10): cv.int_range(min=1, max=0xFFFFFFFF),
         cv.Optional(CONF_ALLOW_SAMD_WRITE, default=False): cv.boolean,
         cv.Optional(CONF_REQUIRE_BACKUP_BEFORE_INSTALL, default=True): cv.boolean,
         cv.Optional(CONF_DUMP_START_ADDRESS, default=0): cv.int_range(min=0, max=0xFFFFFFFF),

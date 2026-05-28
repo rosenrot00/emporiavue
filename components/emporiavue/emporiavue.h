@@ -239,6 +239,7 @@ class EmporiaVueComponent : public Component {
   static std::string hex8_(uint8_t value);
   static void append_hex_byte_(std::string *output, uint8_t value);
   static std::string sha256_hex_(const uint8_t hash[32]);
+  static std::string format_firmware_version_(uint32_t version);
 
   void clock_half_period_();
   void swclk_pulse_();
@@ -342,7 +343,7 @@ class EmporiaVueComponent : public Component {
   bool dump_core_halted_{false};
   uint32_t dump_next_block_{0};
   std::string backup_partition_name_{"samd_bak"};
-  uint32_t required_firmware_version_{1};
+  uint32_t required_firmware_version_{10};
   bool allow_samd_write_{false};
   bool require_backup_before_install_{true};
   const esp_partition_t *backup_partition_{nullptr};
