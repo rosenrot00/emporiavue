@@ -89,15 +89,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void set_diag_power_timing_minus2_minus4_max_sensor(sensor::Sensor *sensor) {
     this->diag_power_timing_minus2_minus4_max_sensor_ = sensor;
   }
-  void set_diag_power_timing_latest_minus2_mean_abs_sensor(sensor::Sensor *sensor) {
-    this->diag_power_timing_latest_minus2_mean_abs_sensor_ = sensor;
-  }
-  void set_diag_power_timing_latest_minus4_mean_abs_sensor(sensor::Sensor *sensor) {
-    this->diag_power_timing_latest_minus4_mean_abs_sensor_ = sensor;
-  }
-  void set_diag_power_timing_minus2_minus4_mean_abs_sensor(sensor::Sensor *sensor) {
-    this->diag_power_timing_minus2_minus4_mean_abs_sensor_ = sensor;
-  }
   void set_diag_last_sample_count_sensor(sensor::Sensor *sensor) { this->diag_last_sample_count_sensor_ = sensor; }
   void set_diag_last_i2c_read_len_sensor(sensor::Sensor *sensor) { this->diag_last_i2c_read_len_sensor_ = sensor; }
 
@@ -253,9 +244,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
     uint32_t power_timing_latest_minus2_max;
     uint32_t power_timing_latest_minus4_max;
     uint32_t power_timing_minus2_minus4_max;
-    uint32_t power_timing_latest_minus2_mean_abs;
-    uint32_t power_timing_latest_minus4_mean_abs;
-    uint32_t power_timing_minus2_minus4_mean_abs;
     uint16_t last_sample_count;
     uint16_t last_i2c_read_len;
     uint32_t crc32;
@@ -460,9 +448,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   sensor::Sensor *diag_power_timing_latest_minus2_max_sensor_{nullptr};
   sensor::Sensor *diag_power_timing_latest_minus4_max_sensor_{nullptr};
   sensor::Sensor *diag_power_timing_minus2_minus4_max_sensor_{nullptr};
-  sensor::Sensor *diag_power_timing_latest_minus2_mean_abs_sensor_{nullptr};
-  sensor::Sensor *diag_power_timing_latest_minus4_mean_abs_sensor_{nullptr};
-  sensor::Sensor *diag_power_timing_minus2_minus4_mean_abs_sensor_{nullptr};
   sensor::Sensor *diag_last_sample_count_sensor_{nullptr};
   sensor::Sensor *diag_last_i2c_read_len_sensor_{nullptr};
 
