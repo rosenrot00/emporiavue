@@ -273,7 +273,7 @@ uint8_t SensorSequence = 0;
 
 #define ESPpacketlength       0x11C
 #define EMPORIAVUE_HARDWARE_ID       2
-#define EMPORIAVUE_FIRMWARE_VERSION  15
+#define EMPORIAVUE_FIRMWARE_VERSION  16
 #define EMPORIAVUE_I2C_INFO_COMMAND  0xF0
 
 struct __attribute__((__packed__)) ManagedInfoType
@@ -1156,7 +1156,6 @@ int main(void)
 	for (;;) //main program loop
 	{
 		Check_and_sendESPpacket();
-		__asm__ __volatile__("wfi");
 	}
 	return 0;
 }
