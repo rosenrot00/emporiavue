@@ -639,6 +639,12 @@ void EmporiaVueComponent::test_flash_write() {
     return;
   }
 
+  if (!this->halt_core_()) {
+    fail("halt failed: " + this->last_error_);
+    return;
+  }
+  core_halted = true;
+
   bool row_erased = false;
   const uint32_t last_row_address = FLASH_START + flash_size - row_size;
   uint32_t row_address = last_row_address;
@@ -663,12 +669,6 @@ void EmporiaVueComponent::test_flash_write() {
     row_address = previous_row_address;
     ESP_LOGI(TAG, "SAMD09 flash write test using previous row because last row is not erased");
   }
-
-  if (!this->halt_core_()) {
-    fail("halt failed: " + this->last_error_);
-    return;
-  }
-  core_halted = true;
 
   if (!this->nvm_clear_errors_()) {
     fail("NVM error clear failed: " + this->last_error_);
