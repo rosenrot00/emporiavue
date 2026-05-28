@@ -38,6 +38,9 @@ EmporiaVueInstallFirmwareButton = emporiavue_ns.class_(
 EmporiaVueRestoreFirmwareButton = emporiavue_ns.class_(
     "EmporiaVueRestoreFirmwareButton", button.Button
 )
+EmporiaVueFlashDumpFirmwareButton = emporiavue_ns.class_(
+    "EmporiaVueFlashDumpFirmwareButton", button.Button
+)
 EmporiaVueTestWriteButton = emporiavue_ns.class_(
     "EmporiaVueTestWriteButton", button.Button
 )
@@ -50,6 +53,7 @@ CONF_DUMP_FLASH_BUTTON = "dump_flash_button"
 CONF_BACKUP_FIRMWARE_BUTTON = "backup_firmware_button"
 CONF_INSTALL_FIRMWARE_BUTTON = "install_firmware_button"
 CONF_RESTORE_FIRMWARE_BUTTON = "restore_firmware_button"
+CONF_FLASH_DUMP_FIRMWARE_BUTTON = "flash_dump_firmware_button"
 CONF_TEST_WRITE_BUTTON = "test_write_button"
 CONF_FIRMWARE_STATUS = "firmware_status"
 CONF_FIRMWARE_ACTION = "firmware_action"
@@ -241,6 +245,14 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             entity_category=ENTITY_CATEGORY_CONFIG,
         ),
         cv.Optional(
+            CONF_FLASH_DUMP_FIRMWARE_BUTTON,
+            default={CONF_NAME: "Flash Dumped SAMD09 Firmware"},
+        ): button.button_schema(
+            EmporiaVueFlashDumpFirmwareButton,
+            icon="mdi:chip",
+            entity_category=ENTITY_CATEGORY_CONFIG,
+        ),
+        cv.Optional(
             CONF_TEST_WRITE_BUTTON,
             default={CONF_NAME: "Test SAMD09 Flash Write"},
         ): button.button_schema(
@@ -331,6 +343,9 @@ async def to_code(config):
         await cg.register_parented(btn, var)
     if restore_firmware_button_config := config.get(CONF_RESTORE_FIRMWARE_BUTTON):
         btn = await button.new_button(restore_firmware_button_config)
+        await cg.register_parented(btn, var)
+    if flash_dump_firmware_button_config := config.get(CONF_FLASH_DUMP_FIRMWARE_BUTTON):
+        btn = await button.new_button(flash_dump_firmware_button_config)
         await cg.register_parented(btn, var)
     if test_write_button_config := config.get(CONF_TEST_WRITE_BUTTON):
         btn = await button.new_button(test_write_button_config)

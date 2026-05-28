@@ -47,6 +47,8 @@ emporiavue:
     name: "Update SAMD09 Firmware"
   restore_firmware_button:
     name: "Restore Stock SAMD09 Firmware"
+  flash_dump_firmware_button:
+    name: "Flash Dumped SAMD09 Firmware"
   test_write_button:
     name: "Test SAMD09 Flash Write"
   probe_button:

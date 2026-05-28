@@ -73,6 +73,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void backup_firmware();
   void install_firmware();
   void restore_firmware();
+  void flash_dump_firmware();
   void test_flash_write();
 
  protected:
@@ -201,12 +202,14 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
     BACKUP_STOCK,
     UPDATE_MANAGED,
     RESTORE_STOCK,
+    FLASH_STOCK_DUMP,
   };
 
   enum class FlashSource : uint8_t {
     NONE = 0,
     BUNDLED,
     BACKUP,
+    STOCK_DUMP,
   };
 
   enum class FirmwareKind : uint8_t {
@@ -324,6 +327,8 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   uint32_t bundled_firmware_hardware_id_() const;
   uint32_t bundled_firmware_version_() const;
   uint32_t bundled_firmware_size_() const;
+  bool stock_dump_firmware_available_() const;
+  uint32_t stock_dump_firmware_size_() const;
   bool nvm_wait_ready_();
   bool nvm_clear_errors_();
   bool nvm_check_errors_();
@@ -444,6 +449,11 @@ class EmporiaVueInstallFirmwareButton : public button::Button, public Parented<E
 class EmporiaVueRestoreFirmwareButton : public button::Button, public Parented<EmporiaVueComponent> {
  protected:
   void press_action() override { this->parent_->restore_firmware(); }
+};
+
+class EmporiaVueFlashDumpFirmwareButton : public button::Button, public Parented<EmporiaVueComponent> {
+ protected:
+  void press_action() override { this->parent_->flash_dump_firmware(); }
 };
 
 class EmporiaVueTestWriteButton : public button::Button, public Parented<EmporiaVueComponent> {

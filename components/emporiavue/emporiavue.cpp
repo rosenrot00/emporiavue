@@ -1,5 +1,6 @@
 #include "emporiavue.h"
 #include "samd09_firmware.h"
+#include "samd09_stock_dump.h"
 
 #include "esphome/core/log.h"
 
@@ -133,6 +134,7 @@ void EmporiaVueComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Bundled managed firmware version: v%s (raw %" PRIu32 ")",
                 format_firmware_version_(this->bundled_firmware_version_()).c_str(), this->bundled_firmware_version_());
   ESP_LOGCONFIG(TAG, "  Bundled managed firmware size: %" PRIu32 " bytes", this->bundled_firmware_size_());
+  ESP_LOGCONFIG(TAG, "  Bundled stock dump size: %" PRIu32 " bytes", this->stock_dump_firmware_size_());
   ESP_LOGCONFIG(TAG, "  SAMD writes enabled: %s", YESNO(this->allow_samd_write_));
   ESP_LOGCONFIG(TAG, "  Require backup before install: %s", YESNO(this->require_backup_before_install_));
   ESP_LOGCONFIG(TAG, "  Init pins on boot: %s", YESNO(this->init_pins_on_boot_));
@@ -555,6 +557,10 @@ void EmporiaVueComponent::install_firmware() { this->start_firmware_action_(Firm
 
 void EmporiaVueComponent::restore_firmware() { this->start_firmware_action_(FirmwareAction::RESTORE_STOCK); }
 
+void EmporiaVueComponent::flash_dump_firmware() {
+  this->start_firmware_action_(FirmwareAction::FLASH_STOCK_DUMP);
+}
+
 void EmporiaVueComponent::test_flash_write() {
   if (this->install_active_) {
     ESP_LOGW(TAG, "SAMD09 firmware install is running; test write ignored");
@@ -716,12 +722,14 @@ void EmporiaVueComponent::test_flash_write() {
 }
 
 void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action) {
-  if (requested_action != FirmwareAction::UPDATE_MANAGED && requested_action != FirmwareAction::RESTORE_STOCK) {
+  if (requested_action != FirmwareAction::UPDATE_MANAGED && requested_action != FirmwareAction::RESTORE_STOCK &&
+      requested_action != FirmwareAction::FLASH_STOCK_DUMP) {
     ESP_LOGW(TAG, "Unsupported SAMD09 firmware action requested");
     return;
   }
   const bool restore_requested = requested_action == FirmwareAction::RESTORE_STOCK;
-  const char *requested_name = restore_requested ? "restore" : "update";
+  const bool stock_dump_requested = requested_action == FirmwareAction::FLASH_STOCK_DUMP;
+  const char *requested_name = stock_dump_requested ? "flash dump" : (restore_requested ? "restore" : "update");
 
   if (this->install_active_) {
     ESP_LOGW(TAG, "SAMD09 firmware %s is already running", this->install_action_name_());
@@ -849,11 +857,17 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
 
   BackupHeader backup_header{};
   std::string backup_error;
-  const bool backup_valid = this->read_valid_backup_(&backup_header, &backup_error);
+  bool backup_valid = false;
+  if (!stock_dump_requested) {
+    backup_valid = this->read_valid_backup_(&backup_header, &backup_error);
+  }
 
   std::string action_reason;
   FirmwareAction action = FirmwareAction::UNKNOWN;
-  if (restore_requested) {
+  if (stock_dump_requested) {
+    action = FirmwareAction::FLASH_STOCK_DUMP;
+    action_reason = "dumped stock test image requested";
+  } else if (restore_requested) {
     action = backup_valid ? FirmwareAction::RESTORE_STOCK : FirmwareAction::UNKNOWN;
     action_reason = backup_valid ? "stock backup is available" : "valid stock backup required";
   } else if (this->require_backup_before_install_ && !backup_valid) {
@@ -868,7 +882,7 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
     this->publish_firmware_restore_available_(true);
   }
 
-  if (!restore_requested && action == FirmwareAction::BACKUP_STOCK) {
+  if (!restore_requested && !stock_dump_requested && action == FirmwareAction::BACKUP_STOCK) {
     release_after_check();
     this->publish_firmware_action_("backup required before update");
     this->publish_firmware_status_("backup required before update; starting backup");
@@ -876,7 +890,7 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
     return;
   }
 
-  if (!restore_requested && action == FirmwareAction::UNKNOWN) {
+  if (!restore_requested && !stock_dump_requested && action == FirmwareAction::UNKNOWN) {
     release_after_check();
     this->publish_firmware_update_available_(false);
     this->publish_firmware_action_("update blocked: " + action_reason);
@@ -885,7 +899,7 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
     return;
   }
 
-  if (!restore_requested && action != FirmwareAction::UPDATE_MANAGED) {
+  if (!restore_requested && !stock_dump_requested && action != FirmwareAction::UPDATE_MANAGED) {
     release_after_check();
     this->publish_firmware_status_("update not needed: " + action_reason);
     ESP_LOGI(TAG, "SAMD09 firmware update not needed: %s", action_reason.c_str());
@@ -901,8 +915,12 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
     return;
   }
 
-  const FirmwareAction selected_action = restore_requested ? FirmwareAction::RESTORE_STOCK : action;
-  const std::string selected_reason = restore_requested ? "stock backup is available" : action_reason;
+  const FirmwareAction selected_action = stock_dump_requested
+                                             ? FirmwareAction::FLASH_STOCK_DUMP
+                                             : (restore_requested ? FirmwareAction::RESTORE_STOCK : action);
+  const std::string selected_reason =
+      stock_dump_requested ? "dumped stock test image requested"
+                           : (restore_requested ? "stock backup is available" : action_reason);
 
   if (!this->allow_samd_write_) {
     release_after_check();
@@ -956,8 +974,19 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
     return;
   }
 
-  const uint32_t source_size =
-      selected_action == FirmwareAction::RESTORE_STOCK ? backup_header.flash_size : this->bundled_firmware_size_();
+  if (selected_action == FirmwareAction::FLASH_STOCK_DUMP && !this->stock_dump_firmware_available_()) {
+    release_after_check();
+    this->publish_firmware_status_("flash dump unavailable: no stock dump image is compiled in");
+    ESP_LOGW(TAG, "SAMD09 stock dump flash requested but no stock dump image is compiled in");
+    return;
+  }
+
+  uint32_t source_size = this->bundled_firmware_size_();
+  if (selected_action == FirmwareAction::RESTORE_STOCK) {
+    source_size = backup_header.flash_size;
+  } else if (selected_action == FirmwareAction::FLASH_STOCK_DUMP) {
+    source_size = this->stock_dump_firmware_size_();
+  }
   if (source_size != current.flash_size) {
     release_after_check();
     this->publish_firmware_status_(str_sprintf("%s blocked: image size %" PRIu32 " != flash size %" PRIu32,
@@ -999,7 +1028,13 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
   }
 
   this->install_action_ = selected_action;
-  this->install_source_ = selected_action == FirmwareAction::RESTORE_STOCK ? FlashSource::BACKUP : FlashSource::BUNDLED;
+  if (selected_action == FirmwareAction::RESTORE_STOCK) {
+    this->install_source_ = FlashSource::BACKUP;
+  } else if (selected_action == FirmwareAction::FLASH_STOCK_DUMP) {
+    this->install_source_ = FlashSource::STOCK_DUMP;
+  } else {
+    this->install_source_ = FlashSource::BUNDLED;
+  }
   if (backup_valid) {
     this->install_backup_header_ = backup_header;
   }
@@ -2257,6 +2292,9 @@ void EmporiaVueComponent::publish_detected_firmware_action_(FirmwareAction actio
     case FirmwareAction::RESTORE_STOCK:
       this->publish_firmware_action_("restore stock available: " + reason);
       break;
+    case FirmwareAction::FLASH_STOCK_DUMP:
+      this->publish_firmware_action_("flash dumped stock firmware: " + reason);
+      break;
     case FirmwareAction::NONE:
       this->publish_firmware_action_(reason);
       break;
@@ -2274,6 +2312,10 @@ uint32_t EmporiaVueComponent::bundled_firmware_hardware_id_() const { return BUN
 uint32_t EmporiaVueComponent::bundled_firmware_version_() const { return BUNDLED_SAMD_FIRMWARE_VERSION; }
 
 uint32_t EmporiaVueComponent::bundled_firmware_size_() const { return BUNDLED_SAMD_FIRMWARE_SIZE; }
+
+bool EmporiaVueComponent::stock_dump_firmware_available_() const { return STOCK_DUMP_SAMD_FIRMWARE_SIZE > 0; }
+
+uint32_t EmporiaVueComponent::stock_dump_firmware_size_() const { return STOCK_DUMP_SAMD_FIRMWARE_SIZE; }
 
 bool EmporiaVueComponent::nvm_wait_ready_() {
   for (uint16_t attempt = 0; attempt < 5000; attempt++) {
@@ -2433,6 +2475,15 @@ bool EmporiaVueComponent::read_install_source_(uint32_t offset, uint32_t length,
     return true;
   }
 
+  if (this->install_source_ == FlashSource::STOCK_DUMP) {
+    if (offset > this->stock_dump_firmware_size_() || length > this->stock_dump_firmware_size_() - offset) {
+      this->set_error_("stock dump firmware read out of range");
+      return false;
+    }
+    std::memcpy(buffer, STOCK_DUMP_SAMD_FIRMWARE + offset, length);
+    return true;
+  }
+
   this->set_error_("install source is not configured");
   return false;
 }
@@ -2493,6 +2544,8 @@ const char *EmporiaVueComponent::install_action_name_() const {
       return "update";
     case FirmwareAction::RESTORE_STOCK:
       return "restore";
+    case FirmwareAction::FLASH_STOCK_DUMP:
+      return "flash dump";
     case FirmwareAction::BACKUP_STOCK:
       return "backup";
     case FirmwareAction::NONE:
@@ -2584,7 +2637,8 @@ void EmporiaVueComponent::finish_install_success_() {
       this->fail_install_("final managed firmware marker verification failed");
       return;
     }
-  } else if (completed_action == FirmwareAction::RESTORE_STOCK) {
+  } else if (completed_action == FirmwareAction::RESTORE_STOCK ||
+             completed_action == FirmwareAction::FLASH_STOCK_DUMP) {
     if (!info_ok || info.kind != FirmwareKind::STOCK) {
       this->fail_install_("final stock firmware verification failed");
       return;
@@ -2623,7 +2677,10 @@ void EmporiaVueComponent::finish_install_success_() {
 
   BackupHeader backup_header{};
   std::string backup_error;
-  const bool backup_valid = this->read_valid_backup_(&backup_header, &backup_error);
+  bool backup_valid = false;
+  if (completed_action != FirmwareAction::FLASH_STOCK_DUMP) {
+    backup_valid = this->read_valid_backup_(&backup_header, &backup_error);
+  }
   if (completed_action == FirmwareAction::UPDATE_MANAGED) {
     this->publish_firmware_update_available_(false);
     this->publish_firmware_restore_available_(backup_valid);
@@ -2642,6 +2699,24 @@ void EmporiaVueComponent::finish_install_success_() {
              format_firmware_version_(this->bundled_firmware_version_()).c_str(), this->bundled_firmware_size_(),
              sha256_hex_(BUNDLED_SAMD_FIRMWARE_SHA256).c_str());
     this->set_timeout("post_update_i2c_probe", 1000, [this]() { this->probe_runtime_i2c_after_firmware_update_(); });
+  } else if (completed_action == FirmwareAction::FLASH_STOCK_DUMP) {
+    this->publish_firmware_update_available_(this->bundled_firmware_available_() &&
+                                             this->bundled_firmware_version_() >= this->required_firmware_version_);
+    this->publish_firmware_restore_available_(backup_valid);
+    this->publish_status_("stock dump flash complete");
+    this->publish_firmware_action_("stock dump firmware flashed");
+    this->publish_firmware_status_("stock dump flash complete: stock firmware");
+    ESP_LOGI(TAG, "SAMD09 stock dump firmware flash complete: size=%" PRIu32 ", sha256=%s",
+             this->stock_dump_firmware_size_(), sha256_hex_(STOCK_DUMP_SAMD_FIRMWARE_SHA256).c_str());
+    this->set_timeout("post_stock_dump_i2c_probe", 1000, [this]() {
+      const i2c::ErrorCode frame_error = this->read_normal_i2c_frame_("post-stock-dump");
+      if (frame_error == i2c::ERROR_OK) {
+        this->publish_firmware_status_("stock dump flash complete; normal i2c frame ok");
+      } else {
+        this->publish_firmware_status_(str_sprintf("stock dump flash complete; normal i2c frame failed: i2c error %u",
+                                                   static_cast<unsigned>(frame_error)));
+      }
+    });
   } else {
     this->publish_firmware_update_available_(this->bundled_firmware_available_() &&
                                              this->bundled_firmware_version_() >= this->required_firmware_version_);
