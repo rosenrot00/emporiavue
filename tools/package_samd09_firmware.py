@@ -13,7 +13,8 @@ BUILD_BIN = FW_DIR / "build" / "EmporiaSamd09.bin"
 OUT = ROOT / "components" / "emporiavue" / "samd09_firmware.h"
 
 FLASH_SIZE = 16 * 1024
-VERSION = 1
+HARDWARE_ID = 2
+FIRMWARE_VERSION = 1
 MAGIC = 0x4556534D
 FORMAT_VERSION = 1
 MARKER = b"EMPORIAVUE-SAMD"
@@ -39,7 +40,17 @@ def main() -> None:
 
     payload = raw + (b"\xff" * (FLASH_SIZE - FOOTER_SIZE - len(raw)))
     payload_sha = hashlib.sha256(payload).digest()
-    footer = struct.pack(FOOTER_FORMAT, MAGIC, FORMAT_VERSION, 0, VERSION, FLASH_SIZE, payload_sha, MARKER, 0xFF)
+    footer = struct.pack(
+        FOOTER_FORMAT,
+        MAGIC,
+        FORMAT_VERSION,
+        HARDWARE_ID,
+        FIRMWARE_VERSION,
+        FLASH_SIZE,
+        payload_sha,
+        MARKER,
+        0xFF,
+    )
     image = payload + footer
     image_sha = hashlib.sha256(image).digest()
 
@@ -50,7 +61,8 @@ def main() -> None:
 namespace esphome {{
 namespace emporiavue {{
 
-static constexpr uint32_t BUNDLED_SAMD_FIRMWARE_VERSION = {VERSION}UL;
+static constexpr uint32_t BUNDLED_SAMD_FIRMWARE_HARDWARE_ID = {HARDWARE_ID}UL;
+static constexpr uint32_t BUNDLED_SAMD_FIRMWARE_VERSION = {FIRMWARE_VERSION}UL;
 static constexpr uint32_t BUNDLED_SAMD_FIRMWARE_SIZE = {len(image)}UL;
 static constexpr uint32_t BUNDLED_SAMD_FIRMWARE_SOURCE_SIZE = {len(raw)}UL;
 static constexpr uint8_t BUNDLED_SAMD_FIRMWARE_SHA256[32] = {{
@@ -69,6 +81,7 @@ static constexpr uint8_t BUNDLED_SAMD_FIRMWARE[BUNDLED_SAMD_FIRMWARE_SIZE] = {{
 """
     OUT.write_text(header)
     print(f"wrote {OUT}")
+    print(f"hardware_id={HARDWARE_ID} firmware_version={FIRMWARE_VERSION}")
     print(f"source_size={len(raw)} image_size={len(image)}")
     print(f"image_sha256={image_sha.hex()}")
     print(f"payload_sha256={payload_sha.hex()}")

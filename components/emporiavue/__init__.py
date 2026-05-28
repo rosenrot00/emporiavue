@@ -77,6 +77,13 @@ CONF_INIT_PINS_ON_BOOT = "init_pins_on_boot"
 
 HARDWARE_CUSTOM = "custom"
 HARDWARE_VUE2 = "vue2"
+HARDWARE_VUE3 = "vue3"
+
+HARDWARE_IDS = {
+    HARDWARE_CUSTOM: 0,
+    HARDWARE_VUE2: 2,
+    HARDWARE_VUE3: 3,
+}
 
 
 def _apply_hardware_defaults(config):
@@ -99,7 +106,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(EmporiaVueComponent),
         cv.Optional(CONF_HARDWARE, default=HARDWARE_CUSTOM): cv.one_of(
-            HARDWARE_CUSTOM, HARDWARE_VUE2, lower=True
+            HARDWARE_CUSTOM, HARDWARE_VUE2, HARDWARE_VUE3, lower=True
         ),
         cv.Optional(CONF_SWDIO_PIN, default="GPIO13"): pins.internal_gpio_input_pullup_pin_schema,
         cv.Optional(CONF_SWCLK_PIN, default="GPIO14"): pins.internal_gpio_output_pin_schema,
@@ -238,6 +245,7 @@ CONFIG_SCHEMA = cv.All(_apply_hardware_defaults, EMPORIAVUE_SCHEMA)
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
+    cg.add(var.set_hardware_id(HARDWARE_IDS[config[CONF_HARDWARE]]))
 
     swdio_pin = await cg.gpio_pin_expression(config[CONF_SWDIO_PIN])
     cg.add(var.set_swdio_pin(swdio_pin))

@@ -123,7 +123,9 @@ void EmporiaVueComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Dump halt core: %s", YESNO(this->dump_halt_core_));
   ESP_LOGCONFIG(TAG, "  Dump resume between blocks: %s", YESNO(this->dump_resume_between_blocks_));
   ESP_LOGCONFIG(TAG, "  Backup partition: %s", this->backup_partition_name_.c_str());
+  ESP_LOGCONFIG(TAG, "  Configured hardware id: %u", static_cast<unsigned>(this->hardware_id_));
   ESP_LOGCONFIG(TAG, "  Required managed firmware version: %" PRIu32, this->required_firmware_version_);
+  ESP_LOGCONFIG(TAG, "  Bundled managed firmware hardware id: %" PRIu32, this->bundled_firmware_hardware_id_());
   ESP_LOGCONFIG(TAG, "  Bundled managed firmware version: %" PRIu32, this->bundled_firmware_version_());
   ESP_LOGCONFIG(TAG, "  Bundled managed firmware size: %" PRIu32 " bytes", this->bundled_firmware_size_());
   ESP_LOGCONFIG(TAG, "  SAMD writes enabled: %s", YESNO(this->allow_samd_write_));
@@ -653,6 +655,9 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
   const FirmwareAction action =
       this->determine_firmware_action_(current, backup_valid ? &backup_header : nullptr, &action_reason);
   this->publish_detected_firmware_action_(action, action_reason);
+  if (current.kind == FirmwareKind::MANAGED && backup_valid) {
+    this->publish_firmware_restore_available_(true);
+  }
 
   if (!restore_requested && action == FirmwareAction::BACKUP_STOCK) {
     this->release_pins_();
@@ -669,7 +674,7 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
     return;
   }
 
-  if (restore_requested && action != FirmwareAction::RESTORE_STOCK) {
+  if (restore_requested && (current.kind != FirmwareKind::MANAGED || !backup_valid)) {
     this->release_pins_();
     this->publish_firmware_restore_available_(false);
     this->publish_firmware_action_("restore unavailable");
@@ -678,15 +683,19 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
     return;
   }
 
+  const FirmwareAction selected_action = restore_requested ? FirmwareAction::RESTORE_STOCK : action;
+  const std::string selected_reason =
+      restore_requested ? "managed firmware detected; stock backup is available" : action_reason;
+
   if (!this->allow_samd_write_) {
     this->release_pins_();
-    this->publish_firmware_action_("blocked: " + action_reason + " (allow_samd_write is false)");
+    this->publish_firmware_action_("blocked: " + selected_reason + " (allow_samd_write is false)");
     this->publish_firmware_status_(std::string(requested_name) + " blocked: allow_samd_write is false");
     ESP_LOGW(TAG, "SAMD09 firmware %s blocked because allow_samd_write is false", requested_name);
     return;
   }
 
-  if (action == FirmwareAction::UPDATE_MANAGED && !this->bundled_firmware_available_()) {
+  if (selected_action == FirmwareAction::UPDATE_MANAGED && !this->bundled_firmware_available_()) {
     this->release_pins_();
     const char *current_kind = current.kind == FirmwareKind::MANAGED ? "managed" : "stock";
     this->publish_firmware_status_(str_sprintf(
@@ -699,7 +708,7 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
     return;
   }
 
-  if (action == FirmwareAction::UPDATE_MANAGED &&
+  if (selected_action == FirmwareAction::UPDATE_MANAGED &&
       this->bundled_firmware_version_() < this->required_firmware_version_) {
     this->release_pins_();
     this->publish_firmware_status_(str_sprintf("update unavailable: bundle v%" PRIu32 " is older than required v%" PRIu32,
@@ -708,7 +717,18 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
     return;
   }
 
-  if (action == FirmwareAction::RESTORE_STOCK && !backup_valid) {
+  if (selected_action == FirmwareAction::UPDATE_MANAGED && this->hardware_id_ != 0 &&
+      this->bundled_firmware_hardware_id_() != this->hardware_id_) {
+    this->release_pins_();
+    this->publish_firmware_status_(str_sprintf("update blocked: bundled image hardware id %" PRIu32
+                                               " != configured hardware id %u",
+                                               this->bundled_firmware_hardware_id_(),
+                                               static_cast<unsigned>(this->hardware_id_)));
+    ESP_LOGW(TAG, "SAMD09 firmware update blocked by bundled image hardware mismatch");
+    return;
+  }
+
+  if (selected_action == FirmwareAction::RESTORE_STOCK && !backup_valid) {
     this->release_pins_();
     this->publish_firmware_restore_available_(false);
     this->publish_firmware_status_("restore blocked: valid stock backup required (" + backup_error + ")");
@@ -717,7 +737,7 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
   }
 
   const uint32_t source_size =
-      action == FirmwareAction::RESTORE_STOCK ? backup_header.flash_size : this->bundled_firmware_size_();
+      selected_action == FirmwareAction::RESTORE_STOCK ? backup_header.flash_size : this->bundled_firmware_size_();
   if (source_size != current.flash_size) {
     this->release_pins_();
     this->publish_firmware_status_(str_sprintf("%s blocked: image size %" PRIu32 " != flash size %" PRIu32,
@@ -735,7 +755,7 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
     return;
   }
 
-  if (action == FirmwareAction::UPDATE_MANAGED && this->require_backup_before_install_ && !backup_valid) {
+  if (selected_action == FirmwareAction::UPDATE_MANAGED && this->require_backup_before_install_ && !backup_valid) {
     this->release_pins_();
     this->publish_firmware_status_("update blocked: valid stock backup required (" + backup_error + ")");
     ESP_LOGW(TAG, "SAMD09 firmware update blocked: valid backup required (%s)", backup_error.c_str());
@@ -763,8 +783,8 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
     return;
   }
 
-  this->install_action_ = action;
-  this->install_source_ = action == FirmwareAction::RESTORE_STOCK ? FlashSource::BACKUP : FlashSource::BUNDLED;
+  this->install_action_ = selected_action;
+  this->install_source_ = selected_action == FirmwareAction::RESTORE_STOCK ? FlashSource::BACKUP : FlashSource::BUNDLED;
   if (backup_valid) {
     this->install_backup_header_ = backup_header;
   }
@@ -779,10 +799,12 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
                                              this->install_flash_size_));
   ESP_LOGI(TAG,
            "SAMD09 firmware %s job started: current_kind=%s, current_version=%" PRIu32
-           ", target_version=%" PRIu32 ", source_size=%" PRIu32 ", page_size=%" PRIu32 ", row_size=%" PRIu32,
+           ", target_hardware=%" PRIu32 ", target_version=%" PRIu32 ", source_size=%" PRIu32
+           ", page_size=%" PRIu32 ", row_size=%" PRIu32,
            this->install_action_name_(),
            current.kind == FirmwareKind::MANAGED ? "managed" : "stock", current.version,
-           action == FirmwareAction::UPDATE_MANAGED ? this->bundled_firmware_version_() : 0, source_size,
+           selected_action == FirmwareAction::UPDATE_MANAGED ? this->bundled_firmware_hardware_id_() : 0,
+           selected_action == FirmwareAction::UPDATE_MANAGED ? this->bundled_firmware_version_() : 0, source_size,
            this->install_page_size_,
            this->install_row_size_);
 }
@@ -996,7 +1018,8 @@ void EmporiaVueComponent::publish_firmware_version_(const FirmwareInfo &info) {
   }
   switch (info.kind) {
     case FirmwareKind::MANAGED:
-      this->firmware_version_sensor_->publish_state(str_sprintf("managed v%" PRIu32, info.version));
+      this->firmware_version_sensor_->publish_state(
+          str_sprintf("managed hw=%u v%" PRIu32, static_cast<unsigned>(info.hardware_id), info.version));
       break;
     case FirmwareKind::STOCK:
       this->firmware_version_sensor_->publish_state(
@@ -1651,6 +1674,7 @@ bool EmporiaVueComponent::read_current_firmware_info_(FirmwareInfo *info) {
   }
 
   info->kind = FirmwareKind::STOCK;
+  info->hardware_id = 0;
   info->version = 0;
   info->flash_size = flash_size;
   info->image_size = flash_size;
@@ -1666,6 +1690,7 @@ bool EmporiaVueComponent::read_current_firmware_info_(FirmwareInfo *info) {
 
   if (managed_found) {
     info->kind = FirmwareKind::MANAGED;
+    info->hardware_id = managed_info.hardware_id;
     info->version = managed_info.firmware_version;
     info->image_size = managed_info.image_size;
     std::memcpy(info->image_sha256, managed_info.image_sha256, sizeof(info->image_sha256));
@@ -1750,30 +1775,41 @@ EmporiaVueComponent::FirmwareAction EmporiaVueComponent::determine_firmware_acti
       return FirmwareAction::BACKUP_STOCK;
     }
     if (reason != nullptr) {
-      *reason = str_sprintf("stock firmware detected; update to managed v%" PRIu32,
-                            this->required_firmware_version_);
+      *reason = str_sprintf("stock firmware detected; update to managed hw=%" PRIu32 " v%" PRIu32,
+                            this->bundled_firmware_hardware_id_(), this->required_firmware_version_);
+    }
+    return FirmwareAction::UPDATE_MANAGED;
+  }
+
+  if (current.kind == FirmwareKind::MANAGED && this->hardware_id_ != 0 &&
+      current.hardware_id != this->hardware_id_) {
+    if (reason != nullptr) {
+      *reason = str_sprintf("managed hardware id %u does not match configured hardware id %u",
+                            static_cast<unsigned>(current.hardware_id), static_cast<unsigned>(this->hardware_id_));
     }
     return FirmwareAction::UPDATE_MANAGED;
   }
 
   if (current.kind == FirmwareKind::MANAGED && current.version < this->required_firmware_version_) {
     if (reason != nullptr) {
-      *reason = str_sprintf("managed v%" PRIu32 " is older than required v%" PRIu32, current.version,
-                            this->required_firmware_version_);
+      *reason = str_sprintf("managed hw=%u v%" PRIu32 " is older than required v%" PRIu32,
+                            static_cast<unsigned>(current.hardware_id), current.version, this->required_firmware_version_);
     }
     return FirmwareAction::UPDATE_MANAGED;
   }
 
   if (current.kind == FirmwareKind::MANAGED && backup_valid) {
     if (reason != nullptr) {
-      *reason = str_sprintf("managed v%" PRIu32 " is current; stock backup is available", current.version);
+      *reason = str_sprintf("managed hw=%u v%" PRIu32 " is current; stock backup is available",
+                            static_cast<unsigned>(current.hardware_id), current.version);
     }
     return FirmwareAction::RESTORE_STOCK;
   }
 
   if (current.kind == FirmwareKind::MANAGED) {
     if (reason != nullptr) {
-      *reason = str_sprintf("up to date: managed v%" PRIu32, current.version);
+      *reason = str_sprintf("up to date: managed hw=%u v%" PRIu32, static_cast<unsigned>(current.hardware_id),
+                            current.version);
     }
     return FirmwareAction::NONE;
   }
@@ -1810,6 +1846,8 @@ void EmporiaVueComponent::publish_detected_firmware_action_(FirmwareAction actio
 }
 
 bool EmporiaVueComponent::bundled_firmware_available_() const { return BUNDLED_SAMD_FIRMWARE_SIZE > 0; }
+
+uint32_t EmporiaVueComponent::bundled_firmware_hardware_id_() const { return BUNDLED_SAMD_FIRMWARE_HARDWARE_ID; }
 
 uint32_t EmporiaVueComponent::bundled_firmware_version_() const { return BUNDLED_SAMD_FIRMWARE_VERSION; }
 
@@ -2062,7 +2100,8 @@ void EmporiaVueComponent::finish_install_success_() {
   }
 
   if (completed_action == FirmwareAction::UPDATE_MANAGED) {
-    if (!info_ok || info.kind != FirmwareKind::MANAGED || info.version != this->bundled_firmware_version_()) {
+    if (!info_ok || info.kind != FirmwareKind::MANAGED || info.hardware_id != this->bundled_firmware_hardware_id_() ||
+        info.version != this->bundled_firmware_version_()) {
       this->fail_install_("final managed firmware marker verification failed");
       return;
     }
@@ -2104,11 +2143,15 @@ void EmporiaVueComponent::finish_install_success_() {
     this->publish_firmware_update_available_(false);
     this->publish_firmware_restore_available_(backup_valid);
     this->publish_status_("update complete");
-    this->publish_firmware_action_(str_sprintf("up to date: managed v%" PRIu32, this->bundled_firmware_version_()));
+    this->publish_firmware_action_(str_sprintf("up to date: managed hw=%" PRIu32 " v%" PRIu32,
+                                               this->bundled_firmware_hardware_id_(),
+                                               this->bundled_firmware_version_()));
     this->publish_firmware_status_(
-        str_sprintf("update complete: managed v%" PRIu32, this->bundled_firmware_version_()));
-    ESP_LOGI(TAG, "SAMD09 managed firmware update complete: version=%" PRIu32 ", size=%" PRIu32 ", sha256=%s",
-             this->bundled_firmware_version_(), this->bundled_firmware_size_(),
+        str_sprintf("update complete: managed hw=%" PRIu32 " v%" PRIu32,
+                    this->bundled_firmware_hardware_id_(), this->bundled_firmware_version_()));
+    ESP_LOGI(TAG, "SAMD09 managed firmware update complete: hardware_id=%" PRIu32 ", version=%" PRIu32
+                  ", size=%" PRIu32 ", sha256=%s",
+             this->bundled_firmware_hardware_id_(), this->bundled_firmware_version_(), this->bundled_firmware_size_(),
              sha256_hex_(BUNDLED_SAMD_FIRMWARE_SHA256).c_str());
   } else {
     this->publish_firmware_update_available_(this->bundled_firmware_available_() &&

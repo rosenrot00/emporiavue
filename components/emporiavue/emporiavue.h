@@ -28,6 +28,7 @@ class EmporiaVueComponent : public Component {
   void set_swdio_pin(InternalGPIOPin *pin) { this->swdio_pin_ = pin; }
   void set_swclk_pin(InternalGPIOPin *pin) { this->swclk_pin_ = pin; }
   void set_reset_pin(InternalGPIOPin *pin) { this->reset_pin_ = pin; }
+  void set_hardware_id(uint16_t hardware_id) { this->hardware_id_ = hardware_id; }
   void set_reset_before_read(bool reset_before_read) { this->reset_before_read_ = reset_before_read; }
   void set_reset_on_boot(bool reset_on_boot) { this->reset_on_boot_ = reset_on_boot; }
   void set_connect_under_reset(bool connect_under_reset) { this->connect_under_reset_ = connect_under_reset; }
@@ -156,7 +157,7 @@ class EmporiaVueComponent : public Component {
   struct ManagedFirmwareInfo {
     uint32_t magic;
     uint16_t format_version;
-    uint16_t reserved0;
+    uint16_t hardware_id;
     uint32_t firmware_version;
     uint32_t image_size;
     uint8_t image_sha256[32];
@@ -203,6 +204,7 @@ class EmporiaVueComponent : public Component {
 
   struct FirmwareInfo {
     FirmwareKind kind{FirmwareKind::UNKNOWN};
+    uint16_t hardware_id{0};
     uint32_t version{0};
     uint32_t flash_size{0};
     uint32_t image_size{0};
@@ -288,6 +290,7 @@ class EmporiaVueComponent : public Component {
   void publish_detected_firmware_action_(FirmwareAction action, const std::string &reason);
   void start_firmware_action_(FirmwareAction requested_action);
   bool bundled_firmware_available_() const;
+  uint32_t bundled_firmware_hardware_id_() const;
   uint32_t bundled_firmware_version_() const;
   uint32_t bundled_firmware_size_() const;
   bool nvm_wait_ready_();
@@ -319,6 +322,7 @@ class EmporiaVueComponent : public Component {
   binary_sensor::BinarySensor *firmware_update_available_sensor_{nullptr};
   binary_sensor::BinarySensor *firmware_restore_available_sensor_{nullptr};
 
+  uint16_t hardware_id_{0};
   bool reset_before_read_{false};
   bool reset_on_boot_{false};
   bool connect_under_reset_{false};

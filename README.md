@@ -70,8 +70,10 @@ pressing the backup button is ignored. ESPHome does not currently provide a safe
 hide a button entity based on partition-table state.
 
 The install check identifies managed firmware through a footer at the end of SAMD flash. Firmware without that footer is
-treated as stock/legacy and therefore as version `0`. The current upstream `emporia_vue` I2C frame is 284 bytes; a future
-managed SAMD firmware can expose a version in its I2C payload too, but this SWD component does not depend on that yet.
+treated as stock/legacy and therefore as `hardware_id=0`, `firmware_version=0`. Managed firmware currently uses only
+`hardware_id` and `firmware_version` as compatibility keys; the bundled Vue 2 image is `hardware_id=2`,
+`firmware_version=1`. The current upstream `emporia_vue` I2C frame is 284 bytes; a future managed SAMD firmware can
+expose these values in its I2C payload too, but this SWD component does not depend on that yet.
 Because Home Assistant buttons cannot be disabled dynamically by an external component, use `SAMD Firmware Action`,
 `SAMD Firmware Update Available`, `SAMD Stock Restore Available`, and `SAMD Firmware Status` as the authoritative state.
 The update and restore buttons exit without writing if their action is not applicable, SAMD writes are not explicitly
@@ -80,8 +82,9 @@ enabled, no bundled image is compiled in, or a valid backup is missing.
 The bundled SAMD09 image is built from `firmware/samd09`, which is based on
 `gekkehenkie11/emporia-SAMD09` at commit `0baafe6d8812639d14f8f66b03844567f913ddc0` with small local build fixes for
 a freestanding ARM GCC toolchain. The generated image is padded to the detected 16 KiB SAMD09 flash size and ends with a
-managed firmware footer so future runs can detect its version. To rebuild the embedded header after changing the SAMD
-source, run:
+managed firmware footer so future runs can detect its target hardware and firmware version. The update path refuses to
+flash an image whose `hardware_id` does not match the configured `hardware:` value. To rebuild the embedded header after
+changing the SAMD source, run:
 
 ```bash
 python3 tools/package_samd09_firmware.py
