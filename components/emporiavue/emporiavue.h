@@ -7,6 +7,11 @@
 #include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
 
+#include <esp_partition.h>
+#include <mbedtls/sha256.h>
+
+#include <array>
+#include <cstddef>
 #include <cstdint>
 #include <string>
 
@@ -39,15 +44,21 @@ class EmporiaVueComponent : public Component {
   void set_dump_resume_between_blocks(bool dump_resume_between_blocks) {
     this->dump_resume_between_blocks_ = dump_resume_between_blocks;
   }
+  void set_backup_partition_name(const std::string &backup_partition_name) {
+    this->backup_partition_name_ = backup_partition_name;
+  }
+  void set_backup_firmware_button(button::Button *button) { this->backup_firmware_button_ = button; }
 
   void set_swd_idcode_sensor(text_sensor::TextSensor *sensor) { this->swd_idcode_sensor_ = sensor; }
   void set_dsu_did_sensor(text_sensor::TextSensor *sensor) { this->dsu_did_sensor_ = sensor; }
   void set_status_sensor(text_sensor::TextSensor *sensor) { this->status_sensor_ = sensor; }
+  void set_firmware_status_sensor(text_sensor::TextSensor *sensor) { this->firmware_status_sensor_ = sensor; }
   void set_read_allowed_sensor(binary_sensor::BinarySensor *sensor) { this->read_allowed_sensor_ = sensor; }
 
   void read_samd();
   void probe_swd();
   void dump_flash();
+  void backup_firmware();
 
  protected:
   static constexpr uint8_t DP_ABORT = 0x00;
@@ -79,10 +90,48 @@ class EmporiaVueComponent : public Component {
   static constexpr uint32_t DHCSR_C_DEBUGEN = 0x00000001UL;
   static constexpr uint32_t DHCSR_C_HALT = 0x00000002UL;
 
+  static constexpr uint32_t BACKUP_MAGIC = 0x45565342UL;   // "EVSB"
+  static constexpr uint32_t BACKUP_FOOTER_MAGIC = 0x45565346UL;  // "EVSF"
+  static constexpr uint16_t BACKUP_HEADER_VERSION = 1;
+  static constexpr uint8_t BACKUP_STATE_IN_PROGRESS = 0xFE;
+  static constexpr uint8_t BACKUP_STATE_VALID = 0xFC;
+  static constexpr uint8_t BACKUP_STATE_INVALID = 0xF8;
+  static constexpr uint32_t BACKUP_IMAGE_OFFSET = 0x1000UL;
+  static constexpr uint16_t BACKUP_IO_BLOCK_SIZE = 64;
+  static constexpr const char *MANAGED_MARKER = "EMPORIAVUE-SAMD";
+
+  struct BackupHeader {
+    uint32_t magic;
+    uint16_t version;
+    uint8_t state;
+    uint8_t reserved0;
+    uint32_t header_size;
+    uint32_t image_offset;
+    uint32_t flash_size;
+    uint32_t page_size;
+    uint32_t page_count;
+    uint32_t nvm_param;
+    uint32_t dsu_did;
+    uint8_t sha256[32];
+    uint8_t reserved[64];
+  } __attribute__((packed));
+
+  struct BackupFooter {
+    uint32_t magic;
+    uint32_t flash_size;
+    uint8_t sha256[32];
+  } __attribute__((packed));
+
   enum MemSize : uint8_t {
     MEM_SIZE_BYTE = 0,
     MEM_SIZE_HALFWORD = 1,
     MEM_SIZE_WORD = 2,
+  };
+
+  enum class BackupStage : uint8_t {
+    IDLE = 0,
+    READ_AND_STORE,
+    VERIFY_SECOND_READ,
   };
 
   void reset_target_();
@@ -99,11 +148,13 @@ class EmporiaVueComponent : public Component {
   void release_pins_();
   void set_error_(const std::string &error);
   void publish_status_(const std::string &status);
+  void publish_firmware_status_(const std::string &status);
   void publish_read_allowed_(bool value);
   static std::string hex32_(uint32_t value);
   static std::string hex16_(uint16_t value);
   static std::string hex8_(uint8_t value);
   static void append_hex_byte_(std::string *output, uint8_t value);
+  static std::string sha256_hex_(const uint8_t hash[32]);
 
   void clock_half_period_();
   void swclk_pulse_();
@@ -130,9 +181,24 @@ class EmporiaVueComponent : public Component {
   bool resume_core_();
   bool read_flash_geometry_(uint32_t *param, uint32_t *page_size, uint32_t *page_count, uint32_t *flash_size);
   bool dump_flash_block_(uint32_t address, uint16_t length, std::string *hex_data);
+  bool read_flash_bytes_(uint32_t address, uint16_t length, uint8_t *data);
   bool power_up_debug_();
   bool verify_mem_ap_();
   void perform_boot_reset_();
+  void inspect_backup_partition_();
+  void set_backup_button_exposed_(bool exposed);
+  bool find_backup_partition_();
+  bool backup_partition_has_capacity_(uint32_t flash_size);
+  bool read_backup_header_(BackupHeader *header);
+  bool hash_partition_image_(uint32_t flash_size, uint8_t hash[32]);
+  bool write_backup_header_(uint8_t state, uint32_t flash_size, uint32_t page_size, uint32_t page_count,
+                            uint32_t nvm_param, uint32_t dsu_did);
+  bool write_backup_state_(uint8_t state);
+  bool write_backup_hash_and_footer_(const uint8_t hash[32], uint32_t flash_size);
+  bool detect_managed_firmware_(uint32_t flash_size, bool *managed);
+  void process_backup_();
+  void fail_backup_(const std::string &error);
+  void finish_backup_success_();
 
   InternalGPIOPin *swdio_pin_{nullptr};
   InternalGPIOPin *swclk_pin_{nullptr};
@@ -140,7 +206,9 @@ class EmporiaVueComponent : public Component {
   text_sensor::TextSensor *swd_idcode_sensor_{nullptr};
   text_sensor::TextSensor *dsu_did_sensor_{nullptr};
   text_sensor::TextSensor *status_sensor_{nullptr};
+  text_sensor::TextSensor *firmware_status_sensor_{nullptr};
   binary_sensor::BinarySensor *read_allowed_sensor_{nullptr};
+  button::Button *backup_firmware_button_{nullptr};
 
   bool reset_before_read_{false};
   bool reset_on_boot_{false};
@@ -160,6 +228,22 @@ class EmporiaVueComponent : public Component {
   bool dump_active_{false};
   bool dump_core_halted_{false};
   uint32_t dump_next_block_{0};
+  std::string backup_partition_name_{"samd_bak"};
+  const esp_partition_t *backup_partition_{nullptr};
+  bool backup_active_{false};
+  bool backup_core_halted_{false};
+  bool backup_header_written_{false};
+  BackupStage backup_stage_{BackupStage::IDLE};
+  uint32_t backup_next_offset_{0};
+  uint32_t backup_flash_size_{0};
+  uint32_t backup_page_size_{0};
+  uint32_t backup_page_count_{0};
+  uint32_t backup_nvm_param_{0};
+  uint32_t backup_dsu_did_{0};
+  std::array<uint8_t, 32> backup_stored_hash_{};
+  std::array<uint8_t, 32> backup_verify_hash_{};
+  mbedtls_sha256_context backup_sha_ctx_{};
+  bool backup_sha_ctx_active_{false};
   bool init_pins_on_boot_{false};
   bool pins_setup_{false};
   bool direction_write_{true};
@@ -183,6 +267,11 @@ class EmporiaVueProbeButton : public button::Button, public Parented<EmporiaVueC
 class EmporiaVueDumpFlashButton : public button::Button, public Parented<EmporiaVueComponent> {
  protected:
   void press_action() override { this->parent_->dump_flash(); }
+};
+
+class EmporiaVueBackupFirmwareButton : public button::Button, public Parented<EmporiaVueComponent> {
+ protected:
+  void press_action() override { this->parent_->backup_firmware(); }
 };
 
 }  // namespace emporiavue

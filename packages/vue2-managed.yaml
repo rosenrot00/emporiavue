@@ -1,0 +1,48 @@
+# Emporia Vue 2 internal SAMD09 preset.
+#
+# Keep external_components in the main node YAML so private GitHub credentials
+# can stay in secrets.yaml. This package only adds the ESP32 backup partition
+# and the emporiavue component configuration.
+#
+# When adding this package to an already-flashed ESP32, update the partition
+# table once before using the backup button. ESPHome requires
+# `allow_partition_access: true` on the esphome OTA platform for that step.
+
+esp32:
+  partitions:
+    - name: samd_bak
+      type: data
+      subtype: undefined
+      size: 0x10000
+
+emporiavue:
+  id: samd_reader
+  hardware: vue2
+  backup_partition: samd_bak
+
+  dump_start_address: 0
+  dump_block_size: 64
+  dump_block_count: 5
+  dump_full_flash: true
+  dump_halt_core: true
+  dump_resume_between_blocks: false
+
+  firmware_status:
+    name: "SAMD Firmware Status"
+  status:
+    name: "SAMD SWD Status"
+  swd_idcode:
+    name: "SAMD09 SWD IDCODE"
+  dsu_did:
+    name: "SAMD09 DSU DID"
+  read_allowed:
+    name: "SAMD09 Read Allowed"
+
+  backup_firmware_button:
+    name: "Backup SAMD09 Firmware"
+  probe_button:
+    name: "Probe SAMD09 SWD"
+  read_button:
+    name: "Read SAMD09"
+  dump_flash_button:
+    name: "Dump SAMD09 Flash"

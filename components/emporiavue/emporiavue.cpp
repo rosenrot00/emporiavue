@@ -2,7 +2,9 @@
 
 #include "esphome/core/log.h"
 
+#include <algorithm>
 #include <cinttypes>
+#include <cstring>
 
 namespace esphome {
 namespace emporiavue {
@@ -15,9 +17,15 @@ void EmporiaVueComponent::setup() {
     this->prepare_pins_();
     this->release_pins_();
   }
+  this->inspect_backup_partition_();
 }
 
 void EmporiaVueComponent::loop() {
+  if (this->backup_active_) {
+    this->process_backup_();
+    return;
+  }
+
   if (!this->dump_active_) {
     return;
   }
@@ -106,10 +114,12 @@ void EmporiaVueComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Dump full flash: %s", YESNO(this->dump_full_flash_));
   ESP_LOGCONFIG(TAG, "  Dump halt core: %s", YESNO(this->dump_halt_core_));
   ESP_LOGCONFIG(TAG, "  Dump resume between blocks: %s", YESNO(this->dump_resume_between_blocks_));
+  ESP_LOGCONFIG(TAG, "  Backup partition: %s", this->backup_partition_name_.c_str());
   ESP_LOGCONFIG(TAG, "  Init pins on boot: %s", YESNO(this->init_pins_on_boot_));
   LOG_TEXT_SENSOR("  ", "SWD IDCODE", this->swd_idcode_sensor_);
   LOG_TEXT_SENSOR("  ", "DSU DID", this->dsu_did_sensor_);
   LOG_TEXT_SENSOR("  ", "Status", this->status_sensor_);
+  LOG_TEXT_SENSOR("  ", "Firmware status", this->firmware_status_sensor_);
   LOG_BINARY_SENSOR("  ", "Read allowed", this->read_allowed_sensor_);
 }
 
@@ -255,6 +265,10 @@ void EmporiaVueComponent::probe_swd() {
 }
 
 void EmporiaVueComponent::dump_flash() {
+  if (this->backup_active_) {
+    ESP_LOGW(TAG, "SAMD09 firmware backup is running; flash dump ignored");
+    return;
+  }
   if (this->dump_active_) {
     ESP_LOGW(TAG, "SAMD09 flash dump is already running");
     return;
@@ -359,6 +373,144 @@ void EmporiaVueComponent::dump_flash() {
   this->dump_active_ = true;
   ESP_LOGI(TAG, "SAMD09 flash dump job started; %" PRIu32 " blocks will be read one per loop cycle",
            this->dump_effective_block_count_);
+}
+
+void EmporiaVueComponent::backup_firmware() {
+  if (this->backup_active_) {
+    ESP_LOGW(TAG, "SAMD09 firmware backup is already running");
+    return;
+  }
+  if (this->dump_active_) {
+    ESP_LOGW(TAG, "SAMD09 flash dump is running; firmware backup ignored");
+    return;
+  }
+
+  this->last_error_.clear();
+  this->backup_partition_ = nullptr;
+  this->backup_core_halted_ = false;
+  this->backup_header_written_ = false;
+  this->backup_stage_ = BackupStage::IDLE;
+  this->backup_next_offset_ = 0;
+  this->backup_flash_size_ = 0;
+  std::fill(this->backup_stored_hash_.begin(), this->backup_stored_hash_.end(), 0);
+  std::fill(this->backup_verify_hash_.begin(), this->backup_verify_hash_.end(), 0);
+
+  ESP_LOGI(TAG, "Starting SAMD09 legacy firmware backup");
+  this->publish_firmware_status_("detecting firmware");
+  this->publish_status_("backup: detecting firmware");
+
+  if (this->swdio_pin_ == nullptr || this->swclk_pin_ == nullptr) {
+    this->set_error_("SWD pins are not configured");
+    this->publish_firmware_status_("backup failed: SWD pins missing");
+    return;
+  }
+
+  if (!this->find_backup_partition_()) {
+    this->set_backup_button_exposed_(false);
+    this->publish_firmware_status_("backup failed: partition missing");
+    return;
+  }
+  this->set_backup_button_exposed_(true);
+
+  this->prepare_pins_();
+  this->begin_swd_session_();
+
+  uint32_t swd_idcode = 0;
+  if (!this->swd_initialize_(&swd_idcode)) {
+    this->finish_swd_session_();
+    this->release_pins_();
+    this->publish_firmware_status_("backup failed: " + this->last_error_);
+    ESP_LOGW(TAG, "SAMD09 firmware backup failed: %s", this->last_error_.c_str());
+    return;
+  }
+  if (this->swd_idcode_sensor_ != nullptr) {
+    this->swd_idcode_sensor_->publish_state(hex32_(swd_idcode));
+  }
+
+  if (!this->power_up_debug_()) {
+    this->finish_swd_session_();
+    this->release_pins_();
+    this->publish_firmware_status_("backup failed: " + this->last_error_);
+    ESP_LOGW(TAG, "SAMD09 firmware backup failed: %s", this->last_error_.c_str());
+    return;
+  }
+  this->finish_swd_session_();
+
+  if (!this->verify_mem_ap_()) {
+    this->release_pins_();
+    this->publish_firmware_status_("backup failed: " + this->last_error_);
+    ESP_LOGW(TAG, "SAMD09 firmware backup failed: %s", this->last_error_.c_str());
+    return;
+  }
+
+  if (!this->halt_core_()) {
+    this->release_pins_();
+    this->publish_firmware_status_("backup failed: " + this->last_error_);
+    ESP_LOGW(TAG, "SAMD09 firmware backup failed while halting core: %s", this->last_error_.c_str());
+    return;
+  }
+  this->backup_core_halted_ = true;
+
+  if (!this->read_flash_geometry_(&this->backup_nvm_param_, &this->backup_page_size_, &this->backup_page_count_,
+                                  &this->backup_flash_size_)) {
+    this->fail_backup_("geometry read failed: " + this->last_error_);
+    return;
+  }
+  if (this->backup_flash_size_ == 0 || this->backup_flash_size_ > 0x20000UL) {
+    this->fail_backup_(str_sprintf("unsupported SAMD flash size %" PRIu32, this->backup_flash_size_));
+    return;
+  }
+
+  if (this->mem_read32_(DSU_DID, &this->backup_dsu_did_)) {
+    if (this->dsu_did_sensor_ != nullptr) {
+      this->dsu_did_sensor_->publish_state(hex32_(this->backup_dsu_did_));
+    }
+  } else {
+    this->backup_dsu_did_ = 0;
+    ESP_LOGW(TAG, "SAMD09 backup could not read DSU DID: %s", this->last_error_.c_str());
+    this->last_error_.clear();
+  }
+
+  bool managed = false;
+  if (!this->detect_managed_firmware_(this->backup_flash_size_, &managed)) {
+    this->fail_backup_("firmware detection failed: " + this->last_error_);
+    return;
+  }
+  if (managed) {
+    this->fail_backup_("managed firmware detected; refusing to back up managed SAMD firmware");
+    return;
+  }
+  this->publish_firmware_status_("legacy firmware detected");
+
+  if (!this->backup_partition_has_capacity_(this->backup_flash_size_)) {
+    this->fail_backup_("backup partition too small");
+    return;
+  }
+
+  this->publish_firmware_status_("backup erasing partition");
+  ESP_LOGI(TAG, "Erasing SAMD backup partition '%s' (%" PRIu32 " bytes)", this->backup_partition_name_.c_str(),
+           static_cast<uint32_t>(this->backup_partition_->size));
+  esp_err_t err = esp_partition_erase_range(this->backup_partition_, 0, this->backup_partition_->size);
+  if (err != ESP_OK) {
+    this->fail_backup_(str_sprintf("backup partition erase failed: 0x%X", static_cast<unsigned>(err)));
+    return;
+  }
+
+  if (!this->write_backup_header_(BACKUP_STATE_IN_PROGRESS, this->backup_flash_size_, this->backup_page_size_,
+                                  this->backup_page_count_, this->backup_nvm_param_, this->backup_dsu_did_)) {
+    this->fail_backup_("backup header write failed");
+    return;
+  }
+  this->backup_header_written_ = true;
+
+  this->backup_next_offset_ = 0;
+  this->backup_stage_ = BackupStage::READ_AND_STORE;
+  this->backup_active_ = true;
+  this->publish_firmware_status_(str_sprintf("backup reading 0/%" PRIu32, this->backup_flash_size_));
+  ESP_LOGI(TAG,
+           "SAMD09 legacy firmware backup started: flash_size=%" PRIu32 ", page_size=%" PRIu32
+           ", page_count=%" PRIu32,
+           this->backup_flash_size_, this->backup_page_size_, this->backup_page_count_);
 }
 
 void EmporiaVueComponent::reset_target_() {
@@ -552,6 +704,12 @@ void EmporiaVueComponent::publish_status_(const std::string &status) {
   }
 }
 
+void EmporiaVueComponent::publish_firmware_status_(const std::string &status) {
+  if (this->firmware_status_sensor_ != nullptr) {
+    this->firmware_status_sensor_->publish_state(status);
+  }
+}
+
 void EmporiaVueComponent::publish_read_allowed_(bool value) {
   if (this->read_allowed_sensor_ != nullptr) {
     this->read_allowed_sensor_->publish_state(value);
@@ -568,6 +726,15 @@ void EmporiaVueComponent::append_hex_byte_(std::string *output, uint8_t value) {
   static const char HEX[] = "0123456789abcdef";
   output->push_back(HEX[(value >> 4) & 0x0F]);
   output->push_back(HEX[value & 0x0F]);
+}
+
+std::string EmporiaVueComponent::sha256_hex_(const uint8_t hash[32]) {
+  std::string output;
+  output.reserve(64);
+  for (uint8_t i = 0; i < 32; i++) {
+    append_hex_byte_(&output, hash[i]);
+  }
+  return output;
 }
 
 void EmporiaVueComponent::clock_half_period_() {
@@ -910,6 +1077,30 @@ bool EmporiaVueComponent::dump_flash_block_(uint32_t address, uint16_t length, s
   return true;
 }
 
+bool EmporiaVueComponent::read_flash_bytes_(uint32_t address, uint16_t length, uint8_t *data) {
+  uint16_t offset = 0;
+  while (offset < length) {
+    const uint32_t current_address = address + offset;
+    const uint16_t remaining = length - offset;
+    if ((current_address & 0x03U) == 0 && remaining >= 4) {
+      uint32_t word = 0;
+      if (!this->mem_read32_(current_address, &word)) {
+        return false;
+      }
+      data[offset++] = static_cast<uint8_t>(word & 0xFFU);
+      data[offset++] = static_cast<uint8_t>((word >> 8) & 0xFFU);
+      data[offset++] = static_cast<uint8_t>((word >> 16) & 0xFFU);
+      data[offset++] = static_cast<uint8_t>((word >> 24) & 0xFFU);
+    } else {
+      if (!this->mem_read8_(current_address, &data[offset])) {
+        return false;
+      }
+      offset++;
+    }
+  }
+  return true;
+}
+
 bool EmporiaVueComponent::power_up_debug_() {
   if (!this->dp_write_(DP_CTRL_STAT, DP_POWER_REQUEST)) {
     return false;
@@ -940,6 +1131,304 @@ bool EmporiaVueComponent::verify_mem_ap_() {
   }
   ESP_LOGD(TAG, "MEM-AP IDR=%s", hex32_(idr).c_str());
   return true;
+}
+
+void EmporiaVueComponent::inspect_backup_partition_() {
+  if (!this->find_backup_partition_()) {
+    this->set_backup_button_exposed_(false);
+    return;
+  }
+  this->set_backup_button_exposed_(true);
+
+  BackupHeader header{};
+  if (!this->read_backup_header_(&header) || header.magic != BACKUP_MAGIC) {
+    this->publish_firmware_status_("backup missing");
+    return;
+  }
+
+  if (header.state == BACKUP_STATE_IN_PROGRESS) {
+    this->publish_firmware_status_("backup incomplete");
+    return;
+  }
+  if (header.state == BACKUP_STATE_INVALID) {
+    this->publish_firmware_status_("backup invalid");
+    return;
+  }
+  if (header.state != BACKUP_STATE_VALID) {
+    this->publish_firmware_status_("backup unknown state");
+    return;
+  }
+  if (header.version != BACKUP_HEADER_VERSION || header.header_size != sizeof(BackupHeader) ||
+      !this->backup_partition_has_capacity_(header.flash_size)) {
+    this->publish_firmware_status_("backup invalid metadata");
+    return;
+  }
+
+  BackupFooter footer{};
+  const uint32_t footer_offset = header.image_offset + header.flash_size;
+  if (esp_partition_read(this->backup_partition_, footer_offset, &footer, sizeof(footer)) != ESP_OK ||
+      footer.magic != BACKUP_FOOTER_MAGIC || footer.flash_size != header.flash_size ||
+      std::memcmp(footer.sha256, header.sha256, sizeof(header.sha256)) != 0) {
+    this->publish_firmware_status_("backup invalid footer");
+    return;
+  }
+
+  uint8_t hash[32]{};
+  if (!this->hash_partition_image_(header.flash_size, hash)) {
+    this->publish_firmware_status_("backup hash read failed");
+    return;
+  }
+  if (std::memcmp(hash, header.sha256, sizeof(hash)) != 0) {
+    this->publish_firmware_status_("backup hash mismatch");
+    return;
+  }
+
+  this->publish_firmware_status_("backup valid sha256=" + sha256_hex_(hash).substr(0, 12));
+}
+
+void EmporiaVueComponent::set_backup_button_exposed_(bool exposed) {
+  if (this->backup_firmware_button_ == nullptr) {
+    return;
+  }
+  this->backup_firmware_button_->set_internal(!exposed);
+}
+
+bool EmporiaVueComponent::find_backup_partition_() {
+  this->backup_partition_ = esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY,
+                                                     this->backup_partition_name_.c_str());
+  if (this->backup_partition_ == nullptr) {
+    ESP_LOGW(TAG, "SAMD backup partition '%s' not found", this->backup_partition_name_.c_str());
+    this->publish_firmware_status_("backup partition missing: " + this->backup_partition_name_);
+    return false;
+  }
+  return true;
+}
+
+bool EmporiaVueComponent::backup_partition_has_capacity_(uint32_t flash_size) {
+  if (this->backup_partition_ == nullptr) {
+    return false;
+  }
+  const uint32_t required = BACKUP_IMAGE_OFFSET + flash_size + sizeof(BackupFooter);
+  return this->backup_partition_->size >= required;
+}
+
+bool EmporiaVueComponent::read_backup_header_(BackupHeader *header) {
+  if (this->backup_partition_ == nullptr) {
+    return false;
+  }
+  return esp_partition_read(this->backup_partition_, 0, header, sizeof(*header)) == ESP_OK;
+}
+
+bool EmporiaVueComponent::hash_partition_image_(uint32_t flash_size, uint8_t hash[32]) {
+  if (this->backup_partition_ == nullptr || !this->backup_partition_has_capacity_(flash_size)) {
+    return false;
+  }
+
+  mbedtls_sha256_context ctx;
+  mbedtls_sha256_init(&ctx);
+  mbedtls_sha256_starts(&ctx, 0);
+
+  uint8_t buffer[256];
+  uint32_t offset = 0;
+  while (offset < flash_size) {
+    const uint32_t length = std::min<uint32_t>(sizeof(buffer), flash_size - offset);
+    if (esp_partition_read(this->backup_partition_, BACKUP_IMAGE_OFFSET + offset, buffer, length) != ESP_OK) {
+      mbedtls_sha256_free(&ctx);
+      return false;
+    }
+    mbedtls_sha256_update(&ctx, buffer, length);
+    offset += length;
+  }
+
+  mbedtls_sha256_finish(&ctx, hash);
+  mbedtls_sha256_free(&ctx);
+  return true;
+}
+
+bool EmporiaVueComponent::write_backup_header_(uint8_t state, uint32_t flash_size, uint32_t page_size,
+                                               uint32_t page_count, uint32_t nvm_param, uint32_t dsu_did) {
+  if (this->backup_partition_ == nullptr) {
+    return false;
+  }
+
+  BackupHeader header{};
+  header.magic = BACKUP_MAGIC;
+  header.version = BACKUP_HEADER_VERSION;
+  header.state = state;
+  header.header_size = sizeof(BackupHeader);
+  header.image_offset = BACKUP_IMAGE_OFFSET;
+  header.flash_size = flash_size;
+  header.page_size = page_size;
+  header.page_count = page_count;
+  header.nvm_param = nvm_param;
+  header.dsu_did = dsu_did;
+  std::memset(header.sha256, 0xFF, sizeof(header.sha256));
+  std::memset(header.reserved, 0xFF, sizeof(header.reserved));
+
+  return esp_partition_write(this->backup_partition_, 0, &header, sizeof(header)) == ESP_OK;
+}
+
+bool EmporiaVueComponent::write_backup_state_(uint8_t state) {
+  if (this->backup_partition_ == nullptr) {
+    return false;
+  }
+  const uint8_t state_word[4] = {
+      static_cast<uint8_t>(BACKUP_HEADER_VERSION & 0xFFU),
+      static_cast<uint8_t>((BACKUP_HEADER_VERSION >> 8) & 0xFFU),
+      state,
+      0x00,
+  };
+  return esp_partition_write(this->backup_partition_, offsetof(BackupHeader, version), state_word,
+                             sizeof(state_word)) == ESP_OK;
+}
+
+bool EmporiaVueComponent::write_backup_hash_and_footer_(const uint8_t hash[32], uint32_t flash_size) {
+  if (this->backup_partition_ == nullptr || !this->backup_partition_has_capacity_(flash_size)) {
+    return false;
+  }
+  if (esp_partition_write(this->backup_partition_, offsetof(BackupHeader, sha256), hash, 32) != ESP_OK) {
+    return false;
+  }
+
+  BackupFooter footer{};
+  footer.magic = BACKUP_FOOTER_MAGIC;
+  footer.flash_size = flash_size;
+  std::memcpy(footer.sha256, hash, sizeof(footer.sha256));
+  return esp_partition_write(this->backup_partition_, BACKUP_IMAGE_OFFSET + flash_size, &footer, sizeof(footer)) ==
+         ESP_OK;
+}
+
+bool EmporiaVueComponent::detect_managed_firmware_(uint32_t flash_size, bool *managed) {
+  *managed = false;
+  const size_t marker_length = std::strlen(MANAGED_MARKER);
+  if (flash_size < marker_length || marker_length > BACKUP_IO_BLOCK_SIZE) {
+    return true;
+  }
+
+  uint8_t marker[BACKUP_IO_BLOCK_SIZE]{};
+  if (!this->read_flash_bytes_(flash_size - marker_length, marker_length, marker)) {
+    return false;
+  }
+  *managed = std::memcmp(marker, MANAGED_MARKER, marker_length) == 0;
+  return true;
+}
+
+void EmporiaVueComponent::process_backup_() {
+  uint8_t buffer[BACKUP_IO_BLOCK_SIZE]{};
+  const uint32_t remaining = this->backup_flash_size_ - this->backup_next_offset_;
+  const uint16_t length = static_cast<uint16_t>(std::min<uint32_t>(sizeof(buffer), remaining));
+
+  if (length == 0) {
+    this->fail_backup_("internal backup state error");
+    return;
+  }
+
+  if (this->backup_stage_ == BackupStage::READ_AND_STORE) {
+    if (!this->read_flash_bytes_(FLASH_START + this->backup_next_offset_, length, buffer)) {
+      this->fail_backup_("flash read failed: " + this->last_error_);
+      return;
+    }
+    const esp_err_t err =
+        esp_partition_write(this->backup_partition_, BACKUP_IMAGE_OFFSET + this->backup_next_offset_, buffer, length);
+    if (err != ESP_OK) {
+      this->fail_backup_(str_sprintf("partition write failed: 0x%X", static_cast<unsigned>(err)));
+      return;
+    }
+
+    this->backup_next_offset_ += length;
+    if ((this->backup_next_offset_ % 1024U) == 0 || this->backup_next_offset_ >= this->backup_flash_size_) {
+      this->publish_firmware_status_(str_sprintf("backup reading %" PRIu32 "/%" PRIu32, this->backup_next_offset_,
+                                                 this->backup_flash_size_));
+    }
+
+    if (this->backup_next_offset_ >= this->backup_flash_size_) {
+      if (!this->hash_partition_image_(this->backup_flash_size_, this->backup_stored_hash_.data())) {
+        this->fail_backup_("stored image hash failed");
+        return;
+      }
+      mbedtls_sha256_init(&this->backup_sha_ctx_);
+      mbedtls_sha256_starts(&this->backup_sha_ctx_, 0);
+      this->backup_sha_ctx_active_ = true;
+      this->backup_next_offset_ = 0;
+      this->backup_stage_ = BackupStage::VERIFY_SECOND_READ;
+      this->publish_firmware_status_(str_sprintf("backup verifying 0/%" PRIu32, this->backup_flash_size_));
+    }
+    return;
+  }
+
+  if (this->backup_stage_ == BackupStage::VERIFY_SECOND_READ) {
+    if (!this->read_flash_bytes_(FLASH_START + this->backup_next_offset_, length, buffer)) {
+      this->fail_backup_("verify read failed: " + this->last_error_);
+      return;
+    }
+    mbedtls_sha256_update(&this->backup_sha_ctx_, buffer, length);
+
+    this->backup_next_offset_ += length;
+    if ((this->backup_next_offset_ % 1024U) == 0 || this->backup_next_offset_ >= this->backup_flash_size_) {
+      this->publish_firmware_status_(str_sprintf("backup verifying %" PRIu32 "/%" PRIu32, this->backup_next_offset_,
+                                                 this->backup_flash_size_));
+    }
+
+    if (this->backup_next_offset_ >= this->backup_flash_size_) {
+      mbedtls_sha256_finish(&this->backup_sha_ctx_, this->backup_verify_hash_.data());
+      mbedtls_sha256_free(&this->backup_sha_ctx_);
+      this->backup_sha_ctx_active_ = false;
+
+      if (this->backup_stored_hash_ != this->backup_verify_hash_) {
+        this->fail_backup_("hash mismatch between stored image and second SAMD read");
+        return;
+      }
+      this->finish_backup_success_();
+    }
+    return;
+  }
+
+  this->fail_backup_("unknown backup stage");
+}
+
+void EmporiaVueComponent::fail_backup_(const std::string &error) {
+  ESP_LOGW(TAG, "SAMD09 firmware backup failed: %s", error.c_str());
+  if (this->backup_sha_ctx_active_) {
+    mbedtls_sha256_free(&this->backup_sha_ctx_);
+    this->backup_sha_ctx_active_ = false;
+  }
+  if (this->backup_header_written_) {
+    this->write_backup_state_(BACKUP_STATE_INVALID);
+  }
+  if (this->backup_core_halted_ && !this->resume_core_()) {
+    ESP_LOGW(TAG, "Failed to resume SAMD09 core after backup failure: %s", this->last_error_.c_str());
+  }
+  this->backup_core_halted_ = false;
+  this->backup_active_ = false;
+  this->backup_stage_ = BackupStage::IDLE;
+  this->release_pins_();
+  this->publish_status_("backup failed: " + error);
+  this->publish_firmware_status_("backup failed: " + error);
+}
+
+void EmporiaVueComponent::finish_backup_success_() {
+  if (!this->write_backup_hash_and_footer_(this->backup_stored_hash_.data(), this->backup_flash_size_)) {
+    this->fail_backup_("failed to write backup hash/footer");
+    return;
+  }
+  if (!this->write_backup_state_(BACKUP_STATE_VALID)) {
+    this->fail_backup_("failed to mark backup valid");
+    return;
+  }
+
+  if (this->backup_core_halted_ && !this->resume_core_()) {
+    ESP_LOGW(TAG, "Failed to resume SAMD09 core after backup: %s", this->last_error_.c_str());
+  }
+  this->backup_core_halted_ = false;
+  this->backup_active_ = false;
+  this->backup_stage_ = BackupStage::IDLE;
+  this->release_pins_();
+
+  const std::string hash = sha256_hex_(this->backup_stored_hash_.data());
+  this->publish_status_("backup valid");
+  this->publish_firmware_status_("backup valid sha256=" + hash.substr(0, 12));
+  ESP_LOGI(TAG, "SAMD09 legacy firmware backup valid: size=%" PRIu32 ", sha256=%s", this->backup_flash_size_,
+           hash.c_str());
 }
 
 }  // namespace emporiavue

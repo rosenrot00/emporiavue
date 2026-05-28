@@ -52,13 +52,17 @@ external_components:
     components: [emporiavue]
 ```
 
-The default config creates two Home Assistant buttons:
+The default config creates Home Assistant buttons for probing, reading, dumping, and backing up the SAMD09:
 
 - `Probe SAMD09 SWD`: reads only the SWD Debug Port IDCODE and logs the raw ACK value. It tries a plain SWD line-reset sequence, the standard 16-bit SWJ JTAG-to-SWD select sequence, and the 32-bit `0xe79e` variant used by odewdney's MicroPython SWD script.
 - `Read SAMD09`: runs the fuller SWD read check, including DSU/NVM status reads after the Debug Port responds.
 - `Dump SAMD09 Flash Blocks`: reads a small number of flash blocks and logs numbered hex chunks that can later be reassembled.
+- `Backup SAMD09 Firmware`: backs up detected legacy SAMD09 firmware into the `samd_bak` ESP32 data partition. It refuses to back up firmware marked as managed by this project.
 
 You need the normal ESPHome `api:` setup in your node config for Home Assistant to see those buttons. The results appear in the ESPHome log/console at `INFO` level.
+If the `samd_bak` partition is not present at boot, the firmware status entity reports `backup partition missing` and
+the backup button is hidden from ESPHome/API clients. A stale Home Assistant entity from an older firmware build may
+still exist, but pressing it is ignored and keeps the same missing-partition status.
 
 By default the SWD pins are not initialized at boot. `init_pins_on_boot` defaults to `false`, so SWDIO/SWCLK are only touched while a SAMD09 button action is running. The optional reset pin is only touched when `reset_before_read: true` or `connect_under_reset: true` is set. After the check, the component releases the touched pins back to input/pullup.
 
@@ -145,6 +149,36 @@ emporiavue:
     name: "SAMD09 SWD Status"
 ```
 
+## Vue 2 managed package
+
+The repository includes `packages/vue2-managed.yaml`. It configures the Vue 2 internal SWD pins through
+`hardware: vue2`, adds a 64 KiB `samd_bak` data partition, and enables the firmware status entity plus the backup
+button.
+
+Keep your private `external_components` block in the main node YAML, then include the package:
+
+```yaml
+packages:
+  emporiavue_vue2:
+    url: https://github.com/rosenrot00/emporiavue
+    ref: main
+    username: !secret github_username
+    password: !secret github_token
+    files:
+      - packages/vue2-managed.yaml
+```
+
+When adding `samd_bak` to a device that is already flashed, update the ESP32 partition table once. ESPHome documents
+custom partition lists under `esp32.partitions`, and partition-table OTA needs `allow_partition_access: true` on the
+ESPHome OTA platform before running `esphome upload --partition-table`.
+
 ## Notes
 
 `read_allowed` is `true` only if DSU `STATUSB.PROT` is clear and a read from flash address `0x00000000` succeeds.
+
+## Future SAMD09 firmware improvements
+
+- Add a generic per-CT power calculation mode for line-to-line loads. The `gekkehenkie11/Emporia-VUE-fix`
+  firmware changes selected CT ports to compute power against `L1-L2`, `L1-L3`, and `L2-L3` instead of
+  only single phase-to-neutral voltage references. That is useful for two-phase/line-to-line consumers,
+  but it should be implemented as a configurable mode per CT port rather than as a hardcoded mux range.

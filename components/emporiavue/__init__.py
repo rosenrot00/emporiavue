@@ -28,12 +28,19 @@ EmporiaVueProbeButton = emporiavue_ns.class_(
 EmporiaVueDumpFlashButton = emporiavue_ns.class_(
     "EmporiaVueDumpFlashButton", button.Button
 )
+EmporiaVueBackupFirmwareButton = emporiavue_ns.class_(
+    "EmporiaVueBackupFirmwareButton", button.Button
+)
 
 CONF_SWCLK_PIN = "swclk_pin"
 CONF_SWDIO_PIN = "swdio_pin"
 CONF_READ_BUTTON = "read_button"
 CONF_PROBE_BUTTON = "probe_button"
 CONF_DUMP_FLASH_BUTTON = "dump_flash_button"
+CONF_BACKUP_FIRMWARE_BUTTON = "backup_firmware_button"
+CONF_FIRMWARE_STATUS = "firmware_status"
+CONF_BACKUP_PARTITION = "backup_partition"
+CONF_HARDWARE = "hardware"
 CONF_SWD_IDCODE = "swd_idcode"
 CONF_DSU_DID = "dsu_did"
 CONF_READ_ALLOWED = "read_allowed"
@@ -52,9 +59,32 @@ CONF_CLOCK_DELAY = "clock_delay"
 CONF_RETRY_COUNT = "retry_count"
 CONF_INIT_PINS_ON_BOOT = "init_pins_on_boot"
 
-CONFIG_SCHEMA = cv.Schema(
+HARDWARE_CUSTOM = "custom"
+HARDWARE_VUE2 = "vue2"
+
+
+def _apply_hardware_defaults(config):
+    config = dict(config)
+    if config.get(CONF_HARDWARE) == HARDWARE_VUE2:
+        config.setdefault(CONF_SWDIO_PIN, "GPIO13")
+        config.setdefault(CONF_SWCLK_PIN, "GPIO14")
+        config.setdefault(CONF_RESET_PIN, "GPIO26")
+        config.setdefault(CONF_RESET_BEFORE_READ, True)
+        config.setdefault(CONF_RESET_ON_BOOT, True)
+        config.setdefault(CONF_RESET_HOLD_TIME, "200ms")
+        config.setdefault(CONF_RESET_RELEASE_TIME, "1ms")
+        config.setdefault(CONF_CLOCK_DELAY, 2)
+        config.setdefault(CONF_RETRY_COUNT, 40)
+        config.setdefault(CONF_INIT_PINS_ON_BOOT, False)
+    return config
+
+
+EMPORIAVUE_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(EmporiaVueComponent),
+        cv.Optional(CONF_HARDWARE, default=HARDWARE_CUSTOM): cv.one_of(
+            HARDWARE_CUSTOM, HARDWARE_VUE2, lower=True
+        ),
         cv.Optional(CONF_SWDIO_PIN, default="GPIO13"): pins.internal_gpio_input_pullup_pin_schema,
         cv.Optional(CONF_SWCLK_PIN, default="GPIO14"): pins.internal_gpio_output_pin_schema,
         cv.Optional(CONF_RESET_PIN): pins.internal_gpio_output_pin_schema,
@@ -66,6 +96,7 @@ CONFIG_SCHEMA = cv.Schema(
         cv.Optional(CONF_CLOCK_DELAY, default=2): cv.int_range(min=0, max=50),
         cv.Optional(CONF_RETRY_COUNT, default=40): cv.int_range(min=1, max=255),
         cv.Optional(CONF_INIT_PINS_ON_BOOT, default=False): cv.boolean,
+        cv.Optional(CONF_BACKUP_PARTITION, default="samd_bak"): cv.string_strict,
         cv.Optional(CONF_DUMP_START_ADDRESS, default=0): cv.int_range(min=0, max=0xFFFFFFFF),
         cv.Optional(CONF_DUMP_BLOCK_SIZE, default=64): cv.int_range(min=1, max=128),
         cv.Optional(CONF_DUMP_BLOCK_COUNT, default=5): cv.int_range(min=1, max=4096),
@@ -88,6 +119,13 @@ CONFIG_SCHEMA = cv.Schema(
             CONF_STATUS,
         ): text_sensor.text_sensor_schema(
             icon=ICON_DATABASE,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(
+            CONF_FIRMWARE_STATUS,
+            default={CONF_NAME: "SAMD Firmware Status"},
+        ): text_sensor.text_sensor_schema(
+            icon="mdi:chip",
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
         cv.Optional(
@@ -120,8 +158,18 @@ CONFIG_SCHEMA = cv.Schema(
             icon=ICON_DATABASE,
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
+        cv.Optional(
+            CONF_BACKUP_FIRMWARE_BUTTON,
+            default={CONF_NAME: "Backup SAMD09 Firmware"},
+        ): button.button_schema(
+            EmporiaVueBackupFirmwareButton,
+            icon="mdi:content-save",
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
     }
 ).extend(cv.COMPONENT_SCHEMA)
+
+CONFIG_SCHEMA = cv.All(_apply_hardware_defaults, EMPORIAVUE_SCHEMA)
 
 
 async def to_code(config):
@@ -150,6 +198,7 @@ async def to_code(config):
     cg.add(var.set_dump_full_flash(config[CONF_DUMP_FULL_FLASH]))
     cg.add(var.set_dump_halt_core(config[CONF_DUMP_HALT_CORE]))
     cg.add(var.set_dump_resume_between_blocks(config[CONF_DUMP_RESUME_BETWEEN_BLOCKS]))
+    cg.add(var.set_backup_partition_name(config[CONF_BACKUP_PARTITION]))
 
     if swd_idcode_config := config.get(CONF_SWD_IDCODE):
         sens = await text_sensor.new_text_sensor(swd_idcode_config)
@@ -160,6 +209,9 @@ async def to_code(config):
     if status_config := config.get(CONF_STATUS):
         sens = await text_sensor.new_text_sensor(status_config)
         cg.add(var.set_status_sensor(sens))
+    if firmware_status_config := config.get(CONF_FIRMWARE_STATUS):
+        sens = await text_sensor.new_text_sensor(firmware_status_config)
+        cg.add(var.set_firmware_status_sensor(sens))
     if read_allowed_config := config.get(CONF_READ_ALLOWED):
         sens = await binary_sensor.new_binary_sensor(read_allowed_config)
         cg.add(var.set_read_allowed_sensor(sens))
@@ -171,4 +223,8 @@ async def to_code(config):
         await cg.register_parented(btn, var)
     if dump_flash_button_config := config.get(CONF_DUMP_FLASH_BUTTON):
         btn = await button.new_button(dump_flash_button_config)
+        await cg.register_parented(btn, var)
+    if backup_firmware_button_config := config.get(CONF_BACKUP_FIRMWARE_BUTTON):
+        btn = await button.new_button(backup_firmware_button_config)
+        cg.add(var.set_backup_firmware_button(btn))
         await cg.register_parented(btn, var)
