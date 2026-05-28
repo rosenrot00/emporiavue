@@ -1,7 +1,7 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import pins
-from esphome.components import binary_sensor, button, text_sensor
+from esphome.components import binary_sensor, button, i2c, text_sensor
 from esphome.const import (
     CONF_ID,
     CONF_NAME,
@@ -13,12 +13,12 @@ from esphome.const import (
     ICON_DATABASE,
 )
 
-DEPENDENCIES = ["esp32"]
+DEPENDENCIES = ["esp32", "i2c"]
 AUTO_LOAD = ["binary_sensor", "button", "text_sensor"]
 
 emporiavue_ns = cg.esphome_ns.namespace("emporiavue")
 EmporiaVueComponent = emporiavue_ns.class_(
-    "EmporiaVueComponent", cg.Component
+    "EmporiaVueComponent", cg.Component, i2c.I2CDevice
 )
 EmporiaVueReadButton = emporiavue_ns.class_(
     "EmporiaVueReadButton", button.Button
@@ -237,7 +237,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             entity_category=ENTITY_CATEGORY_CONFIG,
         ),
     }
-).extend(cv.COMPONENT_SCHEMA)
+).extend(cv.COMPONENT_SCHEMA).extend(i2c.i2c_device_schema(0x64))
 
 CONFIG_SCHEMA = cv.All(_apply_hardware_defaults, EMPORIAVUE_SCHEMA)
 
@@ -245,6 +245,7 @@ CONFIG_SCHEMA = cv.All(_apply_hardware_defaults, EMPORIAVUE_SCHEMA)
 async def to_code(config):
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
+    await i2c.register_i2c_device(var, config)
     cg.add(var.set_hardware_id(HARDWARE_IDS[config[CONF_HARDWARE]]))
 
     swdio_pin = await cg.gpio_pin_expression(config[CONF_SWDIO_PIN])

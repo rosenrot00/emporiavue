@@ -148,6 +148,7 @@ bool dmabool = false;
 uint32_t ESPbyteIndex = 0;
 
 uint8_t temp = 0;
+uint8_t ManagedInfoReadPending = 0;
 uint8_t DMAresultIndex = 0;
 int16_t DMAresults[6][8]; //We copy the 8 ADC results to this buffer using DMA
 			//Layout: MainCT1_V, MainCT1_A, MainCT2_V, MainCT2_A, MainCT_3_V, MainCT_3_A, Mux1_A, Mux2_A
@@ -217,6 +218,17 @@ struct __attribute__((__packed__)) SensorReadingType
 } SensorReading;
 
 #define ESPpacketlength       0x11C
+#define EMPORIAVUE_HARDWARE_ID       2
+#define EMPORIAVUE_FIRMWARE_VERSION  11
+#define EMPORIAVUE_I2C_INFO_COMMAND  0xF0
+
+struct __attribute__((__packed__)) ManagedInfoType
+{
+	uint16_t hardware_id;
+	uint32_t firmware_version;
+	uint16_t i2c_frame_length;
+	uint32_t crc32;
+} ManagedInfo;
 
 struct DMAdescriptorType {
   uint16_t BTCTRL;
@@ -260,6 +272,8 @@ extern int main(void);
 void irq_handler_reset(void);
 void irq_handler_dmac(void);
 void irq_handler_sercom1(void);
+uint32_t crc32(const uint8_t *data, unsigned int length);
+void configure_managed_i2c_info(void);
 DUMMY void irq_handler_nmi(void);
 DUMMY void irq_handler_hard_fault(void);
 DUMMY void irq_handler_sv_call(void);
@@ -459,39 +473,90 @@ void irq_handler_reset(void)
   while (1);
 }
 
+uint32_t crc32(const uint8_t *data, unsigned int length)
+{
+	uint32_t crc = 0xFFFFFFFF;
+	for (unsigned int index = 0; index < length; index++)
+	{
+		crc = crc ^ data[index];
+		for (uint8_t bit = 0; bit < 8; bit++)
+		{
+			crc = (crc >> 1) ^ (0xEDB88320 & (0 - (crc & 1)));
+		}
+	}
+	return ~crc;
+}
+
+void configure_managed_i2c_info(void)
+{
+	ManagedInfo.hardware_id = EMPORIAVUE_HARDWARE_ID;
+	ManagedInfo.firmware_version = EMPORIAVUE_FIRMWARE_VERSION;
+	ManagedInfo.i2c_frame_length = ESPpacketlength;
+	ManagedInfo.crc32 = crc32((uint8_t*) &ManagedInfo, __SIZE_OF_VAR__(ManagedInfo) - __SIZE_OF_VAR__(ManagedInfo.crc32));
+}
+
 void irq_handler_sercom1(void) //We've configured sercom to use IRQ sources "Data Ready" and "Stop received"
 {
 	if ((REG_SERCOM1_I2CS_INTFLAG & 4) == 4) //Bit 2 – DRDY: Data Ready
 	{
 		if ((REG_SERCOM1_I2CS_STATUS & 8) == 8) //DIR == 1 = Master read operation is in progress.
 		{
-			if (ESPbyteIndex <  ESPpacketlength)
+			if (ManagedInfoReadPending != 0)
 			{
-				uint8_t* px = (uint8_t*) &SensorReading;
-				px = px + ESPbyteIndex;
-				REG_SERCOM1_I2CS_DATA = *px; //write data
+				if (ESPbyteIndex < __SIZE_OF_VAR__(ManagedInfo))
+				{
+					uint8_t* px = (uint8_t*) &ManagedInfo;
+					px = px + ESPbyteIndex;
+					REG_SERCOM1_I2CS_DATA = *px;
+				}
+				else
+					REG_SERCOM1_I2CS_DATA = 0xFF;
+
+				if (ESPbyteIndex <= __SIZE_OF_VAR__(ManagedInfo))
+					ESPbyteIndex++;
 			}
 			else
-				REG_SERCOM1_I2CS_DATA = 0xFF;
+			{
+				if (ESPbyteIndex <  ESPpacketlength)
+				{
+					uint8_t* px = (uint8_t*) &SensorReading;
+					px = px + ESPbyteIndex;
+					REG_SERCOM1_I2CS_DATA = *px; //write data
+				}
+				else
+					REG_SERCOM1_I2CS_DATA = 0xFF;
 
-			if (ESPbyteIndex == 0)
-				temp = *(uint8_t*)(&SensorReading); 	//first byte of data packet.
+				if (ESPbyteIndex == 0)
+					temp = *(uint8_t*)(&SensorReading); 	//first byte of data packet.
 
-			if (ESPbyteIndex <=  ESPpacketlength)
-				ESPbyteIndex++;
+				if (ESPbyteIndex <=  ESPpacketlength)
+					ESPbyteIndex++;
+			}
 		}
-		else
-			ESPbyteIndex = REG_SERCOM1_I2CS_DATA; //read data
+		else {
+			uint8_t received = REG_SERCOM1_I2CS_DATA; //read data
+			if (received == EMPORIAVUE_I2C_INFO_COMMAND)
+			{
+				ManagedInfoReadPending = 1;
+				ESPbyteIndex = 0;
+			}
+			else
+			{
+				ManagedInfoReadPending = 0;
+				ESPbyteIndex = received;
+			}
+		}
 	}
 
 	if ((REG_SERCOM1_I2CS_INTFLAG & 1) == 1) //Bit 0 – PREC: Stop Received. This flag is set when a stop condition is detected for a transaction being processed
 	{
 		REG_SERCOM1_I2CS_INTFLAG = REG_SERCOM1_I2CS_INTFLAG | 1; //Writing a one to this bit will clear the Stop Received interrupt flag.
-		if (ESPbyteIndex > ESPpacketlength)
+		if (ManagedInfoReadPending == 0 && ESPbyteIndex > ESPpacketlength)
 		{
 			if (temp != 0)
 				*(uint8_t*)(&SensorReading) = 0; //Save 0 to first byte in the Sensordata packet
 		}
+		ManagedInfoReadPending = 0;
 		ESPbyteIndex = 0;
 	}
 }
@@ -950,6 +1015,8 @@ int main(void)
 	idp = (uint8_t*) &SensorReading;
 	for (int x = 0; x < __SIZE_OF_VAR__(SensorReading); x++)
 		*(uint8_t*)(idp+x) = 0;
+
+	configure_managed_i2c_info();
 
 	for (int i = 0; i < 22; i++)
 		averages[i] = 0;

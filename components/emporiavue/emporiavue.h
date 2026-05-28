@@ -2,6 +2,7 @@
 
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/button/button.h"
+#include "esphome/components/i2c/i2c.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
@@ -18,7 +19,7 @@
 namespace esphome {
 namespace emporiavue {
 
-class EmporiaVueComponent : public Component {
+class EmporiaVueComponent : public Component, public i2c::I2CDevice {
  public:
   void setup() override;
   void loop() override;
@@ -131,6 +132,7 @@ class EmporiaVueComponent : public Component {
   static constexpr uint32_t MANAGED_INFO_MAGIC = 0x4556534DUL;  // "EVSM"
   static constexpr uint16_t MANAGED_INFO_FORMAT_VERSION = 1;
   static constexpr uint16_t STOCK_I2C_FRAME_SIZE = 284;
+  static constexpr uint8_t MANAGED_I2C_INFO_COMMAND = 0xF0;
 
   struct BackupHeader {
     uint32_t magic;
@@ -163,6 +165,13 @@ class EmporiaVueComponent : public Component {
     uint8_t image_sha256[32];
     char marker[MANAGED_MARKER_LENGTH];
     uint8_t reserved1;
+  } __attribute__((packed));
+
+  struct ManagedI2CInfo {
+    uint16_t hardware_id;
+    uint32_t firmware_version;
+    uint16_t i2c_frame_length;
+    uint32_t crc32;
   } __attribute__((packed));
 
   enum MemSize : uint8_t {
@@ -208,6 +217,8 @@ class EmporiaVueComponent : public Component {
     uint32_t version{0};
     uint32_t flash_size{0};
     uint32_t image_size{0};
+    uint16_t i2c_frame_length{0};
+    bool detected_by_i2c{false};
     uint32_t page_size{0};
     uint32_t page_count{0};
     uint32_t nvm_param{0};
@@ -240,6 +251,7 @@ class EmporiaVueComponent : public Component {
   static void append_hex_byte_(std::string *output, uint8_t value);
   static std::string sha256_hex_(const uint8_t hash[32]);
   static std::string format_firmware_version_(uint32_t version);
+  static uint32_t crc32_(const uint8_t *data, size_t length);
 
   void clock_half_period_();
   void swclk_pulse_();
@@ -281,6 +293,8 @@ class EmporiaVueComponent : public Component {
                             uint32_t nvm_param, uint32_t dsu_did);
   bool write_backup_state_(uint8_t state);
   bool write_backup_hash_and_footer_(const uint8_t hash[32], uint32_t flash_size);
+  bool read_managed_i2c_info_(ManagedI2CInfo *managed_info);
+  bool validate_managed_i2c_info_(const ManagedI2CInfo &managed_info) const;
   bool detect_managed_firmware_(uint32_t flash_size, bool *managed);
   bool read_managed_firmware_info_(uint32_t flash_size, ManagedFirmwareInfo *managed_info, bool *found);
   bool read_current_firmware_info_(FirmwareInfo *info);

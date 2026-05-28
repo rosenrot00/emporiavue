@@ -19,7 +19,7 @@ emporiavue:
   id: samd_reader
   hardware: vue2
   backup_partition: samd_bak
-  required_firmware_version: 10
+  required_firmware_version: 11
   allow_samd_write: false
   require_backup_before_install: true
 

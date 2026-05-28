@@ -1022,8 +1022,9 @@ void EmporiaVueComponent::publish_firmware_version_(const FirmwareInfo &info) {
   switch (info.kind) {
     case FirmwareKind::MANAGED:
       this->firmware_version_sensor_->publish_state(
-          str_sprintf("managed hw=%u v%s", static_cast<unsigned>(info.hardware_id),
-                      format_firmware_version_(info.version).c_str()));
+          str_sprintf("managed hw=%u v%s (i2c %u bytes)", static_cast<unsigned>(info.hardware_id),
+                      format_firmware_version_(info.version).c_str(),
+                      static_cast<unsigned>(info.i2c_frame_length)));
       break;
     case FirmwareKind::STOCK:
       this->firmware_version_sensor_->publish_state(
@@ -1077,6 +1078,17 @@ std::string EmporiaVueComponent::sha256_hex_(const uint8_t hash[32]) {
 
 std::string EmporiaVueComponent::format_firmware_version_(uint32_t version) {
   return str_sprintf("%" PRIu32 ".%" PRIu32, version / 10U, version % 10U);
+}
+
+uint32_t EmporiaVueComponent::crc32_(const uint8_t *data, size_t length) {
+  uint32_t crc = 0xFFFFFFFFUL;
+  for (size_t index = 0; index < length; index++) {
+    crc ^= data[index];
+    for (uint8_t bit = 0; bit < 8; bit++) {
+      crc = (crc >> 1) ^ (0xEDB88320UL & (0UL - (crc & 1UL)));
+    }
+  }
+  return ~crc;
 }
 
 void EmporiaVueComponent::clock_half_period_() {
@@ -1639,6 +1651,43 @@ bool EmporiaVueComponent::write_backup_hash_and_footer_(const uint8_t hash[32], 
          ESP_OK;
 }
 
+bool EmporiaVueComponent::read_managed_i2c_info_(ManagedI2CInfo *managed_info) {
+  ManagedI2CInfo candidate{};
+  const uint8_t command = MANAGED_I2C_INFO_COMMAND;
+  const i2c::ErrorCode error =
+      this->write_read(&command, 1, reinterpret_cast<uint8_t *>(&candidate), sizeof(candidate));
+  if (error != i2c::ERROR_OK) {
+    ESP_LOGD(TAG, "SAMD09 managed I2C info query failed: i2c error %u", static_cast<unsigned>(error));
+    return false;
+  }
+  if (!this->validate_managed_i2c_info_(candidate)) {
+    ESP_LOGD(TAG, "SAMD09 managed I2C info query returned no valid managed firmware response");
+    return false;
+  }
+
+  *managed_info = candidate;
+  ESP_LOGD(TAG, "SAMD09 managed I2C info: hardware_id=%u, version=%" PRIu32 " (v%s), i2c_frame_length=%u",
+           static_cast<unsigned>(candidate.hardware_id), candidate.firmware_version,
+           format_firmware_version_(candidate.firmware_version).c_str(),
+           static_cast<unsigned>(candidate.i2c_frame_length));
+  return true;
+}
+
+bool EmporiaVueComponent::validate_managed_i2c_info_(const ManagedI2CInfo &managed_info) const {
+  const uint32_t expected_crc =
+      crc32_(reinterpret_cast<const uint8_t *>(&managed_info), offsetof(ManagedI2CInfo, crc32));
+  if (expected_crc != managed_info.crc32) {
+    return false;
+  }
+  if (managed_info.hardware_id != 2 && managed_info.hardware_id != 3) {
+    return false;
+  }
+  if (managed_info.firmware_version == 0) {
+    return false;
+  }
+  return managed_info.i2c_frame_length == STOCK_I2C_FRAME_SIZE;
+}
+
 bool EmporiaVueComponent::detect_managed_firmware_(uint32_t flash_size, bool *managed) {
   ManagedFirmwareInfo managed_info{};
   bool found = false;
@@ -1686,9 +1735,21 @@ bool EmporiaVueComponent::read_current_firmware_info_(FirmwareInfo *info) {
   info->version = 0;
   info->flash_size = flash_size;
   info->image_size = flash_size;
+  info->i2c_frame_length = STOCK_I2C_FRAME_SIZE;
+  info->detected_by_i2c = false;
   info->page_size = page_size;
   info->page_count = page_count;
   info->nvm_param = nvm_param;
+
+  ManagedI2CInfo managed_i2c_info{};
+  const bool managed_i2c_found = this->read_managed_i2c_info_(&managed_i2c_info);
+  if (managed_i2c_found) {
+    info->kind = FirmwareKind::MANAGED;
+    info->hardware_id = managed_i2c_info.hardware_id;
+    info->version = managed_i2c_info.firmware_version;
+    info->i2c_frame_length = managed_i2c_info.i2c_frame_length;
+    info->detected_by_i2c = true;
+  }
 
   ManagedFirmwareInfo managed_info{};
   bool managed_found = false;
@@ -1698,8 +1759,18 @@ bool EmporiaVueComponent::read_current_firmware_info_(FirmwareInfo *info) {
 
   if (managed_found) {
     info->kind = FirmwareKind::MANAGED;
-    info->hardware_id = managed_info.hardware_id;
-    info->version = managed_info.firmware_version;
+    if (!managed_i2c_found) {
+      info->hardware_id = managed_info.hardware_id;
+      info->version = managed_info.firmware_version;
+    } else if (managed_i2c_info.hardware_id != managed_info.hardware_id ||
+               managed_i2c_info.firmware_version != managed_info.firmware_version) {
+      ESP_LOGW(TAG,
+               "SAMD09 managed I2C info differs from flash marker: i2c hw=%u v%s, marker hw=%u v%s",
+               static_cast<unsigned>(managed_i2c_info.hardware_id),
+               format_firmware_version_(managed_i2c_info.firmware_version).c_str(),
+               static_cast<unsigned>(managed_info.hardware_id),
+               format_firmware_version_(managed_info.firmware_version).c_str());
+    }
     info->image_size = managed_info.image_size;
     std::memcpy(info->image_sha256, managed_info.image_sha256, sizeof(info->image_sha256));
   }
