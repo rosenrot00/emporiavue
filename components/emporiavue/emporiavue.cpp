@@ -639,30 +639,29 @@ void EmporiaVueComponent::test_flash_write() {
     return;
   }
 
-  ManagedFirmwareInfo managed_info{};
-  bool managed_found = false;
-  if (!this->read_managed_firmware_info_(flash_size, &managed_info, &managed_found)) {
-    fail("managed marker check failed: " + this->last_error_);
-    return;
-  }
-
-  uint32_t row_address = FLASH_START + flash_size - row_size;
-  if (managed_found) {
-    if (flash_size < (2U * row_size)) {
-      fail("flash too small for managed test row");
-      return;
-    }
-    row_address = FLASH_START + flash_size - (2U * row_size);
-  }
-
   bool row_erased = false;
-  if (!this->flash_row_erased_(row_address, row_size, &row_erased)) {
-    fail("test row read failed at " + hex32_(row_address) + ": " + this->last_error_);
+  const uint32_t last_row_address = FLASH_START + flash_size - row_size;
+  uint32_t row_address = last_row_address;
+  if (!this->flash_row_erased_(last_row_address, row_size, &row_erased)) {
+    fail("last test row read failed at " + hex32_(last_row_address) + ": " + this->last_error_);
     return;
   }
   if (!row_erased) {
-    fail("test row is not erased at " + hex32_(row_address));
-    return;
+    if (flash_size < (2U * row_size)) {
+      fail("last test row is not erased and no previous row exists");
+      return;
+    }
+    const uint32_t previous_row_address = FLASH_START + flash_size - (2U * row_size);
+    if (!this->flash_row_erased_(previous_row_address, row_size, &row_erased)) {
+      fail("previous test row read failed at " + hex32_(previous_row_address) + ": " + this->last_error_);
+      return;
+    }
+    if (!row_erased) {
+      fail("last two test rows are not erased");
+      return;
+    }
+    row_address = previous_row_address;
+    ESP_LOGI(TAG, "SAMD09 flash write test using previous row because last row is not erased");
   }
 
   if (!this->halt_core_()) {
