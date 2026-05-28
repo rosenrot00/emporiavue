@@ -226,6 +226,10 @@ volatile uint32_t DiagI2cOversizeReads = 0;
 volatile uint32_t DiagPowerTimingLatestMinus2Max = 0;
 volatile uint32_t DiagPowerTimingLatestMinus4Max = 0;
 volatile uint32_t DiagPowerTimingMinus2Minus4Max = 0;
+volatile uint64_t DiagPowerTimingLatestMinus2Sum = 0;
+volatile uint64_t DiagPowerTimingLatestMinus4Sum = 0;
+volatile uint64_t DiagPowerTimingMinus2Minus4Sum = 0;
+volatile uint32_t DiagPowerTimingSampleCount = 0;
 volatile uint16_t DiagLastSampleCount = 0;
 volatile uint16_t DiagLastI2cReadLen = 0;
 
@@ -268,7 +272,7 @@ uint8_t SensorSequence = 0;
 
 #define ESPpacketlength       0x11C
 #define EMPORIAVUE_HARDWARE_ID       2
-#define EMPORIAVUE_FIRMWARE_VERSION  24
+#define EMPORIAVUE_FIRMWARE_VERSION  25
 #define EMPORIAVUE_I2C_INFO_COMMAND  0xF0
 #define EMPORIAVUE_I2C_DIAGNOSTIC_COMMAND 0xF1
 
@@ -320,6 +324,9 @@ struct __attribute__((__packed__)) ManagedDiagnosticType
 	uint32_t power_timing_latest_minus2_max;
 	uint32_t power_timing_latest_minus4_max;
 	uint32_t power_timing_minus2_minus4_max;
+	uint32_t power_timing_latest_minus2_mean_abs;
+	uint32_t power_timing_latest_minus4_mean_abs;
+	uint32_t power_timing_minus2_minus4_mean_abs;
 	uint16_t last_sample_count;
 	uint16_t last_i2c_read_len;
 	uint32_t crc32;
@@ -427,6 +434,32 @@ static uint64_t div_u64_by_u16(uint64_t numerator, uint16_t denominator)
 }
 
 __attribute__((noinline))
+static uint64_t div_u64_by_u32(uint64_t numerator, uint32_t denominator)
+{
+	if (denominator == 0)
+		return 0;
+
+	uint64_t quotient = 0;
+	uint32_t remainder = 0;
+	uint64_t bit = ((uint64_t) 1) << 63;
+
+	while (bit != 0)
+	{
+		remainder <<= 1;
+		if ((numerator & bit) != 0)
+			remainder++;
+		if (remainder >= denominator)
+		{
+			remainder -= denominator;
+			quotient |= bit;
+		}
+		bit >>= 1;
+	}
+
+	return quotient;
+}
+
+__attribute__((noinline))
 static int32_t div_s32_by_u16(int32_t value, uint16_t denominator)
 {
 	if (value < 0)
@@ -493,9 +526,17 @@ static inline void update_max_u32(volatile uint32_t *target, uint32_t value)
 static inline void update_power_timing_diagnostic(int32_t current_difference, int32_t latest_minus2,
 						  int32_t latest_minus4, int32_t minus2_minus4)
 {
-	update_max_u32(&DiagPowerTimingLatestMinus2Max, abs_i32_to_u32(current_difference * latest_minus2));
-	update_max_u32(&DiagPowerTimingLatestMinus4Max, abs_i32_to_u32(current_difference * latest_minus4));
-	update_max_u32(&DiagPowerTimingMinus2Minus4Max, abs_i32_to_u32(current_difference * minus2_minus4));
+	uint32_t latest_minus2_abs = abs_i32_to_u32(current_difference * latest_minus2);
+	uint32_t latest_minus4_abs = abs_i32_to_u32(current_difference * latest_minus4);
+	uint32_t minus2_minus4_abs = abs_i32_to_u32(current_difference * minus2_minus4);
+
+	update_max_u32(&DiagPowerTimingLatestMinus2Max, latest_minus2_abs);
+	update_max_u32(&DiagPowerTimingLatestMinus4Max, latest_minus4_abs);
+	update_max_u32(&DiagPowerTimingMinus2Minus4Max, minus2_minus4_abs);
+	DiagPowerTimingLatestMinus2Sum += latest_minus2_abs;
+	DiagPowerTimingLatestMinus4Sum += latest_minus4_abs;
+	DiagPowerTimingMinus2Minus4Sum += minus2_minus4_abs;
+	DiagPowerTimingSampleCount++;
 }
 
 static inline int16_t sanitize_adc_offset_target(int32_t average)
@@ -715,6 +756,11 @@ void configure_managed_i2c_info(void)
 
 void configure_managed_i2c_diagnostic(void)
 {
+	uint32_t power_timing_sample_count = DiagPowerTimingSampleCount;
+	uint64_t power_timing_latest_minus2_sum = DiagPowerTimingLatestMinus2Sum;
+	uint64_t power_timing_latest_minus4_sum = DiagPowerTimingLatestMinus4Sum;
+	uint64_t power_timing_minus2_minus4_sum = DiagPowerTimingMinus2Minus4Sum;
+
 	ManagedDiagnostic.hardware_id = EMPORIAVUE_HARDWARE_ID;
 	ManagedDiagnostic.firmware_version = EMPORIAVUE_FIRMWARE_VERSION;
 	ManagedDiagnostic.i2c_frame_length = ESPpacketlength;
@@ -729,9 +775,19 @@ void configure_managed_i2c_diagnostic(void)
 	ManagedDiagnostic.power_timing_latest_minus2_max = DiagPowerTimingLatestMinus2Max;
 	ManagedDiagnostic.power_timing_latest_minus4_max = DiagPowerTimingLatestMinus4Max;
 	ManagedDiagnostic.power_timing_minus2_minus4_max = DiagPowerTimingMinus2Minus4Max;
+	ManagedDiagnostic.power_timing_latest_minus2_mean_abs =
+		(uint32_t) div_u64_by_u32(power_timing_latest_minus2_sum, power_timing_sample_count);
+	ManagedDiagnostic.power_timing_latest_minus4_mean_abs =
+		(uint32_t) div_u64_by_u32(power_timing_latest_minus4_sum, power_timing_sample_count);
+	ManagedDiagnostic.power_timing_minus2_minus4_mean_abs =
+		(uint32_t) div_u64_by_u32(power_timing_minus2_minus4_sum, power_timing_sample_count);
 	DiagPowerTimingLatestMinus2Max = 0;
 	DiagPowerTimingLatestMinus4Max = 0;
 	DiagPowerTimingMinus2Minus4Max = 0;
+	DiagPowerTimingLatestMinus2Sum = 0;
+	DiagPowerTimingLatestMinus4Sum = 0;
+	DiagPowerTimingMinus2Minus4Sum = 0;
+	DiagPowerTimingSampleCount = 0;
 	ManagedDiagnostic.last_sample_count = DiagLastSampleCount;
 	ManagedDiagnostic.last_i2c_read_len = DiagLastI2cReadLen;
 	ManagedDiagnostic.crc32 = crc32((uint8_t*) &ManagedDiagnostic, __SIZE_OF_VAR__(ManagedDiagnostic) - __SIZE_OF_VAR__(ManagedDiagnostic.crc32));
