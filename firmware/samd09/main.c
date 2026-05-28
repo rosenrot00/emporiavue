@@ -12,7 +12,6 @@ typedef uint8_t bool;
 #define true 1
 #define CHAR_BIT 8
 #define UINT32_C(value) value##UL
-#define UINT32_MAX 4294967295UL
 #define INT16_MIN (-32768)
 #define INT16_MAX 32767
 
@@ -227,10 +226,10 @@ volatile uint32_t DiagI2cOversizeReads = 0;
 volatile uint32_t DiagPowerTimingLatestMinus2Max = 0;
 volatile uint32_t DiagPowerTimingLatestMinus4Max = 0;
 volatile uint32_t DiagPowerTimingMinus2Minus4Max = 0;
-volatile uint32_t DiagPowerTimingLatestMinus2MeanSum = 0;
-volatile uint32_t DiagPowerTimingLatestMinus4MeanSum = 0;
-volatile uint32_t DiagPowerTimingMinus2Minus4MeanSum = 0;
-volatile uint32_t DiagPowerTimingMeanSamples = 0;
+volatile uint64_t DiagPowerTimingLatestMinus2Sum = 0;
+volatile uint64_t DiagPowerTimingLatestMinus4Sum = 0;
+volatile uint64_t DiagPowerTimingMinus2Minus4Sum = 0;
+volatile uint32_t DiagPowerTimingSampleCount = 0;
 volatile uint16_t DiagLastSampleCount = 0;
 volatile uint16_t DiagLastI2cReadLen = 0;
 
@@ -273,7 +272,7 @@ uint8_t SensorSequence = 0;
 
 #define ESPpacketlength       0x11C
 #define EMPORIAVUE_HARDWARE_ID       2
-#define EMPORIAVUE_FIRMWARE_VERSION  26
+#define EMPORIAVUE_FIRMWARE_VERSION  25
 #define EMPORIAVUE_I2C_INFO_COMMAND  0xF0
 #define EMPORIAVUE_I2C_DIAGNOSTIC_COMMAND 0xF1
 
@@ -294,8 +293,6 @@ uint8_t SensorSequence = 0;
 #define ADC_OFFSET_SMOOTHING_SHIFT     4
 #define ADC_OFFSET_MAX_STEP            96
 #define POWER_TIMING_DIAG_CURRENT_THRESHOLD 8
-#define POWER_TIMING_DIAG_DECIMATION_MASK 15
-#define POWER_TIMING_DIAG_MEAN_SHIFT 16
 
 #define TC1_ADC_TRIGGER_PERIOD         0x4C
 #define ADC_SAMPLE_TIME_LENGTH         1
@@ -437,6 +434,32 @@ static uint64_t div_u64_by_u16(uint64_t numerator, uint16_t denominator)
 }
 
 __attribute__((noinline))
+static uint64_t div_u64_by_u32(uint64_t numerator, uint32_t denominator)
+{
+	if (denominator == 0)
+		return 0;
+
+	uint64_t quotient = 0;
+	uint32_t remainder = 0;
+	uint64_t bit = ((uint64_t) 1) << 63;
+
+	while (bit != 0)
+	{
+		remainder <<= 1;
+		if ((numerator & bit) != 0)
+			remainder++;
+		if (remainder >= denominator)
+		{
+			remainder -= denominator;
+			quotient |= bit;
+		}
+		bit >>= 1;
+	}
+
+	return quotient;
+}
+
+__attribute__((noinline))
 static int32_t div_s32_by_u16(int32_t value, uint16_t denominator)
 {
 	if (value < 0)
@@ -500,14 +523,6 @@ static inline void update_max_u32(volatile uint32_t *target, uint32_t value)
 		*target = value;
 }
 
-static inline void add_saturated_u32(volatile uint32_t *target, uint32_t value)
-{
-	if (UINT32_MAX - *target < value)
-		*target = UINT32_MAX;
-	else
-		*target += value;
-}
-
 static inline void update_power_timing_diagnostic(int32_t current_difference, int32_t latest_minus2,
 						  int32_t latest_minus4, int32_t minus2_minus4)
 {
@@ -518,10 +533,10 @@ static inline void update_power_timing_diagnostic(int32_t current_difference, in
 	update_max_u32(&DiagPowerTimingLatestMinus2Max, latest_minus2_abs);
 	update_max_u32(&DiagPowerTimingLatestMinus4Max, latest_minus4_abs);
 	update_max_u32(&DiagPowerTimingMinus2Minus4Max, minus2_minus4_abs);
-	add_saturated_u32(&DiagPowerTimingLatestMinus2MeanSum, latest_minus2_abs >> POWER_TIMING_DIAG_MEAN_SHIFT);
-	add_saturated_u32(&DiagPowerTimingLatestMinus4MeanSum, latest_minus4_abs >> POWER_TIMING_DIAG_MEAN_SHIFT);
-	add_saturated_u32(&DiagPowerTimingMinus2Minus4MeanSum, minus2_minus4_abs >> POWER_TIMING_DIAG_MEAN_SHIFT);
-	DiagPowerTimingMeanSamples++;
+	DiagPowerTimingLatestMinus2Sum += latest_minus2_abs;
+	DiagPowerTimingLatestMinus4Sum += latest_minus4_abs;
+	DiagPowerTimingMinus2Minus4Sum += minus2_minus4_abs;
+	DiagPowerTimingSampleCount++;
 }
 
 static inline int16_t sanitize_adc_offset_target(int32_t average)
@@ -741,7 +756,10 @@ void configure_managed_i2c_info(void)
 
 void configure_managed_i2c_diagnostic(void)
 {
-	uint32_t power_timing_mean_samples = DiagPowerTimingMeanSamples;
+	uint32_t power_timing_sample_count = DiagPowerTimingSampleCount;
+	uint64_t power_timing_latest_minus2_sum = DiagPowerTimingLatestMinus2Sum;
+	uint64_t power_timing_latest_minus4_sum = DiagPowerTimingLatestMinus4Sum;
+	uint64_t power_timing_minus2_minus4_sum = DiagPowerTimingMinus2Minus4Sum;
 
 	ManagedDiagnostic.hardware_id = EMPORIAVUE_HARDWARE_ID;
 	ManagedDiagnostic.firmware_version = EMPORIAVUE_FIRMWARE_VERSION;
@@ -758,21 +776,18 @@ void configure_managed_i2c_diagnostic(void)
 	ManagedDiagnostic.power_timing_latest_minus4_max = DiagPowerTimingLatestMinus4Max;
 	ManagedDiagnostic.power_timing_minus2_minus4_max = DiagPowerTimingMinus2Minus4Max;
 	ManagedDiagnostic.power_timing_latest_minus2_mean_abs =
-		power_timing_mean_samples == 0 ? 0 :
-		(DiagPowerTimingLatestMinus2MeanSum / power_timing_mean_samples) << POWER_TIMING_DIAG_MEAN_SHIFT;
+		(uint32_t) div_u64_by_u32(power_timing_latest_minus2_sum, power_timing_sample_count);
 	ManagedDiagnostic.power_timing_latest_minus4_mean_abs =
-		power_timing_mean_samples == 0 ? 0 :
-		(DiagPowerTimingLatestMinus4MeanSum / power_timing_mean_samples) << POWER_TIMING_DIAG_MEAN_SHIFT;
+		(uint32_t) div_u64_by_u32(power_timing_latest_minus4_sum, power_timing_sample_count);
 	ManagedDiagnostic.power_timing_minus2_minus4_mean_abs =
-		power_timing_mean_samples == 0 ? 0 :
-		(DiagPowerTimingMinus2Minus4MeanSum / power_timing_mean_samples) << POWER_TIMING_DIAG_MEAN_SHIFT;
+		(uint32_t) div_u64_by_u32(power_timing_minus2_minus4_sum, power_timing_sample_count);
 	DiagPowerTimingLatestMinus2Max = 0;
 	DiagPowerTimingLatestMinus4Max = 0;
 	DiagPowerTimingMinus2Minus4Max = 0;
-	DiagPowerTimingLatestMinus2MeanSum = 0;
-	DiagPowerTimingLatestMinus4MeanSum = 0;
-	DiagPowerTimingMinus2Minus4MeanSum = 0;
-	DiagPowerTimingMeanSamples = 0;
+	DiagPowerTimingLatestMinus2Sum = 0;
+	DiagPowerTimingLatestMinus4Sum = 0;
+	DiagPowerTimingMinus2Minus4Sum = 0;
+	DiagPowerTimingSampleCount = 0;
 	ManagedDiagnostic.last_sample_count = DiagLastSampleCount;
 	ManagedDiagnostic.last_i2c_read_len = DiagLastI2cReadLen;
 	ManagedDiagnostic.crc32 = crc32((uint8_t*) &ManagedDiagnostic, __SIZE_OF_VAR__(ManagedDiagnostic) - __SIZE_OF_VAR__(ManagedDiagnostic.crc32));
@@ -941,7 +956,6 @@ void irq_handler_dmac(void) //We've configured it to enable Channel Transfer Com
 	int voltage_latest_minus2[3];
 	int voltage_latest_minus4[3];
 	int voltage_min2_minus4[3];
-	bool power_timing_diagnostic_enabled = (DiagSampleBlocks & POWER_TIMING_DIAG_DECIMATION_MASK) == 0;
 	FreqCT++;
 
 	//Now process the ADC results!
@@ -1020,8 +1034,7 @@ void irq_handler_dmac(void) //We've configured it to enable Channel Transfer Com
 
 
 		//Process the RawPV's for the 3 mains
-		bool timing_diagnostic_active = power_timing_diagnostic_enabled &&
-						abs_i32_to_u32(dif1) >= POWER_TIMING_DIAG_CURRENT_THRESHOLD;
+		bool timing_diagnostic_active = abs_i32_to_u32(dif1) >= POWER_TIMING_DIAG_CURRENT_THRESHOLD;
 		for (int i = 0; i < 3; i++)
 		{
 			//int64_t RawPVsum[19][3];
@@ -1044,8 +1057,7 @@ void irq_handler_dmac(void) //We've configured it to enable Channel Transfer Com
 		calcblock[cbi].ADCsquareCurrentsum[3 + (Muxnr*2) + i] += dif1 * dif1;
 
 		//Process the RawPV's for the 2 muxed small CT's
-		bool timing_diagnostic_active = power_timing_diagnostic_enabled &&
-						abs_i32_to_u32(dif1) >= POWER_TIMING_DIAG_CURRENT_THRESHOLD;
+		bool timing_diagnostic_active = abs_i32_to_u32(dif1) >= POWER_TIMING_DIAG_CURRENT_THRESHOLD;
 		for (int x = 0; x < 3; x++)
 		{
 			if (timing_diagnostic_active)
