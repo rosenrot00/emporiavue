@@ -137,6 +137,8 @@ typedef volatile       uint32_t RoReg;   /**< Read only 32-bit register (volatil
 #define REG_SERCOM1_I2CS_ADDR      (*(RwReg  *)0x42000C24UL) /**< \brief (SERCOM1) I2CS Address */
 #define REG_SERCOM1_I2CS_DATA      (*(RwReg8 *)0x42000C28UL) /**< \brief (SERCOM1) I2CS Data */
 
+#define STATUS_SYNCBUSY_BIT        0x80
+
 #define SCB_VTOR_TBLOFF_Pos                 7                                             /*!< SCB VTOR: TBLOFF Position */
 #define SCB_VTOR_TBLOFF_Msk                (0x1FFFFFFUL << SCB_VTOR_TBLOFF_Pos)           /*!< SCB VTOR: TBLOFF Mask */
 
@@ -817,7 +819,7 @@ void enableADC()
 {
 	REG_ADC_CTRLA = REG_ADC_CTRLA | 2;
 	do {
-	}   while (REG_ADC_STATUS != 0);
+	}   while ((REG_ADC_STATUS & STATUS_SYNCBUSY_BIT) != 0);
 }
 
 void enable_TC1()
@@ -958,13 +960,13 @@ void config_Sysctrl_PM_and_GCLK ()
 	REG_GCLK_GENCTRL = 0x10700; //0000 0001 - 0000 0111 - 0000 0000 GCLKGEN0. Source  = DFLL48M output. The generic clock generator is enabled
 
 	do {
-	} while (REG_GCLK_STATUS != 0);
+	} while ((REG_GCLK_STATUS & STATUS_SYNCBUSY_BIT) != 0);
 
 	REG_GCLK_GENCTRL = 0x30701; //0000 0011 - 0000 0111 - 0000 0001 GCLKGEN1. Source = DFLL48M output. The generic clock generator is enabled
 	REG_GCLK_GENDIV = 0x301; //0000 0011 0000 0001. GCLKGEN1 3 division bits.
 
 	do {
-	} while (REG_GCLK_STATUS != 0);
+	} while ((REG_GCLK_STATUS & STATUS_SYNCBUSY_BIT) != 0);
 
 	REG_GCLK_CLKCTRL = 0x4007; //0100 0000 0000 0111, enable GCLK0 EVSYS_CHANNEL_0
 	REG_GCLK_CLKCTRL = 0x410F; //0100 0001 0000 1111, enable GCLK1 SERCOM1_CORE
@@ -979,7 +981,7 @@ void adc_config() {
 
 	REG_ADC_CTRLA = 1; //SWRST: Writing a one to this bit resets all registers in the ADC,to their initial state, and the ADC will be disabled
 	do {
-	}   while (REG_ADC_STATUS != 0);
+	}   while ((REG_ADC_STATUS & STATUS_SYNCBUSY_BIT) != 0);
 
         //Load ADC factory calibration values
 	uint32_t tmp =  (*((uint32_t*)0x806024) << 5) & 0x700 | *((uint32_t*)0x806020) >> 27 | (*((uint32_t*)0x806024) << 5) & 0xff | ((*((uint32_t*)0x806024) & 7) << 5);
@@ -1000,7 +1002,7 @@ void adc_config() {
 	REG_ADC_INTFLAG = 0xF; //clear intflags
 	REG_ADC_EVCTRL = 1; //A new conversion will be triggered on any incoming event
 	do {
-	}  while (REG_ADC_STATUS != 0);
+	}  while ((REG_ADC_STATUS & STATUS_SYNCBUSY_BIT) != 0);
 }
 
 int main(void)
