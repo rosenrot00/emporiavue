@@ -40,8 +40,6 @@ emporiavue:
     name: "SAMD Firmware Update Available"
   firmware_restore_available:
     name: "SAMD Stock Restore Available"
-  dsu_did:
-    name: "SAMD09 DSU DID"
 
   backup_firmware_button:
     name: "Backup SAMD09 Firmware"

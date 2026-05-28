@@ -168,8 +168,6 @@ emporiavue:
   id: samd_reader
   swd_idcode:
     name: "SAMD09 SWD IDCODE"
-  dsu_did:
-    name: "SAMD09 DSU DID"
   read_allowed:
     name: "SAMD09 Read Allowed"
   status:
@@ -180,8 +178,8 @@ emporiavue:
 
 The repository includes `packages/vue2-managed.yaml`. It configures the Vue 2 internal SWD pins through
 `hardware: vue2`, adds a 64 KiB `samd_bak` data partition, and enables the firmware status/action entities plus the
-SAMD09 DSU DID entity plus the backup, update, and restore buttons. Low-level probe/read diagnostics such as SWD IDCODE,
-SWD status, and read-allowed stay opt-in and are not exposed by the package.
+backup, update, and restore buttons. Low-level probe/read diagnostics such as SWD IDCODE, DSU DID, SWD status, and
+read-allowed stay opt-in and are not exposed by the package.
 
 Keep your private `external_components` block in the main node YAML, then include the package:
 
