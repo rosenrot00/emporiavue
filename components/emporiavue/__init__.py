@@ -226,5 +226,4 @@ async def to_code(config):
         await cg.register_parented(btn, var)
     if backup_firmware_button_config := config.get(CONF_BACKUP_FIRMWARE_BUTTON):
         btn = await button.new_button(backup_firmware_button_config)
-        cg.add(var.set_backup_firmware_button(btn))
         await cg.register_parented(btn, var)

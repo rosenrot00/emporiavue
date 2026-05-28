@@ -406,11 +406,9 @@ void EmporiaVueComponent::backup_firmware() {
   }
 
   if (!this->find_backup_partition_()) {
-    this->set_backup_button_exposed_(false);
     this->publish_firmware_status_("backup failed: partition missing");
     return;
   }
-  this->set_backup_button_exposed_(true);
 
   this->prepare_pins_();
   this->begin_swd_session_();
@@ -1135,10 +1133,8 @@ bool EmporiaVueComponent::verify_mem_ap_() {
 
 void EmporiaVueComponent::inspect_backup_partition_() {
   if (!this->find_backup_partition_()) {
-    this->set_backup_button_exposed_(false);
     return;
   }
-  this->set_backup_button_exposed_(true);
 
   BackupHeader header{};
   if (!this->read_backup_header_(&header) || header.magic != BACKUP_MAGIC) {
@@ -1184,13 +1180,6 @@ void EmporiaVueComponent::inspect_backup_partition_() {
   }
 
   this->publish_firmware_status_("backup valid sha256=" + sha256_hex_(hash).substr(0, 12));
-}
-
-void EmporiaVueComponent::set_backup_button_exposed_(bool exposed) {
-  if (this->backup_firmware_button_ == nullptr) {
-    return;
-  }
-  this->backup_firmware_button_->set_internal(!exposed);
 }
 
 bool EmporiaVueComponent::find_backup_partition_() {

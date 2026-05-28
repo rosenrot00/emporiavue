@@ -47,7 +47,6 @@ class EmporiaVueComponent : public Component {
   void set_backup_partition_name(const std::string &backup_partition_name) {
     this->backup_partition_name_ = backup_partition_name;
   }
-  void set_backup_firmware_button(button::Button *button) { this->backup_firmware_button_ = button; }
 
   void set_swd_idcode_sensor(text_sensor::TextSensor *sensor) { this->swd_idcode_sensor_ = sensor; }
   void set_dsu_did_sensor(text_sensor::TextSensor *sensor) { this->dsu_did_sensor_ = sensor; }
@@ -186,7 +185,6 @@ class EmporiaVueComponent : public Component {
   bool verify_mem_ap_();
   void perform_boot_reset_();
   void inspect_backup_partition_();
-  void set_backup_button_exposed_(bool exposed);
   bool find_backup_partition_();
   bool backup_partition_has_capacity_(uint32_t flash_size);
   bool read_backup_header_(BackupHeader *header);
@@ -208,7 +206,6 @@ class EmporiaVueComponent : public Component {
   text_sensor::TextSensor *status_sensor_{nullptr};
   text_sensor::TextSensor *firmware_status_sensor_{nullptr};
   binary_sensor::BinarySensor *read_allowed_sensor_{nullptr};
-  button::Button *backup_firmware_button_{nullptr};
 
   bool reset_before_read_{false};
   bool reset_on_boot_{false};

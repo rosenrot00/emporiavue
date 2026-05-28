@@ -61,8 +61,8 @@ The default config creates Home Assistant buttons for probing, reading, dumping,
 
 You need the normal ESPHome `api:` setup in your node config for Home Assistant to see those buttons. The results appear in the ESPHome log/console at `INFO` level.
 If the `samd_bak` partition is not present at boot, the firmware status entity reports `backup partition missing` and
-the backup button is hidden from ESPHome/API clients. A stale Home Assistant entity from an older firmware build may
-still exist, but pressing it is ignored and keeps the same missing-partition status.
+pressing the backup button is ignored. ESPHome does not currently provide a safe runtime API to dynamically disable or
+hide a button entity based on partition-table state.
 
 By default the SWD pins are not initialized at boot. `init_pins_on_boot` defaults to `false`, so SWDIO/SWCLK are only touched while a SAMD09 button action is running. The optional reset pin is only touched when `reset_before_read: true` or `connect_under_reset: true` is set. After the check, the component releases the touched pins back to input/pullup.
 
