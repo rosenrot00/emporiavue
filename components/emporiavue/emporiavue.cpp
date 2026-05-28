@@ -1030,8 +1030,7 @@ void EmporiaVueComponent::publish_firmware_version_(const FirmwareInfo &info) {
                       static_cast<unsigned>(info.i2c_frame_length)));
       break;
     case FirmwareKind::STOCK:
-      this->firmware_version_sensor_->publish_state(
-          str_sprintf("stock/legacy (i2c frame %u bytes)", static_cast<unsigned>(STOCK_I2C_FRAME_SIZE)));
+      this->firmware_version_sensor_->publish_state("stock");
       break;
     case FirmwareKind::UNKNOWN:
     default:
@@ -1711,7 +1710,7 @@ void EmporiaVueComponent::publish_initial_firmware_detection_() {
     info.i2c_frame_length = managed_i2c_info.i2c_frame_length;
     info.detected_by_i2c = true;
     this->publish_firmware_version_(info);
-    this->publish_firmware_status_("managed firmware detected by I2C");
+    this->publish_firmware_status_("managed firmware detected");
     return;
   }
 
@@ -1719,7 +1718,7 @@ void EmporiaVueComponent::publish_initial_firmware_detection_() {
     info.kind = FirmwareKind::STOCK;
     info.i2c_frame_length = STOCK_I2C_FRAME_SIZE;
     this->publish_firmware_version_(info);
-    this->publish_firmware_status_("stock/legacy firmware detected by I2C");
+    this->publish_firmware_status_("stock firmware detected");
     return;
   }
 
