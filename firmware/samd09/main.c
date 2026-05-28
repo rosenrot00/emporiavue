@@ -265,7 +265,7 @@ uint8_t SensorSequence = 0;
 
 #define ESPpacketlength       0x11C
 #define EMPORIAVUE_HARDWARE_ID       2
-#define EMPORIAVUE_FIRMWARE_VERSION  21
+#define EMPORIAVUE_FIRMWARE_VERSION  22
 #define EMPORIAVUE_I2C_INFO_COMMAND  0xF0
 #define EMPORIAVUE_I2C_DIAGNOSTIC_COMMAND 0xF1
 
@@ -373,6 +373,74 @@ static uint16_t scale_rms_exact(uint64_t sum, uint32_t numerator)
 	return (uint16_t) result;
 }
 
+__attribute__((noinline))
+static uint32_t div_u32_by_u16(uint32_t numerator, uint16_t denominator)
+{
+	uint32_t quotient = 0;
+	uint32_t remainder = 0;
+	uint32_t bit = 0x80000000UL;
+
+	while (bit != 0)
+	{
+		remainder <<= 1;
+		if ((numerator & bit) != 0)
+			remainder++;
+		if (remainder >= denominator)
+		{
+			remainder -= denominator;
+			quotient |= bit;
+		}
+		bit >>= 1;
+	}
+
+	return quotient;
+}
+
+__attribute__((noinline))
+static uint64_t div_u64_by_u16(uint64_t numerator, uint16_t denominator)
+{
+	uint64_t quotient = 0;
+	uint32_t remainder = 0;
+	uint64_t bit = ((uint64_t) 1) << 63;
+
+	while (bit != 0)
+	{
+		remainder <<= 1;
+		if ((numerator & bit) != 0)
+			remainder++;
+		if (remainder >= denominator)
+		{
+			remainder -= denominator;
+			quotient |= bit;
+		}
+		bit >>= 1;
+	}
+
+	return quotient;
+}
+
+__attribute__((noinline))
+static int32_t div_s32_by_u16(int32_t value, uint16_t denominator)
+{
+	if (value < 0)
+	{
+		uint32_t magnitude = (uint32_t) (-(value + 1)) + 1;
+		return -(int32_t) div_u32_by_u16(magnitude, denominator);
+	}
+	return (int32_t) div_u32_by_u16((uint32_t) value, denominator);
+}
+
+__attribute__((noinline))
+static int64_t div_s64_by_u16(int64_t value, uint16_t denominator)
+{
+	if (value < 0)
+	{
+		uint64_t magnitude = (uint64_t) (-(value + 1)) + 1;
+		return -(int64_t) div_u64_by_u16(magnitude, denominator);
+	}
+	return (int64_t) div_u64_by_u16((uint64_t) value, denominator);
+}
+
 static inline uint16_t scale_rms_main(uint64_t sum)
 {
 	return scale_rms_exact(sum, MAIN_RMS_SCALE_NUMERATOR);
@@ -385,12 +453,12 @@ static inline uint16_t scale_rms_mux(uint64_t sum)
 
 static inline int32_t scale_power_main(int64_t raw)
 {
-	return (int32_t) ((raw * MAIN_POWER_SCALE_MULTIPLIER) / MAIN_SAMPLE_COUNT);
+	return (int32_t) div_s64_by_u16(raw * MAIN_POWER_SCALE_MULTIPLIER, MAIN_SAMPLE_COUNT);
 }
 
 static inline int32_t scale_power_mux(int64_t raw)
 {
-	return (int32_t) ((raw * MUX_POWER_SCALE_MULTIPLIER) / MAIN_SAMPLE_COUNT);
+	return (int32_t) div_s64_by_u16(raw * MUX_POWER_SCALE_MULTIPLIER, MAIN_SAMPLE_COUNT);
 }
 
 static inline int32_t clamp_i32(int32_t value, int32_t min, int32_t max)
@@ -931,16 +999,16 @@ void Check_and_sendESPpacket()
 		for (int i = 0; i < 3; i++)
 		{
 			//First the MainCT Voltages
-			update_adc_offset(i, calcblock[cbo].ADCVoltagesum[i] / (int32_t) MAIN_SAMPLE_COUNT);
+			update_adc_offset(i, div_s32_by_u16(calcblock[cbo].ADCVoltagesum[i], MAIN_SAMPLE_COUNT));
 
 			//Now the MainCT Currents
-			update_adc_offset(3+i, calcblock[cbo].ADCCurrentsum[i] / (int32_t) MAIN_SAMPLE_COUNT);
+			update_adc_offset(3+i, div_s32_by_u16(calcblock[cbo].ADCCurrentsum[i], MAIN_SAMPLE_COUNT));
 		}
 
 		//And the 16 50A CT currents
 		for (int i = 0; i < 16; i++)
 		{
-			update_adc_offset(6+i, calcblock[cbo].ADCCurrentsum[3+i] / (int32_t) MUX_SAMPLE_COUNT); // Because 12987/8 = 1623
+			update_adc_offset(6+i, div_s32_by_u16(calcblock[cbo].ADCCurrentsum[3+i], MUX_SAMPLE_COUNT)); // Because 12987/8 = 1623
 		}
 		if (OffsetWarmupWindows < ADC_OFFSET_STARTUP_WINDOWS)
 			OffsetWarmupWindows++;
