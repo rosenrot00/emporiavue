@@ -119,6 +119,9 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   static constexpr uint32_t DHCSR_DBGKEY = 0xA05F0000UL;
   static constexpr uint32_t DHCSR_C_DEBUGEN = 0x00000001UL;
   static constexpr uint32_t DHCSR_C_HALT = 0x00000002UL;
+  static constexpr uint32_t AIRCR = 0xE000ED0CUL;
+  static constexpr uint32_t AIRCR_VECTKEY = 0x05FA0000UL;
+  static constexpr uint32_t AIRCR_SYSRESETREQ = 0x00000004UL;
 
   static constexpr uint32_t BACKUP_MAGIC = 0x45565342UL;   // "EVSB"
   static constexpr uint32_t BACKUP_FOOTER_MAGIC = 0x45565346UL;  // "EVSF"
@@ -285,6 +288,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   bool mem_write32_(uint32_t address, uint32_t value);
   bool halt_core_();
   bool resume_core_();
+  bool system_reset_core_();
   bool read_flash_geometry_(uint32_t *param, uint32_t *page_size, uint32_t *page_count, uint32_t *flash_size);
   bool dump_flash_block_(uint32_t address, uint16_t length, std::string *hex_data);
   bool read_flash_bytes_(uint32_t address, uint16_t length, uint8_t *data);

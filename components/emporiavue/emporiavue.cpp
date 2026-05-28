@@ -1594,13 +1594,18 @@ bool EmporiaVueComponent::mem_write32_(uint32_t address, uint32_t value) {
 }
 
 bool EmporiaVueComponent::halt_core_() {
-  ESP_LOGD(TAG, "Halting SAMD09 core for flash dump block");
+  ESP_LOGD(TAG, "Halting SAMD09 core");
   return this->mem_write32_(DHCSR, DHCSR_DBGKEY | DHCSR_C_DEBUGEN | DHCSR_C_HALT);
 }
 
 bool EmporiaVueComponent::resume_core_() {
-  ESP_LOGD(TAG, "Resuming SAMD09 core after flash dump block");
+  ESP_LOGD(TAG, "Resuming SAMD09 core");
   return this->mem_write32_(DHCSR, DHCSR_DBGKEY | DHCSR_C_DEBUGEN);
+}
+
+bool EmporiaVueComponent::system_reset_core_() {
+  ESP_LOGD(TAG, "Requesting SAMD09 system reset");
+  return this->mem_write32_(AIRCR, AIRCR_VECTKEY | AIRCR_SYSRESETREQ);
 }
 
 bool EmporiaVueComponent::read_flash_geometry_(uint32_t *param, uint32_t *page_size, uint32_t *page_count,
@@ -2519,9 +2524,15 @@ void EmporiaVueComponent::finish_install_success_() {
     return;
   }
 
-  if (this->install_core_halted_ && !this->resume_core_()) {
-    ESP_LOGW(TAG, "Failed to resume SAMD09 core after firmware %s: %s", action_name.c_str(),
-             this->last_error_.c_str());
+  if (this->install_core_halted_) {
+    if (!this->system_reset_core_()) {
+      ESP_LOGW(TAG, "Failed to reset SAMD09 core after firmware %s: %s", action_name.c_str(),
+               this->last_error_.c_str());
+      if (!this->resume_core_()) {
+        ESP_LOGW(TAG, "Failed to resume SAMD09 core after firmware %s: %s", action_name.c_str(),
+                 this->last_error_.c_str());
+      }
+    }
   }
 
   this->install_active_ = false;
