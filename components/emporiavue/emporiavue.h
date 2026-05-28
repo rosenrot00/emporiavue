@@ -48,6 +48,8 @@ class EmporiaVueComponent : public Component {
     this->backup_partition_name_ = backup_partition_name;
   }
   void set_required_firmware_version(uint32_t version) { this->required_firmware_version_ = version; }
+  void set_allow_samd_write(bool allow_samd_write) { this->allow_samd_write_ = allow_samd_write; }
+  void set_require_backup_before_install(bool require_backup) { this->require_backup_before_install_ = require_backup; }
 
   void set_swd_idcode_sensor(text_sensor::TextSensor *sensor) { this->swd_idcode_sensor_ = sensor; }
   void set_dsu_did_sensor(text_sensor::TextSensor *sensor) { this->dsu_did_sensor_ = sensor; }
@@ -87,8 +89,23 @@ class EmporiaVueComponent : public Component {
   static constexpr uint32_t DSU_EXTERNAL_BASE = 0x41002100UL;
   static constexpr uint32_t DSU_STATUSB = DSU_EXTERNAL_BASE + 0x02UL;
   static constexpr uint32_t DSU_DID = DSU_EXTERNAL_BASE + 0x18UL;
+  static constexpr uint32_t NVMCTRL_CTRLA = 0x41004000UL;
+  static constexpr uint32_t NVMCTRL_CTRLB = 0x41004004UL;
   static constexpr uint32_t NVMCTRL_PARAM = 0x41004008UL;
+  static constexpr uint32_t NVMCTRL_INTFLAG = 0x41004014UL;
   static constexpr uint32_t NVMCTRL_STATUS = 0x41004018UL;
+  static constexpr uint32_t NVMCTRL_ADDR = 0x4100401CUL;
+  static constexpr uint8_t NVM_CMD_ERASE_ROW = 0x02;
+  static constexpr uint8_t NVM_CMD_WRITE_PAGE = 0x04;
+  static constexpr uint8_t NVM_CMD_PAGE_BUFFER_CLEAR = 0x44;
+  static constexpr uint16_t NVM_CMD_KEY = 0xA500;
+  static constexpr uint8_t NVM_INTFLAG_READY = 0x01;
+  static constexpr uint8_t NVM_INTFLAG_ERROR = 0x02;
+  static constexpr uint16_t NVM_STATUS_PROGE = 0x0004;
+  static constexpr uint16_t NVM_STATUS_LOCKE = 0x0008;
+  static constexpr uint16_t NVM_STATUS_NVME = 0x0010;
+  static constexpr uint16_t NVM_STATUS_ERROR_MASK = NVM_STATUS_PROGE | NVM_STATUS_LOCKE | NVM_STATUS_NVME;
+  static constexpr uint32_t NVM_PAGES_PER_ROW = 4;
   static constexpr uint32_t FLASH_START = 0x00000000UL;
   static constexpr uint32_t DHCSR = 0xE000EDF0UL;
   static constexpr uint32_t DHCSR_DBGKEY = 0xA05F0000UL;
@@ -139,6 +156,7 @@ class EmporiaVueComponent : public Component {
     uint32_t image_size;
     uint8_t image_sha256[32];
     char marker[MANAGED_MARKER_LENGTH];
+    uint8_t reserved1;
   } __attribute__((packed));
 
   enum MemSize : uint8_t {
@@ -151,6 +169,11 @@ class EmporiaVueComponent : public Component {
     IDLE = 0,
     READ_AND_STORE,
     VERIFY_SECOND_READ,
+  };
+
+  enum class InstallStage : uint8_t {
+    IDLE = 0,
+    FLASH_PAGES,
   };
 
   enum class FirmwareKind : uint8_t {
@@ -214,6 +237,8 @@ class EmporiaVueComponent : public Component {
   bool mem_read16_(uint32_t address, uint16_t *value);
   bool mem_read32_(uint32_t address, uint32_t *value);
   bool mem_write_(uint32_t address, MemSize size, uint32_t value);
+  bool mem_write8_(uint32_t address, uint8_t value);
+  bool mem_write16_(uint32_t address, uint16_t value);
   bool mem_write32_(uint32_t address, uint32_t value);
   bool halt_core_();
   bool resume_core_();
@@ -239,6 +264,16 @@ class EmporiaVueComponent : public Component {
   bool bundled_firmware_available_() const;
   uint32_t bundled_firmware_version_() const;
   uint32_t bundled_firmware_size_() const;
+  bool nvm_wait_ready_();
+  bool nvm_clear_errors_();
+  bool nvm_check_errors_();
+  bool nvm_command_(uint8_t command);
+  bool erase_flash_row_(uint32_t address);
+  bool write_flash_page_(uint32_t address, uint32_t offset, uint32_t length);
+  bool verify_flash_page_(uint32_t address, uint32_t offset, uint32_t length);
+  void process_install_();
+  void fail_install_(const std::string &error);
+  void finish_install_success_();
   void process_backup_();
   void fail_backup_(const std::string &error);
   void finish_backup_success_();
@@ -274,6 +309,8 @@ class EmporiaVueComponent : public Component {
   uint32_t dump_next_block_{0};
   std::string backup_partition_name_{"samd_bak"};
   uint32_t required_firmware_version_{1};
+  bool allow_samd_write_{false};
+  bool require_backup_before_install_{true};
   const esp_partition_t *backup_partition_{nullptr};
   bool backup_active_{false};
   bool backup_core_halted_{false};
@@ -289,6 +326,14 @@ class EmporiaVueComponent : public Component {
   std::array<uint8_t, 32> backup_verify_hash_{};
   mbedtls_sha256_context backup_sha_ctx_{};
   bool backup_sha_ctx_active_{false};
+  bool install_active_{false};
+  bool install_core_halted_{false};
+  bool install_started_writing_{false};
+  InstallStage install_stage_{InstallStage::IDLE};
+  uint32_t install_next_offset_{0};
+  uint32_t install_flash_size_{0};
+  uint32_t install_page_size_{0};
+  uint32_t install_row_size_{0};
   bool init_pins_on_boot_{false};
   bool pins_setup_{false};
   bool direction_write_{true};

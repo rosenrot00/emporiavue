@@ -2,6 +2,7 @@
 /.esphome/
 /.pio/
 /build/
+/firmware/samd09/build/
 
 # Local secrets
 /secrets.yaml

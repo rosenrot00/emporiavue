@@ -60,8 +60,7 @@ firmware install for the SAMD09:
 - `Dump SAMD09 Flash Blocks`: reads a small number of flash blocks and logs numbered hex chunks that can later be reassembled.
 - `Backup SAMD09 Firmware`: backs up detected legacy SAMD09 firmware into the `samd_bak` ESP32 data partition. It refuses to back up firmware marked as managed by this project.
 - `Install SAMD09 Firmware`: checks whether the running SAMD09 firmware is older than the component's required managed
-  firmware version. This is a guarded scaffold for now: it does not erase or write the SAMD09 until a bundled firmware
-  image and flasher are added.
+  firmware version and can flash the bundled managed SAMD09 image when writes are explicitly enabled.
 
 You need the normal ESPHome `api:` setup in your node config for Home Assistant to see those buttons. The results appear in the ESPHome log/console at `INFO` level.
 If the `samd_bak` partition is not present at boot, the firmware status entity reports `backup partition missing` and
@@ -73,7 +72,21 @@ treated as stock/legacy and therefore as version `0`. The current upstream `empo
 managed SAMD firmware can expose a version in its I2C payload too, but this SWD component does not depend on that yet.
 Because Home Assistant buttons cannot be disabled dynamically by an external component, use `SAMD Firmware Update
 Available` and `SAMD Firmware Status` as the authoritative state. The install button exits without writing if no update
-is needed, no bundled image is compiled in, or a valid backup is missing.
+is needed, SAMD writes are not explicitly enabled, no bundled image is compiled in, or a valid backup is missing.
+
+The bundled SAMD09 image is built from `firmware/samd09`, which is based on
+`gekkehenkie11/emporia-SAMD09` at commit `0baafe6d8812639d14f8f66b03844567f913ddc0` with small local build fixes for
+a freestanding ARM GCC toolchain. The generated image is padded to the detected 16 KiB SAMD09 flash size and ends with a
+managed firmware footer so future runs can detect its version. To rebuild the embedded header after changing the SAMD
+source, run:
+
+```bash
+python3 tools/package_samd09_firmware.py
+```
+
+Flashing is intentionally opt-in. The component erases one SAMD NVM row at a time, writes one page per ESPHome loop
+cycle, verifies each page immediately, and leaves the SAMD core halted if a write has started and a later step fails.
+That keeps the ESP32 and ESPHome reachable while avoiding a reset into a partially written SAMD image.
 
 By default the SWD pins are not initialized at boot. `init_pins_on_boot` defaults to `false`, so SWDIO/SWCLK are only touched while a SAMD09 button action is running. The optional reset pin is only touched when `reset_before_read: true` or `connect_under_reset: true` is set. After the check, the component releases the touched pins back to input/pullup.
 
@@ -182,6 +195,14 @@ packages:
 When adding `samd_bak` to a device that is already flashed, update the ESP32 partition table once. ESPHome documents
 custom partition lists under `esp32.partitions`, and partition-table OTA needs `allow_partition_access: true` on the
 ESPHome OTA platform before running `esphome upload --partition-table`.
+
+The managed package keeps SAMD writes disabled by default. After a valid legacy backup exists, enable a test flash in
+the main YAML by overriding only this option:
+
+```yaml
+emporiavue:
+  allow_samd_write: true
+```
 
 ## Notes
 

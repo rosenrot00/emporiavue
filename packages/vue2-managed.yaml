@@ -19,6 +19,9 @@ emporiavue:
   id: samd_reader
   hardware: vue2
   backup_partition: samd_bak
+  required_firmware_version: 1
+  allow_samd_write: false
+  require_backup_before_install: true
 
   dump_start_address: 0
   dump_block_size: 64

@@ -48,6 +48,8 @@ CONF_FIRMWARE_VERSION = "firmware_version"
 CONF_FIRMWARE_UPDATE_AVAILABLE = "firmware_update_available"
 CONF_BACKUP_PARTITION = "backup_partition"
 CONF_REQUIRED_FIRMWARE_VERSION = "required_firmware_version"
+CONF_ALLOW_SAMD_WRITE = "allow_samd_write"
+CONF_REQUIRE_BACKUP_BEFORE_INSTALL = "require_backup_before_install"
 CONF_HARDWARE = "hardware"
 CONF_SWD_IDCODE = "swd_idcode"
 CONF_DSU_DID = "dsu_did"
@@ -106,6 +108,8 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_INIT_PINS_ON_BOOT, default=False): cv.boolean,
         cv.Optional(CONF_BACKUP_PARTITION, default="samd_bak"): cv.string_strict,
         cv.Optional(CONF_REQUIRED_FIRMWARE_VERSION, default=1): cv.int_range(min=1, max=0xFFFFFFFF),
+        cv.Optional(CONF_ALLOW_SAMD_WRITE, default=False): cv.boolean,
+        cv.Optional(CONF_REQUIRE_BACKUP_BEFORE_INSTALL, default=True): cv.boolean,
         cv.Optional(CONF_DUMP_START_ADDRESS, default=0): cv.int_range(min=0, max=0xFFFFFFFF),
         cv.Optional(CONF_DUMP_BLOCK_SIZE, default=64): cv.int_range(min=1, max=128),
         cv.Optional(CONF_DUMP_BLOCK_COUNT, default=5): cv.int_range(min=1, max=4096),
@@ -231,6 +235,8 @@ async def to_code(config):
     cg.add(var.set_dump_resume_between_blocks(config[CONF_DUMP_RESUME_BETWEEN_BLOCKS]))
     cg.add(var.set_backup_partition_name(config[CONF_BACKUP_PARTITION]))
     cg.add(var.set_required_firmware_version(config[CONF_REQUIRED_FIRMWARE_VERSION]))
+    cg.add(var.set_allow_samd_write(config[CONF_ALLOW_SAMD_WRITE]))
+    cg.add(var.set_require_backup_before_install(config[CONF_REQUIRE_BACKUP_BEFORE_INSTALL]))
 
     if swd_idcode_config := config.get(CONF_SWD_IDCODE):
         sens = await text_sensor.new_text_sensor(swd_idcode_config)

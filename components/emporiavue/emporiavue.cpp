@@ -1,4 +1,5 @@
 #include "emporiavue.h"
+#include "samd09_firmware.h"
 
 #include "esphome/core/log.h"
 
@@ -24,6 +25,10 @@ void EmporiaVueComponent::setup() {
 void EmporiaVueComponent::loop() {
   if (this->backup_active_) {
     this->process_backup_();
+    return;
+  }
+  if (this->install_active_) {
+    this->process_install_();
     return;
   }
 
@@ -119,6 +124,8 @@ void EmporiaVueComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Required managed firmware version: %" PRIu32, this->required_firmware_version_);
   ESP_LOGCONFIG(TAG, "  Bundled managed firmware version: %" PRIu32, this->bundled_firmware_version_());
   ESP_LOGCONFIG(TAG, "  Bundled managed firmware size: %" PRIu32 " bytes", this->bundled_firmware_size_());
+  ESP_LOGCONFIG(TAG, "  SAMD writes enabled: %s", YESNO(this->allow_samd_write_));
+  ESP_LOGCONFIG(TAG, "  Require backup before install: %s", YESNO(this->require_backup_before_install_));
   ESP_LOGCONFIG(TAG, "  Init pins on boot: %s", YESNO(this->init_pins_on_boot_));
   LOG_TEXT_SENSOR("  ", "SWD IDCODE", this->swd_idcode_sensor_);
   LOG_TEXT_SENSOR("  ", "DSU DID", this->dsu_did_sensor_);
@@ -130,6 +137,10 @@ void EmporiaVueComponent::dump_config() {
 }
 
 void EmporiaVueComponent::read_samd() {
+  if (this->install_active_) {
+    ESP_LOGW(TAG, "SAMD09 firmware install is running; read check ignored");
+    return;
+  }
   if (this->dump_active_) {
     ESP_LOGW(TAG, "SAMD09 flash dump is running; read check ignored");
     return;
@@ -223,6 +234,10 @@ void EmporiaVueComponent::read_samd() {
 }
 
 void EmporiaVueComponent::probe_swd() {
+  if (this->install_active_) {
+    ESP_LOGW(TAG, "SAMD09 firmware install is running; SWD probe ignored");
+    return;
+  }
   if (this->dump_active_) {
     ESP_LOGW(TAG, "SAMD09 flash dump is running; SWD probe ignored");
     return;
@@ -271,6 +286,10 @@ void EmporiaVueComponent::probe_swd() {
 }
 
 void EmporiaVueComponent::dump_flash() {
+  if (this->install_active_) {
+    ESP_LOGW(TAG, "SAMD09 firmware install is running; flash dump ignored");
+    return;
+  }
   if (this->backup_active_) {
     ESP_LOGW(TAG, "SAMD09 firmware backup is running; flash dump ignored");
     return;
@@ -382,6 +401,10 @@ void EmporiaVueComponent::dump_flash() {
 }
 
 void EmporiaVueComponent::backup_firmware() {
+  if (this->install_active_) {
+    ESP_LOGW(TAG, "SAMD09 firmware install is running; firmware backup ignored");
+    return;
+  }
   if (this->backup_active_) {
     ESP_LOGW(TAG, "SAMD09 firmware backup is already running");
     return;
@@ -518,6 +541,10 @@ void EmporiaVueComponent::backup_firmware() {
 }
 
 void EmporiaVueComponent::install_firmware() {
+  if (this->install_active_) {
+    ESP_LOGW(TAG, "SAMD09 managed firmware install is already running");
+    return;
+  }
   if (this->backup_active_) {
     ESP_LOGW(TAG, "SAMD09 firmware backup is running; firmware install ignored");
     return;
@@ -528,8 +555,21 @@ void EmporiaVueComponent::install_firmware() {
   }
 
   this->last_error_.clear();
+  this->install_core_halted_ = false;
+  this->install_started_writing_ = false;
+  this->install_stage_ = InstallStage::IDLE;
+  this->install_next_offset_ = 0;
+  this->install_flash_size_ = 0;
+  this->install_page_size_ = 0;
+  this->install_row_size_ = 0;
   ESP_LOGI(TAG, "Starting SAMD09 managed firmware install check");
   this->publish_firmware_status_("install checking prerequisites");
+
+  if (!this->allow_samd_write_) {
+    this->publish_firmware_status_("install blocked: allow_samd_write is false");
+    ESP_LOGW(TAG, "SAMD09 managed firmware install blocked because allow_samd_write is false");
+    return;
+  }
 
   if (this->swdio_pin_ == nullptr || this->swclk_pin_ == nullptr) {
     this->set_error_("SWD pins are not configured");
@@ -580,7 +620,6 @@ void EmporiaVueComponent::install_firmware() {
     ESP_LOGW(TAG, "SAMD09 managed firmware install check failed: %s", this->last_error_.c_str());
     return;
   }
-  this->release_pins_();
   this->publish_firmware_version_(current);
 
   const bool update_available =
@@ -588,6 +627,7 @@ void EmporiaVueComponent::install_firmware() {
   this->publish_firmware_update_available_(update_available);
 
   if (!update_available) {
+    this->release_pins_();
     this->publish_firmware_status_(str_sprintf("firmware up to date: managed v%" PRIu32, current.version));
     ESP_LOGI(TAG, "SAMD09 managed firmware is up to date: current=%" PRIu32 ", required=%" PRIu32, current.version,
              this->required_firmware_version_);
@@ -595,6 +635,7 @@ void EmporiaVueComponent::install_firmware() {
   }
 
   if (!this->bundled_firmware_available_()) {
+    this->release_pins_();
     const char *current_kind = current.kind == FirmwareKind::MANAGED ? "managed" : "stock";
     this->publish_firmware_status_(str_sprintf(
         "install unavailable: %s firmware needs v%" PRIu32 ", but no bundled image is compiled in", current_kind,
@@ -606,15 +647,75 @@ void EmporiaVueComponent::install_firmware() {
     return;
   }
 
-  std::string backup_error;
-  if (!this->backup_partition_valid_(&backup_error)) {
-    this->publish_firmware_status_("install blocked: valid backup required (" + backup_error + ")");
-    ESP_LOGW(TAG, "SAMD09 managed firmware install blocked: valid backup required (%s)", backup_error.c_str());
+  if (this->bundled_firmware_version_() < this->required_firmware_version_) {
+    this->release_pins_();
+    this->publish_firmware_status_(str_sprintf("install unavailable: bundle v%" PRIu32 " is older than required v%" PRIu32,
+                                               this->bundled_firmware_version_(), this->required_firmware_version_));
+    ESP_LOGW(TAG, "SAMD09 bundled firmware is older than required version");
     return;
   }
 
-  this->publish_firmware_status_("install not implemented: bundled image present but flasher is not enabled yet");
-  ESP_LOGW(TAG, "SAMD09 firmware image is available, but flash/erase implementation is not enabled yet");
+  if (this->bundled_firmware_size_() != current.flash_size) {
+    this->release_pins_();
+    this->publish_firmware_status_(str_sprintf("install blocked: image size %" PRIu32 " != flash size %" PRIu32,
+                                               this->bundled_firmware_size_(), current.flash_size));
+    ESP_LOGW(TAG, "SAMD09 managed firmware install blocked by image/flash size mismatch");
+    return;
+  }
+
+  if (current.page_size == 0 || (current.page_size % 4U) != 0 || current.flash_size == 0 ||
+      (current.flash_size % current.page_size) != 0) {
+    this->release_pins_();
+    this->publish_firmware_status_("install blocked: unsupported flash geometry");
+    ESP_LOGW(TAG, "SAMD09 managed firmware install blocked by unsupported flash geometry");
+    return;
+  }
+
+  if (this->require_backup_before_install_) {
+    std::string backup_error;
+    if (!this->backup_partition_valid_(&backup_error)) {
+      this->release_pins_();
+      this->publish_firmware_status_("install blocked: valid backup required (" + backup_error + ")");
+      ESP_LOGW(TAG, "SAMD09 managed firmware install blocked: valid backup required (%s)", backup_error.c_str());
+      return;
+    }
+  }
+
+  if (!this->halt_core_()) {
+    this->release_pins_();
+    this->publish_firmware_status_("install failed: " + this->last_error_);
+    ESP_LOGW(TAG, "SAMD09 managed firmware install failed while halting core: %s", this->last_error_.c_str());
+    return;
+  }
+  this->install_core_halted_ = true;
+
+  if (!this->nvm_clear_errors_()) {
+    this->fail_install_("NVM error clear failed: " + this->last_error_);
+    return;
+  }
+  if (!this->mem_write32_(NVMCTRL_CTRLB, 0x00000082UL)) {
+    this->fail_install_("NVM manual write setup failed: " + this->last_error_);
+    return;
+  }
+  if (!this->nvm_wait_ready_()) {
+    this->fail_install_("NVM not ready: " + this->last_error_);
+    return;
+  }
+
+  this->install_flash_size_ = current.flash_size;
+  this->install_page_size_ = current.page_size;
+  this->install_row_size_ = current.page_size * NVM_PAGES_PER_ROW;
+  this->install_next_offset_ = 0;
+  this->install_stage_ = InstallStage::FLASH_PAGES;
+  this->install_active_ = true;
+  this->publish_status_("installing managed SAMD firmware");
+  this->publish_firmware_status_(str_sprintf("install flashing 0/%" PRIu32, this->install_flash_size_));
+  ESP_LOGI(TAG,
+           "SAMD09 managed firmware install job started: current_kind=%s, current_version=%" PRIu32
+           ", target_version=%" PRIu32 ", image_size=%" PRIu32 ", page_size=%" PRIu32 ", row_size=%" PRIu32,
+           current.kind == FirmwareKind::MANAGED ? "managed" : "stock", current.version,
+           this->bundled_firmware_version_(), this->install_flash_size_, this->install_page_size_,
+           this->install_row_size_);
 }
 
 void EmporiaVueComponent::reset_target_() {
@@ -1134,6 +1235,14 @@ bool EmporiaVueComponent::mem_write_(uint32_t address, MemSize size, uint32_t va
   return this->ap_write_(AP_DRW, value);
 }
 
+bool EmporiaVueComponent::mem_write8_(uint32_t address, uint8_t value) {
+  return this->mem_write_(address, MEM_SIZE_BYTE, value);
+}
+
+bool EmporiaVueComponent::mem_write16_(uint32_t address, uint16_t value) {
+  return this->mem_write_(address, MEM_SIZE_HALFWORD, value);
+}
+
 bool EmporiaVueComponent::mem_write32_(uint32_t address, uint32_t value) {
   return this->mem_write_(address, MEM_SIZE_WORD, value);
 }
@@ -1527,11 +1636,217 @@ bool EmporiaVueComponent::backup_partition_valid_(std::string *error) {
   return true;
 }
 
-bool EmporiaVueComponent::bundled_firmware_available_() const { return false; }
+bool EmporiaVueComponent::bundled_firmware_available_() const { return BUNDLED_SAMD_FIRMWARE_SIZE > 0; }
 
-uint32_t EmporiaVueComponent::bundled_firmware_version_() const { return this->required_firmware_version_; }
+uint32_t EmporiaVueComponent::bundled_firmware_version_() const { return BUNDLED_SAMD_FIRMWARE_VERSION; }
 
-uint32_t EmporiaVueComponent::bundled_firmware_size_() const { return 0; }
+uint32_t EmporiaVueComponent::bundled_firmware_size_() const { return BUNDLED_SAMD_FIRMWARE_SIZE; }
+
+bool EmporiaVueComponent::nvm_wait_ready_() {
+  for (uint16_t attempt = 0; attempt < 5000; attempt++) {
+    uint8_t intflag = 0;
+    if (!this->mem_read8_(NVMCTRL_INTFLAG, &intflag)) {
+      return false;
+    }
+    if ((intflag & NVM_INTFLAG_ERROR) != 0) {
+      uint16_t status = 0;
+      this->mem_read16_(NVMCTRL_STATUS, &status);
+      this->set_error_(str_sprintf("NVM error while waiting: INTFLAG=%s STATUS=%s", hex8_(intflag).c_str(),
+                                   hex16_(status).c_str()));
+      return false;
+    }
+    if ((intflag & NVM_INTFLAG_READY) != 0) {
+      return true;
+    }
+    delayMicroseconds(100);
+  }
+  this->set_error_("timeout waiting for NVM ready");
+  return false;
+}
+
+bool EmporiaVueComponent::nvm_clear_errors_() {
+  bool ok = true;
+  ok = this->mem_write8_(NVMCTRL_INTFLAG, NVM_INTFLAG_ERROR) && ok;
+  ok = this->mem_write16_(NVMCTRL_STATUS, NVM_STATUS_ERROR_MASK) && ok;
+  return ok;
+}
+
+bool EmporiaVueComponent::nvm_check_errors_() {
+  uint8_t intflag = 0;
+  uint16_t status = 0;
+  if (!this->mem_read8_(NVMCTRL_INTFLAG, &intflag)) {
+    return false;
+  }
+  if (!this->mem_read16_(NVMCTRL_STATUS, &status)) {
+    return false;
+  }
+  if ((intflag & NVM_INTFLAG_ERROR) != 0 || (status & NVM_STATUS_ERROR_MASK) != 0) {
+    this->set_error_(str_sprintf("NVM error: INTFLAG=%s STATUS=%s", hex8_(intflag).c_str(), hex16_(status).c_str()));
+    return false;
+  }
+  return true;
+}
+
+bool EmporiaVueComponent::nvm_command_(uint8_t command) {
+  if (!this->nvm_wait_ready_()) {
+    return false;
+  }
+  if (!this->mem_write16_(NVMCTRL_CTRLA, NVM_CMD_KEY | static_cast<uint16_t>(command))) {
+    return false;
+  }
+  if (!this->nvm_wait_ready_()) {
+    return false;
+  }
+  return this->nvm_check_errors_();
+}
+
+bool EmporiaVueComponent::erase_flash_row_(uint32_t address) {
+  if (!this->nvm_clear_errors_()) {
+    return false;
+  }
+  if (!this->mem_write32_(NVMCTRL_ADDR, (address - FLASH_START) >> 1)) {
+    return false;
+  }
+  return this->nvm_command_(NVM_CMD_ERASE_ROW);
+}
+
+bool EmporiaVueComponent::write_flash_page_(uint32_t address, uint32_t offset, uint32_t length) {
+  if (!this->nvm_clear_errors_()) {
+    return false;
+  }
+  if (!this->nvm_command_(NVM_CMD_PAGE_BUFFER_CLEAR)) {
+    return false;
+  }
+
+  for (uint32_t i = 0; i < length; i += 4) {
+    const uint32_t word = uint32_t(BUNDLED_SAMD_FIRMWARE[offset + i]) |
+                          (uint32_t(BUNDLED_SAMD_FIRMWARE[offset + i + 1]) << 8) |
+                          (uint32_t(BUNDLED_SAMD_FIRMWARE[offset + i + 2]) << 16) |
+                          (uint32_t(BUNDLED_SAMD_FIRMWARE[offset + i + 3]) << 24);
+    if (!this->mem_write32_(address + i, word)) {
+      return false;
+    }
+  }
+
+  if (!this->mem_write32_(NVMCTRL_ADDR, (address - FLASH_START) >> 1)) {
+    return false;
+  }
+  return this->nvm_command_(NVM_CMD_WRITE_PAGE);
+}
+
+bool EmporiaVueComponent::verify_flash_page_(uint32_t address, uint32_t offset, uint32_t length) {
+  uint8_t buffer[BACKUP_IO_BLOCK_SIZE]{};
+  if (length > sizeof(buffer)) {
+    this->set_error_("verify page too large");
+    return false;
+  }
+  if (!this->read_flash_bytes_(address, static_cast<uint16_t>(length), buffer)) {
+    return false;
+  }
+  for (uint32_t i = 0; i < length; i++) {
+    if (buffer[i] != BUNDLED_SAMD_FIRMWARE[offset + i]) {
+      this->set_error_(str_sprintf("verify mismatch at %s: read=%s expected=%s", hex32_(address + i).c_str(),
+                                   hex8_(buffer[i]).c_str(), hex8_(BUNDLED_SAMD_FIRMWARE[offset + i]).c_str()));
+      return false;
+    }
+  }
+  return true;
+}
+
+void EmporiaVueComponent::process_install_() {
+  if (this->install_stage_ != InstallStage::FLASH_PAGES) {
+    this->fail_install_("internal install state error");
+    return;
+  }
+  if (this->install_next_offset_ >= this->install_flash_size_) {
+    this->finish_install_success_();
+    return;
+  }
+
+  const uint32_t offset = this->install_next_offset_;
+  const uint32_t address = FLASH_START + offset;
+  const uint32_t length = std::min<uint32_t>(this->install_page_size_, this->install_flash_size_ - offset);
+
+  if ((offset % this->install_row_size_) == 0) {
+    this->publish_firmware_status_(str_sprintf("install erasing %" PRIu32 "/%" PRIu32, offset,
+                                               this->install_flash_size_));
+    this->install_started_writing_ = true;
+    if (!this->erase_flash_row_(address)) {
+      this->fail_install_("row erase failed at " + hex32_(address) + ": " + this->last_error_);
+      return;
+    }
+  }
+
+  if (!this->write_flash_page_(address, offset, length)) {
+    this->fail_install_("page write failed at " + hex32_(address) + ": " + this->last_error_);
+    return;
+  }
+  if (!this->verify_flash_page_(address, offset, length)) {
+    this->fail_install_("page verify failed at " + hex32_(address) + ": " + this->last_error_);
+    return;
+  }
+
+  this->install_next_offset_ += length;
+  if ((this->install_next_offset_ % 1024U) == 0 || this->install_next_offset_ >= this->install_flash_size_) {
+    this->publish_firmware_status_(str_sprintf("install flashing %" PRIu32 "/%" PRIu32,
+                                               this->install_next_offset_, this->install_flash_size_));
+  }
+}
+
+void EmporiaVueComponent::fail_install_(const std::string &error) {
+  ESP_LOGW(TAG, "SAMD09 managed firmware install failed: %s", error.c_str());
+  if (this->install_core_halted_) {
+    if (this->install_started_writing_) {
+      ESP_LOGW(TAG, "SAMD09 flash may be partially written; leaving core halted for recovery");
+    } else if (!this->resume_core_()) {
+      ESP_LOGW(TAG, "Failed to resume SAMD09 core after install failure: %s", this->last_error_.c_str());
+    }
+  }
+
+  this->install_active_ = false;
+  this->install_core_halted_ = false;
+  this->install_started_writing_ = false;
+  this->install_stage_ = InstallStage::IDLE;
+  this->release_pins_();
+  this->publish_status_("install failed: " + error);
+  this->publish_firmware_status_("install failed: " + error);
+}
+
+void EmporiaVueComponent::finish_install_success_() {
+  FirmwareInfo info{};
+  const bool info_ok = this->read_current_firmware_info_(&info);
+  if (info_ok) {
+    this->publish_firmware_version_(info);
+  }
+  if (!info_ok || info.kind != FirmwareKind::MANAGED || info.version != this->bundled_firmware_version_()) {
+    this->fail_install_("final managed firmware marker verification failed");
+    return;
+  }
+
+  if (this->install_core_halted_ && !this->resume_core_()) {
+    ESP_LOGW(TAG, "Failed to resume SAMD09 core after install: %s", this->last_error_.c_str());
+  }
+
+  this->install_active_ = false;
+  this->install_core_halted_ = false;
+  this->install_started_writing_ = false;
+  this->install_stage_ = InstallStage::IDLE;
+  this->release_pins_();
+
+  if (this->reset_pin_ != nullptr) {
+    this->prepare_pins_();
+    this->assert_reset_();
+    this->deassert_reset_();
+    this->release_pins_();
+  }
+
+  this->publish_firmware_update_available_(false);
+  this->publish_status_("install complete");
+  this->publish_firmware_status_(str_sprintf("install complete: managed v%" PRIu32, this->bundled_firmware_version_()));
+  ESP_LOGI(TAG, "SAMD09 managed firmware install complete: version=%" PRIu32 ", size=%" PRIu32 ", sha256=%s",
+           this->bundled_firmware_version_(), this->bundled_firmware_size_(),
+           sha256_hex_(BUNDLED_SAMD_FIRMWARE_SHA256).c_str());
+}
 
 void EmporiaVueComponent::process_backup_() {
   uint8_t buffer[BACKUP_IO_BLOCK_SIZE]{};
