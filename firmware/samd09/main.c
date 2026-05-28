@@ -273,8 +273,21 @@ uint8_t SensorSequence = 0;
 
 #define ESPpacketlength       0x11C
 #define EMPORIAVUE_HARDWARE_ID       2
-#define EMPORIAVUE_FIRMWARE_VERSION  17
+#define EMPORIAVUE_FIRMWARE_VERSION  18
 #define EMPORIAVUE_I2C_INFO_COMMAND  0xF0
+
+#define MAIN_SAMPLE_COUNT              12987
+#define MUX_SAMPLE_COUNT               1623
+#define MAIN_RMS_SCALE_NUMERATOR       100.0f
+#define MUX_RMS_SCALE_NUMERATOR        800.0f
+#define MAIN_POWER_SCALE_MULTIPLIER    10
+#define MUX_POWER_SCALE_MULTIPLIER     80
+
+#define TC1_ADC_TRIGGER_PERIOD         0x4C
+#define ADC_SAMPLE_TIME_LENGTH         1
+#define ADC_REFCTRL_VREFA              3
+#define ADC_INPUTCTRL_SCAN8_DIFF_GAIN2 0x1270000UL
+#define ADC_CTRLB_DIV8_12BIT_DIFF      0x101
 
 struct __attribute__((__packed__)) ManagedInfoType
 {
@@ -311,6 +324,28 @@ uint32_t CtCycles[3]; //First one counts the amount of cycles between the voltag
 uint16_t AmountCtCycles[3];
 uint16_t SampleCounter; //Keeps track of the amount of samples it has taken for each ESP packet.
 } calcblock[2]; //double buffered
+
+fp_t sqrtf(fp_t x);
+
+static inline uint16_t scale_rms_main(int64_t sum)
+{
+	return (uint16_t) sqrtf(((fp_t) sum * MAIN_RMS_SCALE_NUMERATOR) / (fp_t) MAIN_SAMPLE_COUNT);
+}
+
+static inline uint16_t scale_rms_mux(int64_t sum)
+{
+	return (uint16_t) sqrtf(((fp_t) sum * MUX_RMS_SCALE_NUMERATOR) / (fp_t) MAIN_SAMPLE_COUNT);
+}
+
+static inline int32_t scale_power_main(int64_t raw)
+{
+	return (int32_t) ((raw * MAIN_POWER_SCALE_MULTIPLIER) / MAIN_SAMPLE_COUNT);
+}
+
+static inline int32_t scale_power_mux(int64_t raw)
+{
+	return (int32_t) ((raw * MUX_POWER_SCALE_MULTIPLIER) / MAIN_SAMPLE_COUNT);
+}
 
 volatile int8_t cbi = 0; //calcblock index varies between 0 and 1 for the double buffer
 uint16_t FreqCT = 0; //used to calculate the amount of samples between Voltage (CT1) zerocrossings.
@@ -685,6 +720,8 @@ void irq_handler_dmac(void) //We've configured it to enable Channel Transfer Com
 		dmabool = false;
 	}
 
+	__asm__ __volatile__("dmb sy" ::: "memory");
+
 	uint8_t Muxnr = MuxCounter;
 	MuxCounter++;
 	MuxCounter = MuxCounter & 7; //max 7
@@ -705,6 +742,7 @@ void irq_handler_dmac(void) //We've configured it to enable Channel Transfer Com
 
 	int a = 0;
 	int dif1;
+	int voltage_differences[3];
 	FreqCT++;
 
 	//Now process the ADC results!
@@ -719,13 +757,15 @@ void irq_handler_dmac(void) //We've configured it to enable Channel Transfer Com
 
 	//For RawPV: Use amp result from point 2 above, multiply with (latest (!) ADC voltage - Average voltage (from last 0.5 second, so the value from 22 values table)).
 
+	for (int ct = 0; ct < 3; ct++)
+		voltage_differences[ct] = DMAresults[lastindex][ct * 2] - averages[ct];
 
 	//Process the 3 mains first
 	for (int ct = 0; ct < 3; ct++)
 	{
 		//Process the voltages for the 3 mains
 		calcblock[cbi].ADCVoltagesum[ct] += DMAresults[lastindex][a]; //Save the sum of all ADC Voltages. At DMAresults 0,2,4. For voltages we always take the latest buffer.
-		dif1 = DMAresults[lastindex][a] - averages[ct];
+		dif1 = voltage_differences[ct];
 		calcblock[cbi].ADCVoltsquaresum[ct] += dif1 * dif1;
 
 		//Now count the zerocrossing cycles for the Voltage1 and the differences with V2 and V3.
@@ -777,7 +817,7 @@ void irq_handler_dmac(void) //We've configured it to enable Channel Transfer Com
 		for (int i = 0; i < 3; i++)
 		{
 			//int64_t RawPVsum[19][3];
-			calcblock[cbi].RawPVsum[ct][i] -= dif1 * (DMAresults[lastindex][i*2] - averages[i]);  //current * volts (at DMAresults 0,2,4)
+			calcblock[cbi].RawPVsum[ct][i] -= dif1 * voltage_differences[i];  //current * volts (at DMAresults 0,2,4)
 		}
 
 
@@ -795,14 +835,14 @@ void irq_handler_dmac(void) //We've configured it to enable Channel Transfer Com
 		//Process the RawPV's for the 2 muxed small CT's
 		for (int x = 0; x < 3; x++)
 		{
-			calcblock[cbi].RawPVsum[3 + (Muxnr*2) + i][x] -= dif1 * (DMAresults[lastindex][x*2] - averages[x]);  //current * volts
+			calcblock[cbi].RawPVsum[3 + (Muxnr*2) + i][x] -= dif1 * voltage_differences[x];  //current * volts
 
 		}
 	}
 
 	//If we have our 0.5 second of data, switch to the other calcbuffer and continue there.
 	calcblock[cbi].SampleCounter++;
-	if (calcblock[cbi].SampleCounter > 12986)
+	if (calcblock[cbi].SampleCounter >= MAIN_SAMPLE_COUNT)
 	{
 		cbi++;
 		cbi = cbi & 1;
@@ -828,7 +868,7 @@ void Check_and_sendESPpacket()
 	uint8_t cbo = cbi +1;
 	cbo = cbo & 1; //we check the other (!) calcbuffer to see if we have a finished one waiting for us to process.
 
-	if (calcblock[cbo].SampleCounter >= 12987)
+	if (calcblock[cbo].SampleCounter >= MAIN_SAMPLE_COUNT)
 	{
 		packet_ready = false;
 		struct SensorReadingType* SensorReading = &SensorReadings[BuildSensorReadingIndex];
@@ -837,12 +877,12 @@ void Check_and_sendESPpacket()
 		for (int i = 0; i < 3; i++)
 		{
 			//First the MainCT Voltages
-			averages[i] = calcblock[cbo].ADCVoltagesum[i] / (int32_t) 12987;
+			averages[i] = calcblock[cbo].ADCVoltagesum[i] / (int32_t) MAIN_SAMPLE_COUNT;
 			if (averages[i] < (int16_t) -1999)
 				averages[i] = 0;
 
 			//Now the MainCT Currents
-			averages[3+i] = calcblock[cbo].ADCCurrentsum[i] / (int32_t)12987;
+			averages[3+i] = calcblock[cbo].ADCCurrentsum[i] / (int32_t) MAIN_SAMPLE_COUNT;
 			if (averages[3+i] < (int16_t) -1999)
 				averages[3+i] = 0;
 		}
@@ -850,7 +890,7 @@ void Check_and_sendESPpacket()
 		//And the 16 50A CT currents
 		for (int i = 0; i < 16; i++)
 		{
-			averages[6+i] = calcblock[cbo].ADCCurrentsum[3+i] / (int32_t)1623;	// Because 12987/8 = 1623
+			averages[6+i] = calcblock[cbo].ADCCurrentsum[3+i] / (int32_t) MUX_SAMPLE_COUNT;	// Because 12987/8 = 1623
 			if (averages[6+i] < (int16_t) -1999)
 				averages[6+i] = 0;
 		}
@@ -858,10 +898,10 @@ void Check_and_sendESPpacket()
 		//Now put it all in the ESP packet buffer
 		for (int i = 0; i < 3; i++)
 		{
-			SensorReading->voltage[i] = sqrtf (calcblock[cbo].ADCVoltsquaresum[i] / (double)129.87);
-			SensorReading->current[i] = sqrtf (calcblock[cbo].ADCsquareCurrentsum[i] / (double)129.87);
+			SensorReading->voltage[i] = scale_rms_main(calcblock[cbo].ADCVoltsquaresum[i]);
+			SensorReading->current[i] = scale_rms_main(calcblock[cbo].ADCsquareCurrentsum[i]);
 			for (int x = 0; x < 3; x++)
-				SensorReading->power[i].phase[x] = calcblock[cbo].RawPVsum[i][x] / (double)1298.7;
+				SensorReading->power[i].phase[x] = scale_power_main(calcblock[cbo].RawPVsum[i][x]);
 
 			if (calcblock[cbo].AmountCtCycles[i] == 0) //make sure we dont divide by 0.
 				SensorReading->Cyclecount[i] = 0;
@@ -874,9 +914,9 @@ void Check_and_sendESPpacket()
 		//Now process the 16 small CT's and put them in the ESP sensor packet. Data ordering in destination according to the MuxTable.
 		for (int i = 0; i < 16; i++)
 		{
-			SensorReading->current[MuxTable[i]] = sqrtf (calcblock[cbo].ADCsquareCurrentsum[i+3] / (double)16.23375);
+			SensorReading->current[MuxTable[i]] = scale_rms_mux(calcblock[cbo].ADCsquareCurrentsum[i+3]);
 			for (int x = 0; x < 3; x++)
-				SensorReading->power[MuxTable[i]].phase[x] = (double) calcblock[cbo].RawPVsum[i+3][x] / (double)162.3375;
+				SensorReading->power[MuxTable[i]].phase[x] = scale_power_mux(calcblock[cbo].RawPVsum[i+3][x]);
 		}
 
 		//Sensor data packet is ready, so we can now reset the old calcbuffer to 0
@@ -1018,7 +1058,7 @@ void ConfigureTimerCounter1 () {
 	} while (REG_TC1_STATUS >= 0x80); //We defined it as unsigned, checking for bit 7, SYNCBUSY.
 
 	REG_TC1_CTRLA = 0x60; //0110 0000 Match PWM, 16 bit mode
-	REG_TC1_COUNT16_CC0 = 0x4C; //The period.
+	REG_TC1_COUNT16_CC0 = TC1_ADC_TRIGGER_PERIOD; //The period.
 	REG_TC1_INTFLAG = 0x3B; //clear flags
 	REG_TC1_EVCTRL = 0x100; // bit 8 = Overflow/Underflow event is enabled and will be generated for every counter overflow/underflow.
 	do {
@@ -1083,13 +1123,13 @@ void adc_config() {
         //Load ADC factory calibration values
 	uint32_t tmp =  (*((uint32_t*)0x806024) << 5) & 0x700 | *((uint32_t*)0x806020) >> 27 | (*((uint32_t*)0x806024) << 5) & 0xff | ((*((uint32_t*)0x806024) & 7) << 5);
 	REG_ADC_CALIB = tmp;
-	REG_ADC_SAMPCTRL = 1; //Sampling Time Length
-	REG_ADC_REFCTRL = 3; //VREFA as reference
-	REG_ADC_INPUTCTRL = 0x1270000; // 00000001 00100111 00000000 00000000
+	REG_ADC_SAMPCTRL = ADC_SAMPLE_TIME_LENGTH; //Sampling Time Length
+	REG_ADC_REFCTRL = ADC_REFCTRL_VREFA; //VREFA as reference
+	REG_ADC_INPUTCTRL = ADC_INPUTCTRL_SCAN8_DIFF_GAIN2; // 00000001 00100111 00000000 00000000
 					//  00000001 = GAIN 2X.
 					// 0010  =inputoffset: 2.
 					// 0111 = Inputscan= 7+1 = 8
-	REG_ADC_CTRLB = 0x101; //0000 0001 0000 0001
+	REG_ADC_CTRLB = ADC_CTRLB_DIV8_12BIT_DIFF; //0000 0001 0000 0001
 				//ADC clock : Peripheral clock = 1 : 8
 				//12 bits conversion
 				//Disable digital result correction
