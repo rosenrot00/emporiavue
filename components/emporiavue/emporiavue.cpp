@@ -128,8 +128,6 @@ void EmporiaVueComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Dump resume between blocks: %s", YESNO(this->dump_resume_between_blocks_));
   ESP_LOGCONFIG(TAG, "  Backup partition: %s", this->backup_partition_name_.c_str());
   ESP_LOGCONFIG(TAG, "  Configured hardware id: %u", static_cast<unsigned>(this->hardware_id_));
-  ESP_LOGCONFIG(TAG, "  Required managed firmware version: v%s (raw %" PRIu32 ")",
-                format_firmware_version_(this->required_firmware_version_).c_str(), this->required_firmware_version_);
   ESP_LOGCONFIG(TAG, "  Bundled managed firmware hardware id: %" PRIu32, this->bundled_firmware_hardware_id_());
   ESP_LOGCONFIG(TAG, "  Bundled managed firmware version: v%s (raw %" PRIu32 ")",
                 format_firmware_version_(this->bundled_firmware_version_()).c_str(), this->bundled_firmware_version_());
@@ -960,26 +958,8 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
 
   if (selected_action == FirmwareAction::UPDATE_MANAGED && !this->bundled_firmware_available_()) {
     release_after_check();
-    const char *current_kind = current.kind == FirmwareKind::MANAGED
-                                   ? "managed"
-                                   : (current.kind == FirmwareKind::STOCK ? "stock" : "unknown");
-    this->publish_firmware_status_(
-        str_sprintf("update unavailable: %s firmware needs v%s, but no bundled image is compiled in", current_kind,
-                    format_firmware_version_(this->required_firmware_version_).c_str()));
-    ESP_LOGW(TAG,
-             "SAMD09 managed firmware update is needed but no bundled firmware image is compiled in: current_kind=%s, "
-             "current_version=%" PRIu32 ", required=%" PRIu32,
-             current_kind, current.version, this->required_firmware_version_);
-    return;
-  }
-
-  if (selected_action == FirmwareAction::UPDATE_MANAGED &&
-      this->bundled_firmware_version_() < this->required_firmware_version_) {
-    release_after_check();
-    this->publish_firmware_status_(str_sprintf("update unavailable: bundle v%s is older than required v%s",
-                                               format_firmware_version_(this->bundled_firmware_version_()).c_str(),
-                                               format_firmware_version_(this->required_firmware_version_).c_str()));
-    ESP_LOGW(TAG, "SAMD09 bundled firmware is older than required version");
+    this->publish_firmware_status_("update unavailable: no bundled managed firmware image is compiled in");
+    ESP_LOGW(TAG, "SAMD09 managed firmware update requested but no bundled firmware image is compiled in");
     return;
   }
 
@@ -2448,7 +2428,7 @@ EmporiaVueComponent::FirmwareAction EmporiaVueComponent::determine_firmware_acti
     if (reason != nullptr) {
       *reason = str_sprintf("stock firmware detected; update to managed hw=%" PRIu32 " v%s",
                             this->bundled_firmware_hardware_id_(),
-                            format_firmware_version_(this->required_firmware_version_).c_str());
+                            format_firmware_version_(this->bundled_firmware_version_()).c_str());
     }
     return FirmwareAction::UPDATE_MANAGED;
   }
@@ -2462,12 +2442,12 @@ EmporiaVueComponent::FirmwareAction EmporiaVueComponent::determine_firmware_acti
     return FirmwareAction::UPDATE_MANAGED;
   }
 
-  if (current.kind == FirmwareKind::MANAGED && current.version < this->required_firmware_version_) {
+  if (current.kind == FirmwareKind::MANAGED && current.version < this->bundled_firmware_version_()) {
     if (reason != nullptr) {
-      *reason = str_sprintf("managed hw=%u v%s is older than required v%s",
+      *reason = str_sprintf("managed hw=%u v%s is older than bundled v%s",
                             static_cast<unsigned>(current.hardware_id),
                             format_firmware_version_(current.version).c_str(),
-                            format_firmware_version_(this->required_firmware_version_).c_str());
+                            format_firmware_version_(this->bundled_firmware_version_()).c_str());
     }
     return FirmwareAction::UPDATE_MANAGED;
   }
@@ -2918,8 +2898,7 @@ void EmporiaVueComponent::finish_install_success_() {
              sha256_hex_(BUNDLED_SAMD_FIRMWARE_SHA256).c_str());
     this->set_timeout("post_update_i2c_probe", 1000, [this]() { this->probe_runtime_i2c_after_firmware_update_(); });
   } else if (completed_action == FirmwareAction::FLASH_STOCK_DUMP) {
-    this->publish_firmware_update_available_(this->bundled_firmware_available_() &&
-                                             this->bundled_firmware_version_() >= this->required_firmware_version_);
+    this->publish_firmware_update_available_(this->bundled_firmware_available_());
     this->publish_firmware_restore_available_(backup_valid);
     this->publish_status_("stock dump flash complete");
     this->publish_firmware_action_("stock dump firmware flashed");
@@ -2936,8 +2915,7 @@ void EmporiaVueComponent::finish_install_success_() {
       }
     });
   } else {
-    this->publish_firmware_update_available_(this->bundled_firmware_available_() &&
-                                             this->bundled_firmware_version_() >= this->required_firmware_version_);
+    this->publish_firmware_update_available_(this->bundled_firmware_available_());
     this->publish_firmware_restore_available_(false);
     this->publish_status_("restore complete");
     this->publish_firmware_action_("stock firmware restored");

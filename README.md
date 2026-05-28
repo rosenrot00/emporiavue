@@ -59,8 +59,8 @@ firmware install for the SAMD09:
 - `Read SAMD09`: runs the fuller SWD read check, including DSU/NVM status reads after the Debug Port responds.
 - `Dump SAMD09 Flash Blocks`: reads a small number of flash blocks and logs numbered hex chunks that can later be reassembled.
 - `Backup SAMD09 Firmware`: backs up detected legacy SAMD09 firmware into the `samd_bak` ESP32 data partition. It refuses to back up firmware marked as managed by this project.
-- `Update SAMD09 Firmware`: checks whether the running SAMD09 firmware is stock or older than the component's required
-  managed firmware version and can flash the bundled managed SAMD09 image when writes are explicitly enabled.
+- `Update SAMD09 Firmware`: checks whether the running SAMD09 firmware is stock or older than the bundled managed
+  SAMD09 image and can flash that bundled image when writes are explicitly enabled.
 - `Restore Stock SAMD09 Firmware`: restores the verified stock backup from the `samd_bak` partition when the SAMD is
   currently running managed firmware.
 
@@ -71,9 +71,9 @@ hide a button entity based on partition-table state.
 
 The install check identifies managed firmware through a footer at the end of SAMD flash. Firmware without that footer is
 treated as stock/legacy and therefore as `hardware_id=0`, `firmware_version=0`. Managed firmware currently uses only
-`hardware_id` and `firmware_version` as compatibility keys; the bundled Vue 2 image is `hardware_id=2`,
-`firmware_version=10`, displayed as `v1.0`. Internally the version is a monotonic integer in tenths, so `11` is shown
-as `v1.1` and `100` as `v10.0`; comparisons and update decisions use the raw integer. The current upstream
+`hardware_id` and `firmware_version` as compatibility keys; the bundled Vue 2 image is `hardware_id=2`. Internally the
+version is a monotonic integer in tenths, so `16` is shown as `v1.6` and `100` as `v10.0`; comparisons and update
+decisions compare the detected raw integer against the bundled image's raw integer. The current upstream
 `emporia_vue` I2C frame is 284 bytes; a future managed SAMD firmware can expose these values in its I2C payload too,
 but this SWD component does not depend on that yet.
 Because Home Assistant buttons cannot be disabled dynamically by an external component, use `SAMD Firmware Action`,
