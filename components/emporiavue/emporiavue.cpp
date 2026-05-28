@@ -856,13 +856,12 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
   if (restore_requested) {
     action = backup_valid ? FirmwareAction::RESTORE_STOCK : FirmwareAction::UNKNOWN;
     action_reason = backup_valid ? "stock backup is available" : "valid stock backup required";
-  } else if (current.kind == FirmwareKind::STOCK || current.kind == FirmwareKind::MANAGED) {
-    action = this->determine_firmware_action_(current, backup_valid ? &backup_header : nullptr, &action_reason);
   } else if (this->require_backup_before_install_ && !backup_valid) {
-    action_reason = "firmware detection unavailable; backup required before update";
+    action = FirmwareAction::BACKUP_STOCK;
+    action_reason = "stock backup required before update";
   } else {
     action = FirmwareAction::UPDATE_MANAGED;
-    action_reason = "firmware detection unavailable; update requested";
+    action_reason = "firmware update requested";
   }
   this->publish_detected_firmware_action_(action, action_reason);
   if (restore_requested && backup_valid) {
