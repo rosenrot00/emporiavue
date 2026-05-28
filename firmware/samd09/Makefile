@@ -3,10 +3,11 @@ BUILD = build
 BIN = EmporiaSamd09
 
 ##############################################################################
-.PHONY: all directory clean size
+.PHONY: all directory clean size debug-swd-guard
 
 CC = arm-none-eabi-gcc
 OBJCOPY = arm-none-eabi-objcopy
+OBJDUMP = arm-none-eabi-objdump
 SIZE = arm-none-eabi-size
 
 ifeq ($(OS), Windows_NT)
@@ -47,19 +48,24 @@ CFLAGS += $(INCLUDES) $(DEFINES)
 
 OBJS = $(addprefix $(BUILD)/, $(notdir %/$(subst .c,.o, $(SRCS))))
 
-all: directory $(BUILD)/$(BIN).elf $(BUILD)/$(BIN).hex $(BUILD)/$(BIN).bin size
+all: directory $(BUILD)/$(BIN).elf debug-swd-guard $(BUILD)/$(BIN).hex $(BUILD)/$(BIN).bin size
 
 $(BUILD)/$(BIN).elf: $(OBJS)
 	@echo LD $@
 	@$(CC) $(LDFLAGS) $(OBJS) $(LIBS) -o $@
 
-$(BUILD)/$(BIN).hex: $(BUILD)/$(BIN).elf
-	@echo OBJCOPY $@
-	@$(OBJCOPY) -O ihex $^ $@
+debug-swd-guard: $(BUILD)/$(BIN).elf
+	@echo SWD_GUARD $<
+	@! $(OBJDUMP) -d $< | grep -E '[[:space:]]wfi|[[:space:]]wfe' >/dev/null || \
+	  (echo "error: low-power wait instruction found; keep SAMD09 firmware SWD-attachable during development" >&2; false)
 
-$(BUILD)/$(BIN).bin: $(BUILD)/$(BIN).elf
+$(BUILD)/$(BIN).hex: $(BUILD)/$(BIN).elf debug-swd-guard
 	@echo OBJCOPY $@
-	@$(OBJCOPY) -O binary $^ $@
+	@$(OBJCOPY) -O ihex $< $@
+
+$(BUILD)/$(BIN).bin: $(BUILD)/$(BIN).elf debug-swd-guard
+	@echo OBJCOPY $@
+	@$(OBJCOPY) -O binary $< $@
 
 %.o:
 	@echo CC $@
