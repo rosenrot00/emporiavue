@@ -201,10 +201,6 @@ The repository includes `packages/vue2-managed.yaml`. It configures the Vue 2 in
 backup, update, and restore buttons. Low-level probe/read diagnostics such as SWD IDCODE, DSU DID, SWD status, and
 read-allowed stay opt-in and are not exposed by the package.
 
-Managed firmware diagnostics are polled every 60 seconds. The power-timing diagnostic sensors report the maximum raw
-ADC-product deviation between the current voltage timing and the two delayed voltage timing candidates during the last
-diagnostic window; they are for comparison only and do not change the normal power calculation.
-
 Keep your private `external_components` block in the main node YAML, then include the package:
 
 ```yaml

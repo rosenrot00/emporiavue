@@ -80,15 +80,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void set_diag_i2c_oversize_reads_sensor(sensor::Sensor *sensor) {
     this->diag_i2c_oversize_reads_sensor_ = sensor;
   }
-  void set_diag_power_timing_latest_minus2_max_sensor(sensor::Sensor *sensor) {
-    this->diag_power_timing_latest_minus2_max_sensor_ = sensor;
-  }
-  void set_diag_power_timing_latest_minus4_max_sensor(sensor::Sensor *sensor) {
-    this->diag_power_timing_latest_minus4_max_sensor_ = sensor;
-  }
-  void set_diag_power_timing_minus2_minus4_max_sensor(sensor::Sensor *sensor) {
-    this->diag_power_timing_minus2_minus4_max_sensor_ = sensor;
-  }
   void set_diag_last_sample_count_sensor(sensor::Sensor *sensor) { this->diag_last_sample_count_sensor_ = sensor; }
   void set_diag_last_i2c_read_len_sensor(sensor::Sensor *sensor) { this->diag_last_i2c_read_len_sensor_ = sensor; }
 
@@ -241,9 +232,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
     uint32_t packet_overruns;
     uint32_t i2c_partial_reads;
     uint32_t i2c_oversize_reads;
-    uint32_t power_timing_latest_minus2_max;
-    uint32_t power_timing_latest_minus4_max;
-    uint32_t power_timing_minus2_minus4_max;
     uint16_t last_sample_count;
     uint16_t last_i2c_read_len;
     uint32_t crc32;
@@ -445,9 +433,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   sensor::Sensor *diag_packet_overruns_sensor_{nullptr};
   sensor::Sensor *diag_i2c_partial_reads_sensor_{nullptr};
   sensor::Sensor *diag_i2c_oversize_reads_sensor_{nullptr};
-  sensor::Sensor *diag_power_timing_latest_minus2_max_sensor_{nullptr};
-  sensor::Sensor *diag_power_timing_latest_minus4_max_sensor_{nullptr};
-  sensor::Sensor *diag_power_timing_minus2_minus4_max_sensor_{nullptr};
   sensor::Sensor *diag_last_sample_count_sensor_{nullptr};
   sensor::Sensor *diag_last_i2c_read_len_sensor_{nullptr};
 
