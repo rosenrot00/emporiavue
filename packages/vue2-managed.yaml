@@ -29,6 +29,10 @@ emporiavue:
 
   firmware_status:
     name: "SAMD Firmware Status"
+  firmware_version:
+    name: "SAMD Firmware Version"
+  firmware_update_available:
+    name: "SAMD Firmware Update Available"
   status:
     name: "SAMD SWD Status"
   swd_idcode:
@@ -40,6 +44,8 @@ emporiavue:
 
   backup_firmware_button:
     name: "Backup SAMD09 Firmware"
+  install_firmware_button:
+    name: "Install SAMD09 Firmware"
   probe_button:
     name: "Probe SAMD09 SWD"
   read_button:

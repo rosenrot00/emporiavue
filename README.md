@@ -52,17 +52,28 @@ external_components:
     components: [emporiavue]
 ```
 
-The default config creates Home Assistant buttons for probing, reading, dumping, and backing up the SAMD09:
+The default config creates Home Assistant buttons for probing, reading, dumping, backing up, and preparing a managed
+firmware install for the SAMD09:
 
 - `Probe SAMD09 SWD`: reads only the SWD Debug Port IDCODE and logs the raw ACK value. It tries a plain SWD line-reset sequence, the standard 16-bit SWJ JTAG-to-SWD select sequence, and the 32-bit `0xe79e` variant used by odewdney's MicroPython SWD script.
 - `Read SAMD09`: runs the fuller SWD read check, including DSU/NVM status reads after the Debug Port responds.
 - `Dump SAMD09 Flash Blocks`: reads a small number of flash blocks and logs numbered hex chunks that can later be reassembled.
 - `Backup SAMD09 Firmware`: backs up detected legacy SAMD09 firmware into the `samd_bak` ESP32 data partition. It refuses to back up firmware marked as managed by this project.
+- `Install SAMD09 Firmware`: checks whether the running SAMD09 firmware is older than the component's required managed
+  firmware version. This is a guarded scaffold for now: it does not erase or write the SAMD09 until a bundled firmware
+  image and flasher are added.
 
 You need the normal ESPHome `api:` setup in your node config for Home Assistant to see those buttons. The results appear in the ESPHome log/console at `INFO` level.
 If the `samd_bak` partition is not present at boot, the firmware status entity reports `backup partition missing` and
 pressing the backup button is ignored. ESPHome does not currently provide a safe runtime API to dynamically disable or
 hide a button entity based on partition-table state.
+
+The install check identifies managed firmware through a footer at the end of SAMD flash. Firmware without that footer is
+treated as stock/legacy and therefore as version `0`. The current upstream `emporia_vue` I2C frame is 284 bytes; a future
+managed SAMD firmware can expose a version in its I2C payload too, but this SWD component does not depend on that yet.
+Because Home Assistant buttons cannot be disabled dynamically by an external component, use `SAMD Firmware Update
+Available` and `SAMD Firmware Status` as the authoritative state. The install button exits without writing if no update
+is needed, no bundled image is compiled in, or a valid backup is missing.
 
 By default the SWD pins are not initialized at boot. `init_pins_on_boot` defaults to `false`, so SWDIO/SWCLK are only touched while a SAMD09 button action is running. The optional reset pin is only touched when `reset_before_read: true` or `connect_under_reset: true` is set. After the check, the component releases the touched pins back to input/pullup.
 

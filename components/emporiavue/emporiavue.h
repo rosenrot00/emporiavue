@@ -47,17 +47,23 @@ class EmporiaVueComponent : public Component {
   void set_backup_partition_name(const std::string &backup_partition_name) {
     this->backup_partition_name_ = backup_partition_name;
   }
+  void set_required_firmware_version(uint32_t version) { this->required_firmware_version_ = version; }
 
   void set_swd_idcode_sensor(text_sensor::TextSensor *sensor) { this->swd_idcode_sensor_ = sensor; }
   void set_dsu_did_sensor(text_sensor::TextSensor *sensor) { this->dsu_did_sensor_ = sensor; }
   void set_status_sensor(text_sensor::TextSensor *sensor) { this->status_sensor_ = sensor; }
   void set_firmware_status_sensor(text_sensor::TextSensor *sensor) { this->firmware_status_sensor_ = sensor; }
+  void set_firmware_version_sensor(text_sensor::TextSensor *sensor) { this->firmware_version_sensor_ = sensor; }
   void set_read_allowed_sensor(binary_sensor::BinarySensor *sensor) { this->read_allowed_sensor_ = sensor; }
+  void set_firmware_update_available_sensor(binary_sensor::BinarySensor *sensor) {
+    this->firmware_update_available_sensor_ = sensor;
+  }
 
   void read_samd();
   void probe_swd();
   void dump_flash();
   void backup_firmware();
+  void install_firmware();
 
  protected:
   static constexpr uint8_t DP_ABORT = 0x00;
@@ -98,6 +104,10 @@ class EmporiaVueComponent : public Component {
   static constexpr uint32_t BACKUP_IMAGE_OFFSET = 0x1000UL;
   static constexpr uint16_t BACKUP_IO_BLOCK_SIZE = 64;
   static constexpr const char *MANAGED_MARKER = "EMPORIAVUE-SAMD";
+  static constexpr uint8_t MANAGED_MARKER_LENGTH = 15;
+  static constexpr uint32_t MANAGED_INFO_MAGIC = 0x4556534DUL;  // "EVSM"
+  static constexpr uint16_t MANAGED_INFO_FORMAT_VERSION = 1;
+  static constexpr uint16_t STOCK_I2C_FRAME_SIZE = 284;
 
   struct BackupHeader {
     uint32_t magic;
@@ -121,6 +131,16 @@ class EmporiaVueComponent : public Component {
     uint8_t sha256[32];
   } __attribute__((packed));
 
+  struct ManagedFirmwareInfo {
+    uint32_t magic;
+    uint16_t format_version;
+    uint16_t reserved0;
+    uint32_t firmware_version;
+    uint32_t image_size;
+    uint8_t image_sha256[32];
+    char marker[MANAGED_MARKER_LENGTH];
+  } __attribute__((packed));
+
   enum MemSize : uint8_t {
     MEM_SIZE_BYTE = 0,
     MEM_SIZE_HALFWORD = 1,
@@ -131,6 +151,23 @@ class EmporiaVueComponent : public Component {
     IDLE = 0,
     READ_AND_STORE,
     VERIFY_SECOND_READ,
+  };
+
+  enum class FirmwareKind : uint8_t {
+    UNKNOWN = 0,
+    STOCK,
+    MANAGED,
+  };
+
+  struct FirmwareInfo {
+    FirmwareKind kind{FirmwareKind::UNKNOWN};
+    uint32_t version{0};
+    uint32_t flash_size{0};
+    uint32_t image_size{0};
+    uint32_t page_size{0};
+    uint32_t page_count{0};
+    uint32_t nvm_param{0};
+    uint8_t image_sha256[32]{};
   };
 
   void reset_target_();
@@ -148,6 +185,8 @@ class EmporiaVueComponent : public Component {
   void set_error_(const std::string &error);
   void publish_status_(const std::string &status);
   void publish_firmware_status_(const std::string &status);
+  void publish_firmware_version_(const FirmwareInfo &info);
+  void publish_firmware_update_available_(bool available);
   void publish_read_allowed_(bool value);
   static std::string hex32_(uint32_t value);
   static std::string hex16_(uint16_t value);
@@ -194,6 +233,12 @@ class EmporiaVueComponent : public Component {
   bool write_backup_state_(uint8_t state);
   bool write_backup_hash_and_footer_(const uint8_t hash[32], uint32_t flash_size);
   bool detect_managed_firmware_(uint32_t flash_size, bool *managed);
+  bool read_managed_firmware_info_(uint32_t flash_size, ManagedFirmwareInfo *managed_info, bool *found);
+  bool read_current_firmware_info_(FirmwareInfo *info);
+  bool backup_partition_valid_(std::string *error);
+  bool bundled_firmware_available_() const;
+  uint32_t bundled_firmware_version_() const;
+  uint32_t bundled_firmware_size_() const;
   void process_backup_();
   void fail_backup_(const std::string &error);
   void finish_backup_success_();
@@ -205,7 +250,9 @@ class EmporiaVueComponent : public Component {
   text_sensor::TextSensor *dsu_did_sensor_{nullptr};
   text_sensor::TextSensor *status_sensor_{nullptr};
   text_sensor::TextSensor *firmware_status_sensor_{nullptr};
+  text_sensor::TextSensor *firmware_version_sensor_{nullptr};
   binary_sensor::BinarySensor *read_allowed_sensor_{nullptr};
+  binary_sensor::BinarySensor *firmware_update_available_sensor_{nullptr};
 
   bool reset_before_read_{false};
   bool reset_on_boot_{false};
@@ -226,6 +273,7 @@ class EmporiaVueComponent : public Component {
   bool dump_core_halted_{false};
   uint32_t dump_next_block_{0};
   std::string backup_partition_name_{"samd_bak"};
+  uint32_t required_firmware_version_{1};
   const esp_partition_t *backup_partition_{nullptr};
   bool backup_active_{false};
   bool backup_core_halted_{false};
@@ -269,6 +317,11 @@ class EmporiaVueDumpFlashButton : public button::Button, public Parented<Emporia
 class EmporiaVueBackupFirmwareButton : public button::Button, public Parented<EmporiaVueComponent> {
  protected:
   void press_action() override { this->parent_->backup_firmware(); }
+};
+
+class EmporiaVueInstallFirmwareButton : public button::Button, public Parented<EmporiaVueComponent> {
+ protected:
+  void press_action() override { this->parent_->install_firmware(); }
 };
 
 }  // namespace emporiavue
