@@ -235,30 +235,6 @@ uint32_t EORTable[64] = { 0x90E0700, 0x15121B1C, 0x31363F38, 0x2D2A2324, 0x797E7
 			   0x4740494E, 0x5B5C5552, 0x7F787176, 0x63646D6A, 0x3730393E, 0x2B2C2522, 0xF080106, 0x13141D1A,
 			   0xA7A0A9AE, 0xBBBCB5B2, 0x9F989196, 0x83848D8A, 0xD7D0D9DE, 0xCBCCC5C2, 0xEFE8E1E6, 0xF3F4FDFA };
 
-typedef float fp_t;
-typedef uint32_t rep_t;
-static const int significandBits = 23;
-#define REP_C UINT32_C
-
-static inline int rep_clz(rep_t a) {
-    return __builtin_clz(a);
-}
-
-static inline rep_t toRep(fp_t x) {
-    const union { rep_t i; fp_t f; } rep = { .f = x };
-    return rep.i;
-}
-
-static inline fp_t fromRep(rep_t x) {
-    const union { rep_t i; fp_t f; } rep = { .i = x };
-    return rep.f;
-}
-
-static inline uint32_t mulhi(uint32_t a, uint32_t b) {
-    return (uint64_t)a*b >> 32;
-}
-
-
 struct __attribute__((__packed__)) ReadingPowerEntry
 {
     int32_t phase[3];
@@ -289,7 +265,7 @@ uint8_t SensorSequence = 0;
 
 #define ESPpacketlength       0x11C
 #define EMPORIAVUE_HARDWARE_ID       2
-#define EMPORIAVUE_FIRMWARE_VERSION  20
+#define EMPORIAVUE_FIRMWARE_VERSION  21
 #define EMPORIAVUE_I2C_INFO_COMMAND  0xF0
 #define EMPORIAVUE_I2C_DIAGNOSTIC_COMMAND 0xF1
 
@@ -299,8 +275,8 @@ uint8_t SensorSequence = 0;
 
 #define MAIN_SAMPLE_COUNT              12987
 #define MUX_SAMPLE_COUNT               1623
-#define MAIN_RMS_SCALE_NUMERATOR       100.0f
-#define MUX_RMS_SCALE_NUMERATOR        800.0f
+#define MAIN_RMS_SCALE_NUMERATOR       100
+#define MUX_RMS_SCALE_NUMERATOR        800
 #define MAIN_POWER_SCALE_MULTIPLIER    10
 #define MUX_POWER_SCALE_MULTIPLIER     80
 #define ADC_OFFSET_CHANNEL_COUNT       22
@@ -370,16 +346,41 @@ uint16_t AmountCtCycles[3];
 uint16_t SampleCounter; //Keeps track of the amount of samples it has taken for each ESP packet.
 } calcblock[2]; //double buffered
 
-fp_t sqrtf(fp_t x);
-
-static inline uint16_t scale_rms_main(int64_t sum)
+static uint16_t scale_rms_exact(uint64_t sum, uint32_t numerator)
 {
-	return (uint16_t) sqrtf(((fp_t) sum * MAIN_RMS_SCALE_NUMERATOR) / (fp_t) MAIN_SAMPLE_COUNT);
+	uint64_t scaled = sum * numerator;
+	uint32_t low = 0;
+	uint32_t high = 65535;
+	uint32_t result = 0;
+
+	while (low <= high)
+	{
+		uint32_t mid = (low + high) >> 1;
+		uint64_t threshold = (uint64_t) mid * (uint64_t) mid * MAIN_SAMPLE_COUNT;
+		if (threshold <= scaled)
+		{
+			result = mid;
+			low = mid + 1;
+		}
+		else
+		{
+			if (mid == 0)
+				break;
+			high = mid - 1;
+		}
+	}
+
+	return (uint16_t) result;
 }
 
-static inline uint16_t scale_rms_mux(int64_t sum)
+static inline uint16_t scale_rms_main(uint64_t sum)
 {
-	return (uint16_t) sqrtf(((fp_t) sum * MUX_RMS_SCALE_NUMERATOR) / (fp_t) MAIN_SAMPLE_COUNT);
+	return scale_rms_exact(sum, MAIN_RMS_SCALE_NUMERATOR);
+}
+
+static inline uint16_t scale_rms_mux(uint64_t sum)
+{
+	return scale_rms_exact(sum, MUX_RMS_SCALE_NUMERATOR);
 }
 
 static inline int32_t scale_power_main(int64_t raw)
@@ -537,92 +538,6 @@ typedef struct
   __IO uint32_t SHP[2];                  /*!< Offset: 0x01C (R/W)  System Handlers Priority Registers. [0] is RESERVED   */
   __IO uint32_t SHCSR;                   /*!< Offset: 0x024 (R/W)  System Handler Control and State Register             */
 } SCB_Type;
-
-fp_t sqrtf(fp_t x) {
-
-    // Various constants parametrized by the type of x:
-    static const int typeWidth = sizeof(rep_t) * CHAR_BIT;
-    static const int exponentBits = typeWidth - significandBits - 1;
-    static const int exponentBias = (1 << (exponentBits - 1)) - 1;
-    static const rep_t minNormal = REP_C(1) << significandBits;
-    static const rep_t significandMask = minNormal - 1;
-    static const rep_t signBit = REP_C(1) << (typeWidth - 1);
-    static const rep_t absMask = signBit - 1;
-    static const rep_t infRep = absMask ^ significandMask;
-    static const rep_t qnan = infRep | REP_C(1) << (significandBits - 1);
-
-    // Extract the various important bits of x
-    const rep_t xRep = toRep(x);
-    rep_t significand = xRep & significandMask;
-    int exponent = (xRep >> significandBits) - exponentBias;
-
-    // Using an unsigned integer compare, we can detect all of the special
-    // cases with a single branch: zero, denormal, negative, infinity, or NaN.
-    if (xRep - minNormal >= infRep - minNormal) {
-        const rep_t xAbs = xRep & absMask;
-        // sqrt(+/- 0) = +/- 0
-        if (xAbs == 0) return x;
-        // sqrt(NaN) = qNaN
-        if (xAbs > infRep) return fromRep(qnan | xRep);
-        // sqrt(negative) = qNaN
-        if (xRep > signBit) return fromRep(qnan);
-        // sqrt(infinity) = infinity
-        if (xRep == infRep) return x;
-
-        // normalize denormals and fall back into the mainline
-        const int shift = rep_clz(significand) - rep_clz(minNormal);
-        significand <<= shift;
-        exponent += 1 - shift;
-    }
-
-    // Insert the implicit bit of the significand.  If x was denormal, then
-    // this bit was already set by the normalization process, but it won't hurt
-    // to set it twice.
-    significand |= minNormal;
-
-    // Halve the exponent to get the exponent of the result, and transform the
-    // significand into a Q30 fixed-point xQ30 in the range [1,4) -- if the
-    // exponent of x is odd, then xQ30 is in [2,4); if it is even, then xQ30
-    // is in [1,2).
-    const int resultExponent = exponent >> 1;
-    uint32_t xQ30 = significand << (7 + (exponent & 1));
-
-    // Q32 linear approximation to the reciprocal square root of xQ30.  This
-    // approximation is good to a bit more than 3.5 bits:
-    //
-    //     1/sqrt(a) ~ 1.1033542890963095 - a/6
-    const uint32_t oneSixthQ34 = UINT32_C(0xaaaaaaaa);
-    uint32_t recipQ32 = UINT32_C(0x1a756d3b) - mulhi(oneSixthQ34, xQ30);
-
-    // Newton-Raphson iterations to improve our reciprocal:
-    const uint32_t threeQ30 = UINT32_C(0xc0000000);
-    uint32_t residualQ30 = mulhi(xQ30, mulhi(recipQ32, recipQ32));
-    recipQ32 = mulhi(recipQ32, threeQ30 - residualQ30) << 1;
-    residualQ30 = mulhi(xQ30, mulhi(recipQ32, recipQ32));
-    recipQ32 = mulhi(recipQ32, threeQ30 - residualQ30) << 1;
-    residualQ30 = mulhi(xQ30, mulhi(recipQ32, recipQ32));
-    recipQ32 = mulhi(recipQ32, threeQ30 - residualQ30) << 1;
-    residualQ30 = mulhi(xQ30, mulhi(recipQ32, recipQ32));
-    recipQ32 = mulhi(recipQ32, threeQ30 - residualQ30) << 1;
-
-    // recipQ32 now holds an approximate 1/sqrt(x).  Multiply by x to get an
-    // initial sqrt(x) in Q23.  From the construction of this estimate, we know
-    // that it is either the correctly rounded significand of the result or one
-    // less than the correctly rounded significand (the -2 guarantees that we
-    // fall on the correct side of the actual square root).
-    rep_t result = (mulhi(recipQ32, xQ30) - 2) >> 7;
-
-    // Compute the residual x - result*result to decide if the result needs to
-    // be rounded up.
-    rep_t residual = (xQ30 << 16) - result*result;
-    result += residual > result;
-
-    // Clear the implicit bit of result:
-    result &= significandMask;
-    // Insert the exponent:
-    result |= (rep_t)(resultExponent + exponentBias) << significandBits;
-    return fromRep(result);
-}
 
 void irq_handler_dummy(void)
 {
