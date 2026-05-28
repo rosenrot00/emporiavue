@@ -390,10 +390,12 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void publish_detected_firmware_action_(FirmwareAction action, const std::string &reason);
   void start_firmware_action_(FirmwareAction requested_action);
   bool bundled_firmware_available_() const;
+  bool bundled_firmware_matches_hardware_() const;
   uint32_t bundled_firmware_hardware_id_() const;
   uint32_t bundled_firmware_version_() const;
   uint32_t bundled_firmware_size_() const;
   bool stock_dump_firmware_available_() const;
+  bool stock_dump_firmware_matches_hardware_() const;
   uint32_t stock_dump_firmware_size_() const;
   bool nvm_wait_ready_();
   bool nvm_clear_errors_();

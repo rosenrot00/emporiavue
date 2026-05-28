@@ -137,7 +137,10 @@ void EmporiaVueComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Bundled managed firmware version: v%s (raw %" PRIu32 ")",
                 format_firmware_version_(this->bundled_firmware_version_()).c_str(), this->bundled_firmware_version_());
   ESP_LOGCONFIG(TAG, "  Bundled managed firmware size: %" PRIu32 " bytes", this->bundled_firmware_size_());
+  ESP_LOGCONFIG(TAG, "  Bundled managed firmware compatible: %s",
+                YESNO(this->bundled_firmware_matches_hardware_()));
   ESP_LOGCONFIG(TAG, "  Bundled stock dump size: %" PRIu32 " bytes", this->stock_dump_firmware_size_());
+  ESP_LOGCONFIG(TAG, "  Bundled stock dump compatible: %s", YESNO(this->stock_dump_firmware_matches_hardware_()));
   ESP_LOGCONFIG(TAG, "  SAMD writes enabled: %s", YESNO(this->allow_samd_write_));
   ESP_LOGCONFIG(TAG, "  Require backup before install: %s", YESNO(this->require_backup_before_install_));
   ESP_LOGCONFIG(TAG, "  Init pins on boot: %s", YESNO(this->init_pins_on_boot_));
@@ -969,8 +972,7 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
     return;
   }
 
-  if (selected_action == FirmwareAction::UPDATE_MANAGED && this->hardware_id_ != 0 &&
-      this->bundled_firmware_hardware_id_() != this->hardware_id_) {
+  if (selected_action == FirmwareAction::UPDATE_MANAGED && !this->bundled_firmware_matches_hardware_()) {
     release_after_check();
     this->publish_firmware_status_(str_sprintf("update blocked: bundled image hardware id %" PRIu32
                                                " != configured hardware id %u",
@@ -992,6 +994,15 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
     release_after_check();
     this->publish_firmware_status_("flash dump unavailable: no stock dump image is compiled in");
     ESP_LOGW(TAG, "SAMD09 stock dump flash requested but no stock dump image is compiled in");
+    return;
+  }
+
+  if (selected_action == FirmwareAction::FLASH_STOCK_DUMP && !this->stock_dump_firmware_matches_hardware_()) {
+    release_after_check();
+    this->publish_firmware_status_(str_sprintf("flash dump blocked: bundled stock dump is for hardware id 2, "
+                                               "configured hardware id is %u",
+                                               static_cast<unsigned>(this->hardware_id_)));
+    ESP_LOGW(TAG, "SAMD09 stock dump flash blocked by configured hardware mismatch");
     return;
   }
 
@@ -2550,6 +2561,19 @@ EmporiaVueComponent::FirmwareAction EmporiaVueComponent::determine_firmware_acti
     const FirmwareInfo &current, const BackupHeader *backup_header, std::string *reason) const {
   const bool backup_valid = backup_header != nullptr;
   if (current.kind == FirmwareKind::STOCK) {
+    if (!this->bundled_firmware_available_()) {
+      if (reason != nullptr) {
+        *reason = "stock firmware detected; no bundled managed firmware image is compiled in";
+      }
+      return FirmwareAction::NONE;
+    }
+    if (!this->bundled_firmware_matches_hardware_()) {
+      if (reason != nullptr) {
+        *reason = str_sprintf("stock firmware detected; no bundled managed firmware for configured hardware id %u",
+                              static_cast<unsigned>(this->hardware_id_));
+      }
+      return FirmwareAction::NONE;
+    }
     if (this->require_backup_before_install_ && !backup_valid) {
       if (reason != nullptr) {
         *reason = "stock firmware detected; backup required before update";
@@ -2567,13 +2591,20 @@ EmporiaVueComponent::FirmwareAction EmporiaVueComponent::determine_firmware_acti
   if (current.kind == FirmwareKind::MANAGED && this->hardware_id_ != 0 &&
       current.hardware_id != this->hardware_id_) {
     if (reason != nullptr) {
-      *reason = str_sprintf("managed hardware id %u does not match configured hardware id %u",
-                            static_cast<unsigned>(current.hardware_id), static_cast<unsigned>(this->hardware_id_));
+      if (this->bundled_firmware_matches_hardware_()) {
+        *reason = str_sprintf("managed hardware id %u does not match configured hardware id %u",
+                              static_cast<unsigned>(current.hardware_id), static_cast<unsigned>(this->hardware_id_));
+      } else {
+        *reason = str_sprintf("managed hardware id %u does not match configured hardware id %u; "
+                              "no compatible bundled managed firmware is available",
+                              static_cast<unsigned>(current.hardware_id), static_cast<unsigned>(this->hardware_id_));
+      }
     }
-    return FirmwareAction::UPDATE_MANAGED;
+    return this->bundled_firmware_matches_hardware_() ? FirmwareAction::UPDATE_MANAGED : FirmwareAction::NONE;
   }
 
-  if (current.kind == FirmwareKind::MANAGED && current.version < this->bundled_firmware_version_()) {
+  if (current.kind == FirmwareKind::MANAGED && this->bundled_firmware_matches_hardware_() &&
+      current.version < this->bundled_firmware_version_()) {
     if (reason != nullptr) {
       *reason = str_sprintf("managed hw=%u v%s is older than bundled v%s",
                             static_cast<unsigned>(current.hardware_id),
@@ -2636,6 +2667,11 @@ void EmporiaVueComponent::publish_detected_firmware_action_(FirmwareAction actio
 
 bool EmporiaVueComponent::bundled_firmware_available_() const { return BUNDLED_SAMD_FIRMWARE_SIZE > 0; }
 
+bool EmporiaVueComponent::bundled_firmware_matches_hardware_() const {
+  return this->bundled_firmware_available_() &&
+         (this->hardware_id_ == 0 || this->bundled_firmware_hardware_id_() == this->hardware_id_);
+}
+
 uint32_t EmporiaVueComponent::bundled_firmware_hardware_id_() const { return BUNDLED_SAMD_FIRMWARE_HARDWARE_ID; }
 
 uint32_t EmporiaVueComponent::bundled_firmware_version_() const { return BUNDLED_SAMD_FIRMWARE_VERSION; }
@@ -2643,6 +2679,11 @@ uint32_t EmporiaVueComponent::bundled_firmware_version_() const { return BUNDLED
 uint32_t EmporiaVueComponent::bundled_firmware_size_() const { return BUNDLED_SAMD_FIRMWARE_SIZE; }
 
 bool EmporiaVueComponent::stock_dump_firmware_available_() const { return STOCK_DUMP_SAMD_FIRMWARE_SIZE > 0; }
+
+bool EmporiaVueComponent::stock_dump_firmware_matches_hardware_() const {
+  // The bundled stock dump is the known-good Vue 2 SAMD09 image captured during development.
+  return this->stock_dump_firmware_available_() && (this->hardware_id_ == 0 || this->hardware_id_ == 2);
+}
 
 uint32_t EmporiaVueComponent::stock_dump_firmware_size_() const { return STOCK_DUMP_SAMD_FIRMWARE_SIZE; }
 
@@ -3029,7 +3070,7 @@ void EmporiaVueComponent::finish_install_success_() {
              sha256_hex_(BUNDLED_SAMD_FIRMWARE_SHA256).c_str());
     this->set_timeout("post_update_i2c_probe", 1000, [this]() { this->probe_runtime_i2c_after_firmware_update_(); });
   } else if (completed_action == FirmwareAction::FLASH_STOCK_DUMP) {
-    this->publish_firmware_update_available_(this->bundled_firmware_available_());
+    this->publish_firmware_update_available_(this->bundled_firmware_matches_hardware_());
     this->publish_firmware_restore_available_(backup_valid);
     this->publish_status_("stock dump flash complete");
     this->publish_firmware_action_("stock dump firmware flashed");
@@ -3046,7 +3087,7 @@ void EmporiaVueComponent::finish_install_success_() {
       }
     });
   } else {
-    this->publish_firmware_update_available_(this->bundled_firmware_available_());
+    this->publish_firmware_update_available_(this->bundled_firmware_matches_hardware_());
     this->publish_firmware_restore_available_(false);
     this->publish_status_("restore complete");
     this->publish_firmware_action_("stock firmware restored");
