@@ -44,6 +44,9 @@ EmporiaVueFlashDumpFirmwareButton = emporiavue_ns.class_(
 EmporiaVueTestWriteButton = emporiavue_ns.class_(
     "EmporiaVueTestWriteButton", button.Button
 )
+EmporiaVueRuntimeDiagnosticButton = emporiavue_ns.class_(
+    "EmporiaVueRuntimeDiagnosticButton", button.Button
+)
 
 CONF_SWCLK_PIN = "swclk_pin"
 CONF_SWDIO_PIN = "swdio_pin"
@@ -55,6 +58,7 @@ CONF_INSTALL_FIRMWARE_BUTTON = "install_firmware_button"
 CONF_RESTORE_FIRMWARE_BUTTON = "restore_firmware_button"
 CONF_FLASH_DUMP_FIRMWARE_BUTTON = "flash_dump_firmware_button"
 CONF_TEST_WRITE_BUTTON = "test_write_button"
+CONF_RUNTIME_DIAGNOSTIC_BUTTON = "runtime_diagnostic_button"
 CONF_FIRMWARE_STATUS = "firmware_status"
 CONF_FIRMWARE_ACTION = "firmware_action"
 CONF_FIRMWARE_VERSION = "firmware_version"
@@ -260,6 +264,14 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             icon="mdi:pencil-check",
             entity_category=ENTITY_CATEGORY_CONFIG,
         ),
+        cv.Optional(
+            CONF_RUNTIME_DIAGNOSTIC_BUTTON,
+            default={CONF_NAME: "Diagnose SAMD09 Runtime"},
+        ): button.button_schema(
+            EmporiaVueRuntimeDiagnosticButton,
+            icon="mdi:stethoscope",
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
     }
 ).extend(cv.COMPONENT_SCHEMA).extend(i2c.i2c_device_schema(0x64))
 
@@ -349,4 +361,7 @@ async def to_code(config):
         await cg.register_parented(btn, var)
     if test_write_button_config := config.get(CONF_TEST_WRITE_BUTTON):
         btn = await button.new_button(test_write_button_config)
+        await cg.register_parented(btn, var)
+    if runtime_diagnostic_button_config := config.get(CONF_RUNTIME_DIAGNOSTIC_BUTTON):
+        btn = await button.new_button(runtime_diagnostic_button_config)
         await cg.register_parented(btn, var)

@@ -721,6 +721,34 @@ void EmporiaVueComponent::test_flash_write() {
            hex32_(row_address).c_str(), page_size, row_size);
 }
 
+void EmporiaVueComponent::diagnose_runtime() {
+  if (this->install_active_) {
+    ESP_LOGW(TAG, "SAMD09 firmware install is running; runtime diagnostic ignored");
+    return;
+  }
+  if (this->backup_active_) {
+    ESP_LOGW(TAG, "SAMD09 firmware backup is running; runtime diagnostic ignored");
+    return;
+  }
+  if (this->dump_active_) {
+    ESP_LOGW(TAG, "SAMD09 flash dump is running; runtime diagnostic ignored");
+    return;
+  }
+
+  this->last_error_.clear();
+  this->publish_status_("runtime diagnostic");
+  this->publish_firmware_status_("runtime diagnostic running");
+
+  std::string summary;
+  if (this->collect_runtime_diagnostic_(&summary)) {
+    this->publish_status_("runtime diagnostic complete");
+    this->publish_firmware_status_("runtime diagnostic: " + summary);
+  } else {
+    this->publish_status_("runtime diagnostic failed: " + this->last_error_);
+    this->publish_firmware_status_("runtime diagnostic failed: " + this->last_error_);
+  }
+}
+
 void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action) {
   if (requested_action != FirmwareAction::UPDATE_MANAGED && requested_action != FirmwareAction::RESTORE_STOCK &&
       requested_action != FirmwareAction::FLASH_STOCK_DUMP) {
@@ -1643,6 +1671,153 @@ bool EmporiaVueComponent::system_reset_core_() {
   return this->mem_write32_(AIRCR, AIRCR_VECTKEY | AIRCR_SYSRESETREQ);
 }
 
+bool EmporiaVueComponent::read_core_register_(uint8_t reg, uint32_t *value) {
+  if (!this->mem_write32_(DCRSR, reg)) {
+    return false;
+  }
+  for (uint8_t attempt = 0; attempt < 50; attempt++) {
+    uint32_t dhcsr = 0;
+    if (!this->mem_read32_(DHCSR, &dhcsr)) {
+      return false;
+    }
+    if ((dhcsr & DHCSR_S_REGRDY) != 0) {
+      return this->mem_read32_(DCRDR, value);
+    }
+    delayMicroseconds(100);
+  }
+  this->set_error_(str_sprintf("timeout reading core register %u", static_cast<unsigned>(reg)));
+  return false;
+}
+
+bool EmporiaVueComponent::collect_runtime_diagnostic_(std::string *summary) {
+  if (this->swdio_pin_ == nullptr || this->swclk_pin_ == nullptr) {
+    this->set_error_("SWD pins are not configured");
+    return false;
+  }
+
+  this->prepare_pins_();
+  bool core_halted = false;
+
+  auto fail = [&](const std::string &error) {
+    if (core_halted) {
+      if (!this->resume_core_()) {
+        ESP_LOGW(TAG, "Failed to resume SAMD09 core after runtime diagnostic error: %s", this->last_error_.c_str());
+      }
+      core_halted = false;
+    }
+    this->release_pins_();
+    this->set_error_(error);
+    return false;
+  };
+
+  uint32_t swd_idcode = 0;
+  if (!this->swd_initialize_(&swd_idcode)) {
+    this->release_pins_();
+    return false;
+  }
+  if (this->swd_idcode_sensor_ != nullptr) {
+    this->swd_idcode_sensor_->publish_state(hex32_(swd_idcode));
+  }
+  if (!this->power_up_debug_()) {
+    this->release_pins_();
+    return false;
+  }
+  if (!this->verify_mem_ap_()) {
+    this->release_pins_();
+    return false;
+  }
+  if (!this->halt_core_()) {
+    this->release_pins_();
+    return false;
+  }
+  core_halted = true;
+
+  uint32_t dhcsr = 0;
+  bool halted = false;
+  for (uint8_t attempt = 0; attempt < 50; attempt++) {
+    if (!this->mem_read32_(DHCSR, &dhcsr)) {
+      return fail(this->last_error_);
+    }
+    if ((dhcsr & DHCSR_S_HALT) != 0) {
+      halted = true;
+      break;
+    }
+    delayMicroseconds(100);
+  }
+  if (!halted) {
+    return fail("core did not halt for runtime diagnostic");
+  }
+
+  uint32_t sp = 0;
+  uint32_t lr = 0;
+  uint32_t pc = 0;
+  uint32_t xpsr = 0;
+  uint32_t icsr = 0;
+  uint32_t vtor = 0;
+  uint8_t gclk_status = 0;
+  uint8_t adc_status = 0;
+  uint8_t tc1_status = 0;
+  uint32_t sercom_ctrla = 0;
+  uint32_t sercom_ctrlb = 0;
+  uint32_t sercom_syncbusy = 0;
+  uint32_t sercom_addr = 0;
+  uint8_t sercom_intenset = 0;
+  uint8_t sercom_intflag = 0;
+  uint16_t sercom_status = 0;
+
+  bool ok = true;
+  ok = this->read_core_register_(CORE_REG_SP, &sp) && ok;
+  ok = this->read_core_register_(CORE_REG_LR, &lr) && ok;
+  ok = this->read_core_register_(CORE_REG_PC, &pc) && ok;
+  ok = this->read_core_register_(CORE_REG_XPSR, &xpsr) && ok;
+  ok = this->mem_read32_(DHCSR, &dhcsr) && ok;
+  ok = this->mem_read32_(ICSR, &icsr) && ok;
+  ok = this->mem_read32_(VTOR, &vtor) && ok;
+  ok = this->mem_read8_(GCLK_STATUS, &gclk_status) && ok;
+  ok = this->mem_read8_(ADC_STATUS, &adc_status) && ok;
+  ok = this->mem_read8_(TC1_STATUS, &tc1_status) && ok;
+  ok = this->mem_read32_(SERCOM1_I2CS_CTRLA, &sercom_ctrla) && ok;
+  ok = this->mem_read32_(SERCOM1_I2CS_CTRLB, &sercom_ctrlb) && ok;
+  ok = this->mem_read32_(SERCOM1_I2CS_SYNCBUSY, &sercom_syncbusy) && ok;
+  ok = this->mem_read32_(SERCOM1_I2CS_ADDR, &sercom_addr) && ok;
+  ok = this->mem_read8_(SERCOM1_I2CS_INTENSET, &sercom_intenset) && ok;
+  ok = this->mem_read8_(SERCOM1_I2CS_INTFLAG, &sercom_intflag) && ok;
+  ok = this->mem_read16_(SERCOM1_I2CS_STATUS, &sercom_status) && ok;
+
+  const bool resumed = this->resume_core_();
+  core_halted = false;
+  this->release_pins_();
+  if (!ok) {
+    return false;
+  }
+  if (!resumed) {
+    ESP_LOGW(TAG, "Failed to resume SAMD09 core after runtime diagnostic: %s", this->last_error_.c_str());
+  }
+
+  const uint32_t active_exception = icsr & 0x1FFUL;
+  ESP_LOGW(TAG,
+           "SAMD09 runtime diag core: idcode=%s dhcsr=%s pc=%s lr=%s sp=%s xpsr=%s icsr=%s active_exception=%" PRIu32
+           " vtor=%s",
+           hex32_(swd_idcode).c_str(), hex32_(dhcsr).c_str(), hex32_(pc).c_str(), hex32_(lr).c_str(),
+           hex32_(sp).c_str(), hex32_(xpsr).c_str(), hex32_(icsr).c_str(), active_exception, hex32_(vtor).c_str());
+  ESP_LOGW(TAG,
+           "SAMD09 runtime diag peripheral: gclk_status=%s adc_status=%s tc1_status=%s sercom_ctrla=%s "
+           "sercom_ctrlb=%s sercom_syncbusy=%s sercom_addr=%s sercom_intenset=%s sercom_intflag=%s "
+           "sercom_status=%s",
+           hex8_(gclk_status).c_str(), hex8_(adc_status).c_str(), hex8_(tc1_status).c_str(),
+           hex32_(sercom_ctrla).c_str(), hex32_(sercom_ctrlb).c_str(), hex32_(sercom_syncbusy).c_str(),
+           hex32_(sercom_addr).c_str(), hex8_(sercom_intenset).c_str(), hex8_(sercom_intflag).c_str(),
+           hex16_(sercom_status).c_str());
+
+  if (summary != nullptr) {
+    *summary = str_sprintf("pc=%s lr=%s xpsr=%s exc=%" PRIu32 " gclk=%s adc=%s tc1=%s sercom_sync=%s int=%s",
+                           hex32_(pc).c_str(), hex32_(lr).c_str(), hex32_(xpsr).c_str(), active_exception,
+                           hex8_(gclk_status).c_str(), hex8_(adc_status).c_str(), hex8_(tc1_status).c_str(),
+                           hex32_(sercom_syncbusy).c_str(), hex8_(sercom_intenset).c_str());
+  }
+  return true;
+}
+
 bool EmporiaVueComponent::read_flash_geometry_(uint32_t *param, uint32_t *page_size, uint32_t *page_count,
                                                uint32_t *flash_size) {
   uint32_t raw_param = 0;
@@ -2034,8 +2209,15 @@ void EmporiaVueComponent::probe_runtime_i2c_after_firmware_update_() {
   if (frame_error == i2c::ERROR_OK) {
     this->publish_firmware_status_("update complete; normal i2c frame ok");
   } else {
-    this->publish_firmware_status_(
-        str_sprintf("update complete; normal i2c frame failed: i2c error %u", static_cast<unsigned>(frame_error)));
+    std::string diagnostic;
+    if (this->collect_runtime_diagnostic_(&diagnostic)) {
+      this->publish_firmware_status_(str_sprintf("update complete; i2c failed %u; %s",
+                                                 static_cast<unsigned>(frame_error), diagnostic.c_str()));
+    } else {
+      this->publish_firmware_status_(str_sprintf("update complete; normal i2c frame failed: i2c error %u; "
+                                                 "runtime diagnostic failed: %s",
+                                                 static_cast<unsigned>(frame_error), this->last_error_.c_str()));
+    }
   }
 }
 

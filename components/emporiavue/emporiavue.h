@@ -75,6 +75,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void restore_firmware();
   void flash_dump_firmware();
   void test_flash_write();
+  void diagnose_runtime();
 
  protected:
   static constexpr uint8_t DP_ABORT = 0x00;
@@ -117,12 +118,32 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   static constexpr uint32_t NVM_PAGES_PER_ROW = 4;
   static constexpr uint32_t FLASH_START = 0x00000000UL;
   static constexpr uint32_t DHCSR = 0xE000EDF0UL;
+  static constexpr uint32_t DCRSR = 0xE000EDF4UL;
+  static constexpr uint32_t DCRDR = 0xE000EDF8UL;
   static constexpr uint32_t DHCSR_DBGKEY = 0xA05F0000UL;
   static constexpr uint32_t DHCSR_C_DEBUGEN = 0x00000001UL;
   static constexpr uint32_t DHCSR_C_HALT = 0x00000002UL;
+  static constexpr uint32_t DHCSR_S_REGRDY = 0x00010000UL;
+  static constexpr uint32_t DHCSR_S_HALT = 0x00020000UL;
+  static constexpr uint8_t CORE_REG_SP = 13;
+  static constexpr uint8_t CORE_REG_LR = 14;
+  static constexpr uint8_t CORE_REG_PC = 15;
+  static constexpr uint8_t CORE_REG_XPSR = 16;
+  static constexpr uint32_t ICSR = 0xE000ED04UL;
+  static constexpr uint32_t VTOR = 0xE000ED08UL;
   static constexpr uint32_t AIRCR = 0xE000ED0CUL;
   static constexpr uint32_t AIRCR_VECTKEY = 0x05FA0000UL;
   static constexpr uint32_t AIRCR_SYSRESETREQ = 0x00000004UL;
+  static constexpr uint32_t GCLK_STATUS = 0x40000C01UL;
+  static constexpr uint32_t ADC_STATUS = 0x42002019UL;
+  static constexpr uint32_t TC1_STATUS = 0x4200180FUL;
+  static constexpr uint32_t SERCOM1_I2CS_CTRLA = 0x42000C00UL;
+  static constexpr uint32_t SERCOM1_I2CS_CTRLB = 0x42000C04UL;
+  static constexpr uint32_t SERCOM1_I2CS_INTENSET = 0x42000C16UL;
+  static constexpr uint32_t SERCOM1_I2CS_INTFLAG = 0x42000C18UL;
+  static constexpr uint32_t SERCOM1_I2CS_STATUS = 0x42000C1AUL;
+  static constexpr uint32_t SERCOM1_I2CS_SYNCBUSY = 0x42000C1CUL;
+  static constexpr uint32_t SERCOM1_I2CS_ADDR = 0x42000C24UL;
 
   static constexpr uint32_t BACKUP_MAGIC = 0x45565342UL;   // "EVSB"
   static constexpr uint32_t BACKUP_FOOTER_MAGIC = 0x45565346UL;  // "EVSF"
@@ -292,6 +313,8 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   bool halt_core_();
   bool resume_core_();
   bool system_reset_core_();
+  bool read_core_register_(uint8_t reg, uint32_t *value);
+  bool collect_runtime_diagnostic_(std::string *summary);
   bool read_flash_geometry_(uint32_t *param, uint32_t *page_size, uint32_t *page_count, uint32_t *flash_size);
   bool dump_flash_block_(uint32_t address, uint16_t length, std::string *hex_data);
   bool read_flash_bytes_(uint32_t address, uint16_t length, uint8_t *data);
@@ -459,6 +482,11 @@ class EmporiaVueFlashDumpFirmwareButton : public button::Button, public Parented
 class EmporiaVueTestWriteButton : public button::Button, public Parented<EmporiaVueComponent> {
  protected:
   void press_action() override { this->parent_->test_flash_write(); }
+};
+
+class EmporiaVueRuntimeDiagnosticButton : public button::Button, public Parented<EmporiaVueComponent> {
+ protected:
+  void press_action() override { this->parent_->diagnose_runtime(); }
 };
 
 }  // namespace emporiavue
