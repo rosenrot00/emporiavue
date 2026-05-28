@@ -192,10 +192,12 @@ static inline void set_boot_stage(uint32_t stage)
 
 bool alldataready = false;
 bool dmabool = false;
+volatile bool packet_ready = false;
 uint32_t ESPbyteIndex = 0;
 
 uint8_t temp = 0;
 uint8_t ManagedInfoReadPending = 0;
+uint8_t ESPReadBufferIndex = 0;
 uint8_t DMAresultIndex = 0;
 int16_t DMAresults[6][8]; //We copy the 8 ADC results to this buffer using DMA
 			//Layout: MainCT1_V, MainCT1_A, MainCT2_V, MainCT2_A, MainCT_3_V, MainCT_3_A, Mux1_A, Mux2_A
@@ -262,11 +264,16 @@ struct __attribute__((__packed__)) SensorReadingType
     uint16_t current[19];
 
     uint16_t end;
-} SensorReading;
+};
+
+struct SensorReadingType SensorReadings[2];
+volatile uint8_t ActiveSensorReadingIndex = 0;
+uint8_t BuildSensorReadingIndex = 1;
+uint8_t SensorSequence = 0;
 
 #define ESPpacketlength       0x11C
 #define EMPORIAVUE_HARDWARE_ID       2
-#define EMPORIAVUE_FIRMWARE_VERSION  14
+#define EMPORIAVUE_FIRMWARE_VERSION  15
 #define EMPORIAVUE_I2C_INFO_COMMAND  0xF0
 
 struct __attribute__((__packed__)) ManagedInfoType
@@ -305,7 +312,7 @@ uint16_t AmountCtCycles[3];
 uint16_t SampleCounter; //Keeps track of the amount of samples it has taken for each ESP packet.
 } calcblock[2]; //double buffered
 
-int8_t cbi = 0; //calcblock index varies between 0 and 1 for the double buffer
+volatile int8_t cbi = 0; //calcblock index varies between 0 and 1 for the double buffer
 uint16_t FreqCT = 0; //used to calculate the amount of samples between Voltage (CT1) zerocrossings.
 uint8_t CTC[3] = { 0, 0, 0 }; //used to calculate FreqCT and the voltage degrees
 
@@ -597,7 +604,7 @@ void irq_handler_sercom1(void) //We've configured sercom to use IRQ sources "Dat
 			{
 				if (ESPbyteIndex <  ESPpacketlength)
 				{
-					uint8_t* px = (uint8_t*) &SensorReading;
+					uint8_t* px = (uint8_t*) &SensorReadings[ESPReadBufferIndex];
 					px = px + ESPbyteIndex;
 					REG_SERCOM1_I2CS_DATA = *px; //write data
 				}
@@ -605,7 +612,7 @@ void irq_handler_sercom1(void) //We've configured sercom to use IRQ sources "Dat
 					REG_SERCOM1_I2CS_DATA = 0xFF;
 
 				if (ESPbyteIndex == 0)
-					temp = *(uint8_t*)(&SensorReading); 	//first byte of data packet.
+					temp = SensorReadings[ESPReadBufferIndex].is_unread; 	//first byte of data packet.
 
 				if (ESPbyteIndex <=  ESPpacketlength)
 					ESPbyteIndex++;
@@ -621,6 +628,7 @@ void irq_handler_sercom1(void) //We've configured sercom to use IRQ sources "Dat
 			else
 			{
 				ManagedInfoReadPending = 0;
+				ESPReadBufferIndex = ActiveSensorReadingIndex;
 				ESPbyteIndex = received;
 			}
 		}
@@ -629,13 +637,14 @@ void irq_handler_sercom1(void) //We've configured sercom to use IRQ sources "Dat
 	if ((REG_SERCOM1_I2CS_INTFLAG & 1) == 1) //Bit 0 – PREC: Stop Received. This flag is set when a stop condition is detected for a transaction being processed
 	{
 		REG_SERCOM1_I2CS_INTFLAG = REG_SERCOM1_I2CS_INTFLAG | 1; //Writing a one to this bit will clear the Stop Received interrupt flag.
-		if (ManagedInfoReadPending == 0 && ESPbyteIndex > ESPpacketlength)
+		if (ManagedInfoReadPending == 0 && ESPbyteIndex >= ESPpacketlength)
 		{
 			if (temp != 0)
-				*(uint8_t*)(&SensorReading) = 0; //Save 0 to first byte in the Sensordata packet
+				SensorReadings[ESPReadBufferIndex].is_unread = 0; //Save 0 to first byte in the Sensordata packet
 		}
 		ManagedInfoReadPending = 0;
 		ESPbyteIndex = 0;
+		ESPReadBufferIndex = ActiveSensorReadingIndex;
 	}
 }
 
@@ -797,6 +806,7 @@ void irq_handler_dmac(void) //We've configured it to enable Channel Transfer Com
 	{
 		cbi++;
 		cbi = cbi & 1;
+		packet_ready = true;
 	}
 
 
@@ -812,11 +822,17 @@ void irq_handler_dmac(void) //We've configured it to enable Channel Transfer Com
 
 void Check_and_sendESPpacket()
 {
+	if (packet_ready == false)
+		return;
+
 	uint8_t cbo = cbi +1;
 	cbo = cbo & 1; //we check the other (!) calcbuffer to see if we have a finished one waiting for us to process.
 
 	if (calcblock[cbo].SampleCounter >= 12987)
 	{
+		packet_ready = false;
+		struct SensorReadingType* SensorReading = &SensorReadings[BuildSensorReadingIndex];
+
 		//Calculate and save the averages
 		for (int i = 0; i < 3; i++)
 		{
@@ -842,15 +858,15 @@ void Check_and_sendESPpacket()
 		//Now put it all in the ESP packet buffer
 		for (int i = 0; i < 3; i++)
 		{
-			SensorReading.voltage[i] = sqrtf (calcblock[cbo].ADCVoltsquaresum[i] / (double)129.87);
-			SensorReading.current[i] = sqrtf (calcblock[cbo].ADCsquareCurrentsum[i] / (double)129.87);
+			SensorReading->voltage[i] = sqrtf (calcblock[cbo].ADCVoltsquaresum[i] / (double)129.87);
+			SensorReading->current[i] = sqrtf (calcblock[cbo].ADCsquareCurrentsum[i] / (double)129.87);
 			for (int x = 0; x < 3; x++)
-				SensorReading.power[i].phase[x] = calcblock[cbo].RawPVsum[i][x] / (double)1298.7;
+				SensorReading->power[i].phase[x] = calcblock[cbo].RawPVsum[i][x] / (double)1298.7;
 
 			if (calcblock[cbo].AmountCtCycles[i] == 0) //make sure we dont divide by 0.
-				SensorReading.Cyclecount[i] = 0;
+				SensorReading->Cyclecount[i] = 0;
 			else
-				SensorReading.Cyclecount[i] = calcblock[cbo].CtCycles[i] /  calcblock[cbo].AmountCtCycles[i];
+				SensorReading->Cyclecount[i] = calcblock[cbo].CtCycles[i] /  calcblock[cbo].AmountCtCycles[i];
 
 
 		}
@@ -858,9 +874,9 @@ void Check_and_sendESPpacket()
 		//Now process the 16 small CT's and put them in the ESP sensor packet. Data ordering in destination according to the MuxTable.
 		for (int i = 0; i < 16; i++)
 		{
-			SensorReading.current[MuxTable[i]] = sqrtf (calcblock[cbo].ADCsquareCurrentsum[i+3] / (double)16.23375);
+			SensorReading->current[MuxTable[i]] = sqrtf (calcblock[cbo].ADCsquareCurrentsum[i+3] / (double)16.23375);
 			for (int x = 0; x < 3; x++)
-				SensorReading.power[MuxTable[i]].phase[x] = (double) calcblock[cbo].RawPVsum[i+3][x] / (double)162.3375;
+				SensorReading->power[MuxTable[i]].phase[x] = (double) calcblock[cbo].RawPVsum[i+3][x] / (double)162.3375;
 		}
 
 		//Sensor data packet is ready, so we can now reset the old calcbuffer to 0
@@ -869,13 +885,13 @@ void Check_and_sendESPpacket()
 			*(uint8_t*)(idp+x) = 0;
 
 		//And create the header
-		SensorReading.unknown = 0x52;
-		SensorReading.sequence_num++;
+		SensorReading->unknown = 0x52;
+		SensorReading->sequence_num = ++SensorSequence;
 
 
 		//Calculate the header's checksum byte
 		uint8_t EORvalue = 0x1D;
-		uint8_t* NextSensorbyte = (uint8_t*) &SensorReading;
+		uint8_t* NextSensorbyte = (uint8_t*) SensorReading;
 		uint8_t* EORbyte = (uint8_t *) &EORTable;
 
 		NextSensorbyte = NextSensorbyte + 2; //Skip first 2 bytes
@@ -886,9 +902,15 @@ void Check_and_sendESPpacket()
 			NextSensorbyte++;
 		}
 
-		SensorReading.checksum = EORvalue;
-		SensorReading.is_unread = 3;
+		SensorReading->checksum = EORvalue;
+		SensorReading->is_unread = 3;
+		__asm__ __volatile__("dmb sy");
+		uint8_t previous_active = ActiveSensorReadingIndex;
+		ActiveSensorReadingIndex = BuildSensorReadingIndex;
+		BuildSensorReadingIndex = previous_active;
 	}
+	else
+		packet_ready = false;
 }
 
 void enableADC()
@@ -1093,8 +1115,8 @@ int main(void)
 		*(uint8_t*)(idp+x) = 0;
 	set_boot_stage(BOOT_STAGE_CALCBLOCK_CLEARED);
 
-	idp = (uint8_t*) &SensorReading;
-	for (int x = 0; x < __SIZE_OF_VAR__(SensorReading); x++)
+	idp = (uint8_t*) &SensorReadings;
+	for (int x = 0; x < __SIZE_OF_VAR__(SensorReadings); x++)
 		*(uint8_t*)(idp+x) = 0;
 	set_boot_stage(BOOT_STAGE_SENSOR_CLEARED);
 
@@ -1130,10 +1152,11 @@ int main(void)
 	COnfigSerCom1();
 	set_boot_stage(BOOT_STAGE_SERCOM1_CONFIGURED);
 
+	set_boot_stage(BOOT_STAGE_MAIN_LOOP);
 	for (;;) //main program loop
 	{
-		set_boot_stage(BOOT_STAGE_MAIN_LOOP);
 		Check_and_sendESPpacket();
+		__asm__ __volatile__("wfi");
 	}
 	return 0;
 }
