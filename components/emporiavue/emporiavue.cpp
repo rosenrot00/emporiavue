@@ -25,7 +25,12 @@ void EmporiaVueComponent::setup() {
   this->publish_firmware_action_("unknown");
   FirmwareInfo unknown_info{};
   this->publish_firmware_version_(unknown_info);
+  if (this->diagnostics_status_sensor_ != nullptr) {
+    this->diagnostics_status_sensor_->publish_state("unknown");
+  }
   this->set_timeout("initial_firmware_detection", 5000, [this]() { this->publish_initial_firmware_detection_(); });
+  this->set_timeout("initial_samd_i2c_diagnostics", 10000, [this]() { this->refresh_i2c_diagnostics_(); });
+  this->set_interval("samd_i2c_diagnostics", DIAGNOSTICS_INTERVAL_MS, [this]() { this->refresh_i2c_diagnostics_(); });
 }
 
 void EmporiaVueComponent::loop() {
@@ -142,6 +147,7 @@ void EmporiaVueComponent::dump_config() {
   LOG_TEXT_SENSOR("  ", "Firmware status", this->firmware_status_sensor_);
   LOG_TEXT_SENSOR("  ", "Firmware action", this->firmware_action_sensor_);
   LOG_TEXT_SENSOR("  ", "Firmware version", this->firmware_version_sensor_);
+  LOG_TEXT_SENSOR("  ", "Diagnostics status", this->diagnostics_status_sensor_);
   LOG_BINARY_SENSOR("  ", "Read allowed", this->read_allowed_sensor_);
   LOG_BINARY_SENSOR("  ", "Firmware update available", this->firmware_update_available_sensor_);
   LOG_BINARY_SENSOR("  ", "Firmware restore available", this->firmware_restore_available_sensor_);
@@ -2193,6 +2199,102 @@ bool EmporiaVueComponent::validate_managed_i2c_info_(const ManagedI2CInfo &manag
     return false;
   }
   return managed_info.i2c_frame_length == STOCK_I2C_FRAME_SIZE;
+}
+
+EmporiaVueComponent::ManagedI2CInfoResult EmporiaVueComponent::query_managed_i2c_diagnostic_(
+    ManagedI2CDiagnostic *diagnostic) {
+  ManagedI2CDiagnostic candidate{};
+  const uint8_t command = MANAGED_I2C_DIAGNOSTIC_COMMAND;
+  const i2c::ErrorCode error =
+      this->write_read(&command, 1, reinterpret_cast<uint8_t *>(&candidate), sizeof(candidate));
+  if (error != i2c::ERROR_OK) {
+    ESP_LOGD(TAG, "SAMD09 managed I2C diagnostic query failed: i2c error %u", static_cast<unsigned>(error));
+    return ManagedI2CInfoResult::I2C_ERROR;
+  }
+  if (!this->validate_managed_i2c_diagnostic_(candidate)) {
+    ESP_LOGD(TAG, "SAMD09 managed I2C diagnostic query returned no valid managed firmware response");
+    return ManagedI2CInfoResult::INVALID_RESPONSE;
+  }
+
+  *diagnostic = candidate;
+  ESP_LOGD(TAG,
+           "SAMD09 managed I2C diagnostic: seq=%" PRIu32 ", samples=%" PRIu32 ", built=%" PRIu32
+           ", read=%" PRIu32 ", dma_errors=%" PRIu32 ", overruns=%" PRIu32,
+           candidate.diagnostic_sequence, candidate.sample_blocks, candidate.packets_built, candidate.packets_read,
+           candidate.dma_transfer_errors, candidate.packet_overruns);
+  return ManagedI2CInfoResult::VALID_RESPONSE;
+}
+
+bool EmporiaVueComponent::validate_managed_i2c_diagnostic_(const ManagedI2CDiagnostic &diagnostic) const {
+  const uint32_t expected_crc =
+      crc32_(reinterpret_cast<const uint8_t *>(&diagnostic), offsetof(ManagedI2CDiagnostic, crc32));
+  if (expected_crc != diagnostic.crc32) {
+    return false;
+  }
+  if (diagnostic.hardware_id != 2 && diagnostic.hardware_id != 3) {
+    return false;
+  }
+  if (diagnostic.firmware_version == 0) {
+    return false;
+  }
+  return diagnostic.i2c_frame_length == STOCK_I2C_FRAME_SIZE;
+}
+
+void EmporiaVueComponent::refresh_i2c_diagnostics_() {
+  if (this->backup_active_ || this->install_active_ || this->dump_active_) {
+    return;
+  }
+  if (!this->detected_firmware_info_valid_ || this->detected_firmware_info_.kind != FirmwareKind::MANAGED) {
+    if (this->diagnostics_status_sensor_ != nullptr) {
+      this->diagnostics_status_sensor_->publish_state("unavailable: managed firmware not detected");
+    }
+    return;
+  }
+
+  ManagedI2CDiagnostic diagnostic{};
+  const ManagedI2CInfoResult result = this->query_managed_i2c_diagnostic_(&diagnostic);
+  if (result == ManagedI2CInfoResult::VALID_RESPONSE) {
+    this->publish_i2c_diagnostics_(diagnostic);
+  } else if (this->diagnostics_status_sensor_ != nullptr) {
+    this->diagnostics_status_sensor_->publish_state(
+        result == ManagedI2CInfoResult::I2C_ERROR ? "failed: i2c error" : "failed: invalid response");
+  }
+}
+
+void EmporiaVueComponent::publish_i2c_diagnostics_(const ManagedI2CDiagnostic &diagnostic) {
+  if (this->diagnostics_status_sensor_ != nullptr) {
+    this->diagnostics_status_sensor_->publish_state(str_sprintf(
+        "ok: seq=%" PRIu32 " dma_errors=%" PRIu32 " overruns=%" PRIu32 " partial_reads=%" PRIu32,
+        diagnostic.diagnostic_sequence, diagnostic.dma_transfer_errors, diagnostic.packet_overruns,
+        diagnostic.i2c_partial_reads));
+  }
+  if (this->diag_sample_blocks_sensor_ != nullptr) {
+    this->diag_sample_blocks_sensor_->publish_state(static_cast<float>(diagnostic.sample_blocks));
+  }
+  if (this->diag_packets_built_sensor_ != nullptr) {
+    this->diag_packets_built_sensor_->publish_state(static_cast<float>(diagnostic.packets_built));
+  }
+  if (this->diag_packets_read_sensor_ != nullptr) {
+    this->diag_packets_read_sensor_->publish_state(static_cast<float>(diagnostic.packets_read));
+  }
+  if (this->diag_dma_transfer_errors_sensor_ != nullptr) {
+    this->diag_dma_transfer_errors_sensor_->publish_state(static_cast<float>(diagnostic.dma_transfer_errors));
+  }
+  if (this->diag_packet_overruns_sensor_ != nullptr) {
+    this->diag_packet_overruns_sensor_->publish_state(static_cast<float>(diagnostic.packet_overruns));
+  }
+  if (this->diag_i2c_partial_reads_sensor_ != nullptr) {
+    this->diag_i2c_partial_reads_sensor_->publish_state(static_cast<float>(diagnostic.i2c_partial_reads));
+  }
+  if (this->diag_i2c_oversize_reads_sensor_ != nullptr) {
+    this->diag_i2c_oversize_reads_sensor_->publish_state(static_cast<float>(diagnostic.i2c_oversize_reads));
+  }
+  if (this->diag_last_sample_count_sensor_ != nullptr) {
+    this->diag_last_sample_count_sensor_->publish_state(static_cast<float>(diagnostic.last_sample_count));
+  }
+  if (this->diag_last_i2c_read_len_sensor_ != nullptr) {
+    this->diag_last_i2c_read_len_sensor_->publish_state(static_cast<float>(diagnostic.last_i2c_read_len));
+  }
 }
 
 i2c::ErrorCode EmporiaVueComponent::read_normal_i2c_frame_(const char *context) {

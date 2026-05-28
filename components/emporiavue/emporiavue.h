@@ -3,6 +3,7 @@
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/button/button.h"
 #include "esphome/components/i2c/i2c.h"
+#include "esphome/components/sensor/sensor.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
@@ -65,6 +66,22 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void set_firmware_restore_available_sensor(binary_sensor::BinarySensor *sensor) {
     this->firmware_restore_available_sensor_ = sensor;
   }
+  void set_diagnostics_status_sensor(text_sensor::TextSensor *sensor) { this->diagnostics_status_sensor_ = sensor; }
+  void set_diag_sample_blocks_sensor(sensor::Sensor *sensor) { this->diag_sample_blocks_sensor_ = sensor; }
+  void set_diag_packets_built_sensor(sensor::Sensor *sensor) { this->diag_packets_built_sensor_ = sensor; }
+  void set_diag_packets_read_sensor(sensor::Sensor *sensor) { this->diag_packets_read_sensor_ = sensor; }
+  void set_diag_dma_transfer_errors_sensor(sensor::Sensor *sensor) {
+    this->diag_dma_transfer_errors_sensor_ = sensor;
+  }
+  void set_diag_packet_overruns_sensor(sensor::Sensor *sensor) { this->diag_packet_overruns_sensor_ = sensor; }
+  void set_diag_i2c_partial_reads_sensor(sensor::Sensor *sensor) {
+    this->diag_i2c_partial_reads_sensor_ = sensor;
+  }
+  void set_diag_i2c_oversize_reads_sensor(sensor::Sensor *sensor) {
+    this->diag_i2c_oversize_reads_sensor_ = sensor;
+  }
+  void set_diag_last_sample_count_sensor(sensor::Sensor *sensor) { this->diag_last_sample_count_sensor_ = sensor; }
+  void set_diag_last_i2c_read_len_sensor(sensor::Sensor *sensor) { this->diag_last_i2c_read_len_sensor_ = sensor; }
 
   void read_samd();
   void probe_swd();
@@ -160,6 +177,8 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   static constexpr uint16_t MANAGED_INFO_FORMAT_VERSION = 1;
   static constexpr uint16_t STOCK_I2C_FRAME_SIZE = 284;
   static constexpr uint8_t MANAGED_I2C_INFO_COMMAND = 0xF0;
+  static constexpr uint8_t MANAGED_I2C_DIAGNOSTIC_COMMAND = 0xF1;
+  static constexpr uint32_t DIAGNOSTICS_INTERVAL_MS = 60000;
 
   struct BackupHeader {
     uint32_t magic;
@@ -198,6 +217,23 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
     uint16_t hardware_id;
     uint32_t firmware_version;
     uint16_t i2c_frame_length;
+    uint32_t crc32;
+  } __attribute__((packed));
+
+  struct ManagedI2CDiagnostic {
+    uint16_t hardware_id;
+    uint32_t firmware_version;
+    uint16_t i2c_frame_length;
+    uint32_t diagnostic_sequence;
+    uint32_t sample_blocks;
+    uint32_t packets_built;
+    uint32_t packets_read;
+    uint32_t dma_transfer_errors;
+    uint32_t packet_overruns;
+    uint32_t i2c_partial_reads;
+    uint32_t i2c_oversize_reads;
+    uint16_t last_sample_count;
+    uint16_t last_i2c_read_len;
     uint32_t crc32;
   } __attribute__((packed));
 
@@ -337,6 +373,10 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   ManagedI2CInfoResult query_managed_i2c_info_(ManagedI2CInfo *managed_info);
   bool read_managed_i2c_info_(ManagedI2CInfo *managed_info);
   bool validate_managed_i2c_info_(const ManagedI2CInfo &managed_info) const;
+  ManagedI2CInfoResult query_managed_i2c_diagnostic_(ManagedI2CDiagnostic *diagnostic);
+  bool validate_managed_i2c_diagnostic_(const ManagedI2CDiagnostic &diagnostic) const;
+  void refresh_i2c_diagnostics_();
+  void publish_i2c_diagnostics_(const ManagedI2CDiagnostic &diagnostic);
   i2c::ErrorCode read_normal_i2c_frame_(const char *context);
   void probe_runtime_i2c_after_firmware_update_();
   void publish_initial_firmware_detection_();
@@ -382,9 +422,19 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   text_sensor::TextSensor *firmware_status_sensor_{nullptr};
   text_sensor::TextSensor *firmware_action_sensor_{nullptr};
   text_sensor::TextSensor *firmware_version_sensor_{nullptr};
+  text_sensor::TextSensor *diagnostics_status_sensor_{nullptr};
   binary_sensor::BinarySensor *read_allowed_sensor_{nullptr};
   binary_sensor::BinarySensor *firmware_update_available_sensor_{nullptr};
   binary_sensor::BinarySensor *firmware_restore_available_sensor_{nullptr};
+  sensor::Sensor *diag_sample_blocks_sensor_{nullptr};
+  sensor::Sensor *diag_packets_built_sensor_{nullptr};
+  sensor::Sensor *diag_packets_read_sensor_{nullptr};
+  sensor::Sensor *diag_dma_transfer_errors_sensor_{nullptr};
+  sensor::Sensor *diag_packet_overruns_sensor_{nullptr};
+  sensor::Sensor *diag_i2c_partial_reads_sensor_{nullptr};
+  sensor::Sensor *diag_i2c_oversize_reads_sensor_{nullptr};
+  sensor::Sensor *diag_last_sample_count_sensor_{nullptr};
+  sensor::Sensor *diag_last_i2c_read_len_sensor_{nullptr};
 
   uint16_t hardware_id_{0};
   bool reset_before_read_{false};

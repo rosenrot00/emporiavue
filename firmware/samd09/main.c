@@ -196,7 +196,7 @@ volatile bool packet_ready = false;
 uint32_t ESPbyteIndex = 0;
 
 uint8_t temp = 0;
-uint8_t ManagedInfoReadPending = 0;
+uint8_t ManagedReadCommand = 0;
 uint8_t ESPReadBufferIndex = 0;
 uint8_t DMAresultIndex = 0;
 int16_t DMAresults[6][8]; //We copy the 8 ADC results to this buffer using DMA
@@ -210,6 +210,18 @@ uint8_t MuxCounter = 0; //Varies between 0 and 7 to switch between the 8 muxes, 
 uint32_t outputpinTable [8] = { 0x1000000, 0x1010000, 0x1020000, 0x1030000, 0, 0x10000, 0x20000, 0x30000 }; //all possible combinations of pin 16, 17 and 24.
 int16_t averages[22]; //Here we save the averages: 3x voltages, 3x  Main CT current, 16x small CT current
 uint8_t MuxTable[16] = { 12, 4, 13, 5, 14, 6, 11, 3, 15, 7, 18, 10, 16, 8, 17, 9 }; //used for the order of saving Current data to the final output packet
+
+volatile uint32_t DiagSequence = 0;
+volatile uint32_t DiagSampleBlocks = 0;
+volatile uint32_t DiagPacketsBuilt = 0;
+volatile uint32_t DiagPacketsRead = 0;
+volatile uint32_t DiagDmaTransferErrors = 0;
+volatile uint32_t DiagPacketOverruns = 0;
+volatile uint32_t DiagI2cPartialReads = 0;
+volatile uint32_t DiagI2cOversizeReads = 0;
+volatile uint16_t DiagLastSampleCount = 0;
+volatile uint16_t DiagLastI2cReadLen = 0;
+
 uint32_t EORTable[64] = { 0x90E0700, 0x15121B1C, 0x31363F38, 0x2D2A2324, 0x797E7770, 0x65626B6C, 0x41464F48, 0x5D5A5354,
 			   0xE9EEE7E0, 0xF5F2FBFC, 0xD1D6DFD8, 0xCDCAC3C4, 0x999E9790, 0x85828B8C, 0xA1A6AFA8, 0xBDBAB3B4,
 			   0xCEC9C0C7, 0xD2D5DCDB, 0xF6F1F8FF, 0xEAEDE4E3, 0xBEB9B0B7, 0xA2A5ACAB, 0x8681888F, 0x9A9D9493,
@@ -273,8 +285,13 @@ uint8_t SensorSequence = 0;
 
 #define ESPpacketlength       0x11C
 #define EMPORIAVUE_HARDWARE_ID       2
-#define EMPORIAVUE_FIRMWARE_VERSION  18
+#define EMPORIAVUE_FIRMWARE_VERSION  19
 #define EMPORIAVUE_I2C_INFO_COMMAND  0xF0
+#define EMPORIAVUE_I2C_DIAGNOSTIC_COMMAND 0xF1
+
+#define MANAGED_READ_COMMAND_NONE       0
+#define MANAGED_READ_COMMAND_INFO       1
+#define MANAGED_READ_COMMAND_DIAGNOSTIC 2
 
 #define MAIN_SAMPLE_COUNT              12987
 #define MUX_SAMPLE_COUNT               1623
@@ -296,6 +313,24 @@ struct __attribute__((__packed__)) ManagedInfoType
 	uint16_t i2c_frame_length;
 	uint32_t crc32;
 } ManagedInfo;
+
+struct __attribute__((__packed__)) ManagedDiagnosticType
+{
+	uint16_t hardware_id;
+	uint32_t firmware_version;
+	uint16_t i2c_frame_length;
+	uint32_t diagnostic_sequence;
+	uint32_t sample_blocks;
+	uint32_t packets_built;
+	uint32_t packets_read;
+	uint32_t dma_transfer_errors;
+	uint32_t packet_overruns;
+	uint32_t i2c_partial_reads;
+	uint32_t i2c_oversize_reads;
+	uint16_t last_sample_count;
+	uint16_t last_i2c_read_len;
+	uint32_t crc32;
+} ManagedDiagnostic;
 
 struct DMAdescriptorType {
   uint16_t BTCTRL;
@@ -363,6 +398,7 @@ void irq_handler_dmac(void);
 void irq_handler_sercom1(void);
 uint32_t crc32(const uint8_t *data, unsigned int length);
 void configure_managed_i2c_info(void);
+void configure_managed_i2c_diagnostic(void);
 DUMMY void irq_handler_nmi(void);
 void irq_handler_hard_fault(void);
 DUMMY void irq_handler_sv_call(void);
@@ -615,13 +651,31 @@ void configure_managed_i2c_info(void)
 	ManagedInfo.crc32 = crc32((uint8_t*) &ManagedInfo, __SIZE_OF_VAR__(ManagedInfo) - __SIZE_OF_VAR__(ManagedInfo.crc32));
 }
 
+void configure_managed_i2c_diagnostic(void)
+{
+	ManagedDiagnostic.hardware_id = EMPORIAVUE_HARDWARE_ID;
+	ManagedDiagnostic.firmware_version = EMPORIAVUE_FIRMWARE_VERSION;
+	ManagedDiagnostic.i2c_frame_length = ESPpacketlength;
+	ManagedDiagnostic.diagnostic_sequence = ++DiagSequence;
+	ManagedDiagnostic.sample_blocks = DiagSampleBlocks;
+	ManagedDiagnostic.packets_built = DiagPacketsBuilt;
+	ManagedDiagnostic.packets_read = DiagPacketsRead;
+	ManagedDiagnostic.dma_transfer_errors = DiagDmaTransferErrors;
+	ManagedDiagnostic.packet_overruns = DiagPacketOverruns;
+	ManagedDiagnostic.i2c_partial_reads = DiagI2cPartialReads;
+	ManagedDiagnostic.i2c_oversize_reads = DiagI2cOversizeReads;
+	ManagedDiagnostic.last_sample_count = DiagLastSampleCount;
+	ManagedDiagnostic.last_i2c_read_len = DiagLastI2cReadLen;
+	ManagedDiagnostic.crc32 = crc32((uint8_t*) &ManagedDiagnostic, __SIZE_OF_VAR__(ManagedDiagnostic) - __SIZE_OF_VAR__(ManagedDiagnostic.crc32));
+}
+
 void irq_handler_sercom1(void) //We've configured sercom to use IRQ sources "Data Ready" and "Stop received"
 {
 	if ((REG_SERCOM1_I2CS_INTFLAG & 4) == 4) //Bit 2 – DRDY: Data Ready
 	{
 		if ((REG_SERCOM1_I2CS_STATUS & 8) == 8) //DIR == 1 = Master read operation is in progress.
 		{
-			if (ManagedInfoReadPending != 0)
+			if (ManagedReadCommand == MANAGED_READ_COMMAND_INFO)
 			{
 				if (ESPbyteIndex < __SIZE_OF_VAR__(ManagedInfo))
 				{
@@ -633,6 +687,20 @@ void irq_handler_sercom1(void) //We've configured sercom to use IRQ sources "Dat
 					REG_SERCOM1_I2CS_DATA = 0xFF;
 
 				if (ESPbyteIndex <= __SIZE_OF_VAR__(ManagedInfo))
+					ESPbyteIndex++;
+			}
+			else if (ManagedReadCommand == MANAGED_READ_COMMAND_DIAGNOSTIC)
+			{
+				if (ESPbyteIndex < __SIZE_OF_VAR__(ManagedDiagnostic))
+				{
+					uint8_t* px = (uint8_t*) &ManagedDiagnostic;
+					px = px + ESPbyteIndex;
+					REG_SERCOM1_I2CS_DATA = *px;
+				}
+				else
+					REG_SERCOM1_I2CS_DATA = 0xFF;
+
+				if (ESPbyteIndex <= __SIZE_OF_VAR__(ManagedDiagnostic))
 					ESPbyteIndex++;
 			}
 			else
@@ -657,12 +725,18 @@ void irq_handler_sercom1(void) //We've configured sercom to use IRQ sources "Dat
 			uint8_t received = REG_SERCOM1_I2CS_DATA; //read data
 			if (received == EMPORIAVUE_I2C_INFO_COMMAND)
 			{
-				ManagedInfoReadPending = 1;
+				ManagedReadCommand = MANAGED_READ_COMMAND_INFO;
+				ESPbyteIndex = 0;
+			}
+			else if (received == EMPORIAVUE_I2C_DIAGNOSTIC_COMMAND)
+			{
+				configure_managed_i2c_diagnostic();
+				ManagedReadCommand = MANAGED_READ_COMMAND_DIAGNOSTIC;
 				ESPbyteIndex = 0;
 			}
 			else
 			{
-				ManagedInfoReadPending = 0;
+				ManagedReadCommand = MANAGED_READ_COMMAND_NONE;
 				ESPReadBufferIndex = ActiveSensorReadingIndex;
 				ESPbyteIndex = received;
 			}
@@ -672,12 +746,21 @@ void irq_handler_sercom1(void) //We've configured sercom to use IRQ sources "Dat
 	if ((REG_SERCOM1_I2CS_INTFLAG & 1) == 1) //Bit 0 – PREC: Stop Received. This flag is set when a stop condition is detected for a transaction being processed
 	{
 		REG_SERCOM1_I2CS_INTFLAG = REG_SERCOM1_I2CS_INTFLAG | 1; //Writing a one to this bit will clear the Stop Received interrupt flag.
-		if (ManagedInfoReadPending == 0 && ESPbyteIndex >= ESPpacketlength)
+		if (ManagedReadCommand == MANAGED_READ_COMMAND_NONE)
 		{
-			if (temp != 0)
-				SensorReadings[ESPReadBufferIndex].is_unread = 0; //Save 0 to first byte in the Sensordata packet
+			DiagLastI2cReadLen = ESPbyteIndex;
+			if (ESPbyteIndex >= ESPpacketlength)
+			{
+				DiagPacketsRead++;
+				if (ESPbyteIndex > ESPpacketlength)
+					DiagI2cOversizeReads++;
+				if (temp != 0)
+					SensorReadings[ESPReadBufferIndex].is_unread = 0; //Save 0 to first byte in the Sensordata packet
+			}
+			else if (ESPbyteIndex > 0)
+				DiagI2cPartialReads++;
 		}
-		ManagedInfoReadPending = 0;
+		ManagedReadCommand = MANAGED_READ_COMMAND_NONE;
 		ESPbyteIndex = 0;
 		ESPReadBufferIndex = ActiveSensorReadingIndex;
 	}
@@ -718,6 +801,7 @@ void irq_handler_dmac(void) //We've configured it to enable Channel Transfer Com
 	{
 		REG_DMAC_CHINTFLAG = 1; //This flag is cleared by writing a one to it
 		dmabool = false;
+		DiagDmaTransferErrors++;
 	}
 
 	__asm__ __volatile__("dmb sy" ::: "memory");
@@ -841,9 +925,13 @@ void irq_handler_dmac(void) //We've configured it to enable Channel Transfer Com
 	}
 
 	//If we have our 0.5 second of data, switch to the other calcbuffer and continue there.
+	DiagSampleBlocks++;
 	calcblock[cbi].SampleCounter++;
 	if (calcblock[cbi].SampleCounter >= MAIN_SAMPLE_COUNT)
 	{
+		DiagLastSampleCount = calcblock[cbi].SampleCounter;
+		if (packet_ready != false)
+			DiagPacketOverruns++;
 		cbi++;
 		cbi = cbi & 1;
 		packet_ready = true;
@@ -948,6 +1036,7 @@ void Check_and_sendESPpacket()
 		uint8_t previous_active = ActiveSensorReadingIndex;
 		ActiveSensorReadingIndex = BuildSensorReadingIndex;
 		BuildSensorReadingIndex = previous_active;
+		DiagPacketsBuilt++;
 	}
 	else
 		packet_ready = false;
