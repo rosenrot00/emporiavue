@@ -22,6 +22,9 @@ void EmporiaVueComponent::setup() {
   this->publish_firmware_update_available_(false);
   this->publish_firmware_restore_available_(false);
   this->publish_firmware_action_("unknown");
+  FirmwareInfo unknown_info{};
+  this->publish_firmware_version_(unknown_info);
+  this->set_timeout("initial_firmware_detection", 5000, [this]() { this->publish_initial_firmware_detection_(); });
 }
 
 void EmporiaVueComponent::loop() {
@@ -1651,18 +1654,19 @@ bool EmporiaVueComponent::write_backup_hash_and_footer_(const uint8_t hash[32], 
          ESP_OK;
 }
 
-bool EmporiaVueComponent::read_managed_i2c_info_(ManagedI2CInfo *managed_info) {
+EmporiaVueComponent::ManagedI2CInfoResult EmporiaVueComponent::query_managed_i2c_info_(
+    ManagedI2CInfo *managed_info) {
   ManagedI2CInfo candidate{};
   const uint8_t command = MANAGED_I2C_INFO_COMMAND;
   const i2c::ErrorCode error =
       this->write_read(&command, 1, reinterpret_cast<uint8_t *>(&candidate), sizeof(candidate));
   if (error != i2c::ERROR_OK) {
     ESP_LOGD(TAG, "SAMD09 managed I2C info query failed: i2c error %u", static_cast<unsigned>(error));
-    return false;
+    return ManagedI2CInfoResult::I2C_ERROR;
   }
   if (!this->validate_managed_i2c_info_(candidate)) {
     ESP_LOGD(TAG, "SAMD09 managed I2C info query returned no valid managed firmware response");
-    return false;
+    return ManagedI2CInfoResult::INVALID_RESPONSE;
   }
 
   *managed_info = candidate;
@@ -1670,7 +1674,11 @@ bool EmporiaVueComponent::read_managed_i2c_info_(ManagedI2CInfo *managed_info) {
            static_cast<unsigned>(candidate.hardware_id), candidate.firmware_version,
            format_firmware_version_(candidate.firmware_version).c_str(),
            static_cast<unsigned>(candidate.i2c_frame_length));
-  return true;
+  return ManagedI2CInfoResult::VALID_RESPONSE;
+}
+
+bool EmporiaVueComponent::read_managed_i2c_info_(ManagedI2CInfo *managed_info) {
+  return this->query_managed_i2c_info_(managed_info) == ManagedI2CInfoResult::VALID_RESPONSE;
 }
 
 bool EmporiaVueComponent::validate_managed_i2c_info_(const ManagedI2CInfo &managed_info) const {
@@ -1686,6 +1694,37 @@ bool EmporiaVueComponent::validate_managed_i2c_info_(const ManagedI2CInfo &manag
     return false;
   }
   return managed_info.i2c_frame_length == STOCK_I2C_FRAME_SIZE;
+}
+
+void EmporiaVueComponent::publish_initial_firmware_detection_() {
+  if (this->backup_active_ || this->install_active_ || this->dump_active_) {
+    return;
+  }
+
+  ManagedI2CInfo managed_i2c_info{};
+  FirmwareInfo info{};
+  const ManagedI2CInfoResult result = this->query_managed_i2c_info_(&managed_i2c_info);
+  if (result == ManagedI2CInfoResult::VALID_RESPONSE) {
+    info.kind = FirmwareKind::MANAGED;
+    info.hardware_id = managed_i2c_info.hardware_id;
+    info.version = managed_i2c_info.firmware_version;
+    info.i2c_frame_length = managed_i2c_info.i2c_frame_length;
+    info.detected_by_i2c = true;
+    this->publish_firmware_version_(info);
+    this->publish_firmware_status_("managed firmware detected by I2C");
+    return;
+  }
+
+  if (result == ManagedI2CInfoResult::INVALID_RESPONSE) {
+    info.kind = FirmwareKind::STOCK;
+    info.i2c_frame_length = STOCK_I2C_FRAME_SIZE;
+    this->publish_firmware_version_(info);
+    this->publish_firmware_status_("stock/legacy firmware detected by I2C");
+    return;
+  }
+
+  this->publish_firmware_version_(info);
+  this->publish_firmware_status_("firmware detection unavailable: I2C query failed");
 }
 
 bool EmporiaVueComponent::detect_managed_firmware_(uint32_t flash_size, bool *managed) {

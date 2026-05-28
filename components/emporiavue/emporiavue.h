@@ -211,6 +211,12 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
     MANAGED,
   };
 
+  enum class ManagedI2CInfoResult : uint8_t {
+    I2C_ERROR = 0,
+    INVALID_RESPONSE,
+    VALID_RESPONSE,
+  };
+
   struct FirmwareInfo {
     FirmwareKind kind{FirmwareKind::UNKNOWN};
     uint16_t hardware_id{0};
@@ -293,8 +299,10 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
                             uint32_t nvm_param, uint32_t dsu_did);
   bool write_backup_state_(uint8_t state);
   bool write_backup_hash_and_footer_(const uint8_t hash[32], uint32_t flash_size);
+  ManagedI2CInfoResult query_managed_i2c_info_(ManagedI2CInfo *managed_info);
   bool read_managed_i2c_info_(ManagedI2CInfo *managed_info);
   bool validate_managed_i2c_info_(const ManagedI2CInfo &managed_info) const;
+  void publish_initial_firmware_detection_();
   bool detect_managed_firmware_(uint32_t flash_size, bool *managed);
   bool read_managed_firmware_info_(uint32_t flash_size, ManagedFirmwareInfo *managed_info, bool *found);
   bool read_current_firmware_info_(FirmwareInfo *info);
