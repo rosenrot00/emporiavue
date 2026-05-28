@@ -67,6 +67,9 @@ CONF_DIAG_DMA_TRANSFER_ERRORS = "diag_dma_transfer_errors"
 CONF_DIAG_PACKET_OVERRUNS = "diag_packet_overruns"
 CONF_DIAG_I2C_PARTIAL_READS = "diag_i2c_partial_reads"
 CONF_DIAG_I2C_OVERSIZE_READS = "diag_i2c_oversize_reads"
+CONF_DIAG_POWER_TIMING_LATEST_MINUS2_MAX = "diag_power_timing_latest_minus2_max"
+CONF_DIAG_POWER_TIMING_LATEST_MINUS4_MAX = "diag_power_timing_latest_minus4_max"
+CONF_DIAG_POWER_TIMING_MINUS2_MINUS4_MAX = "diag_power_timing_minus2_minus4_max"
 CONF_DIAG_LAST_SAMPLE_COUNT = "diag_last_sample_count"
 CONF_DIAG_LAST_I2C_READ_LEN = "diag_last_i2c_read_len"
 CONF_FIRMWARE_STATUS = "firmware_status"
@@ -267,6 +270,30 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
         cv.Optional(
+            CONF_DIAG_POWER_TIMING_LATEST_MINUS2_MAX,
+            default={CONF_NAME: "SAMD Power Timing Latest-Minus2 Max"},
+        ): sensor.sensor_schema(
+            icon="mdi:chart-timeline-variant",
+            accuracy_decimals=0,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(
+            CONF_DIAG_POWER_TIMING_LATEST_MINUS4_MAX,
+            default={CONF_NAME: "SAMD Power Timing Latest-Minus4 Max"},
+        ): sensor.sensor_schema(
+            icon="mdi:chart-timeline-variant",
+            accuracy_decimals=0,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(
+            CONF_DIAG_POWER_TIMING_MINUS2_MINUS4_MAX,
+            default={CONF_NAME: "SAMD Power Timing Minus2-Minus4 Max"},
+        ): sensor.sensor_schema(
+            icon="mdi:chart-timeline-variant",
+            accuracy_decimals=0,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(
             CONF_DIAG_LAST_SAMPLE_COUNT,
             default={CONF_NAME: "SAMD Last Sample Count"},
         ): sensor.sensor_schema(
@@ -449,6 +476,21 @@ async def to_code(config):
     if diag_i2c_oversize_reads_config := config.get(CONF_DIAG_I2C_OVERSIZE_READS):
         sens = await sensor.new_sensor(diag_i2c_oversize_reads_config)
         cg.add(var.set_diag_i2c_oversize_reads_sensor(sens))
+    if diag_power_timing_latest_minus2_max_config := config.get(
+        CONF_DIAG_POWER_TIMING_LATEST_MINUS2_MAX
+    ):
+        sens = await sensor.new_sensor(diag_power_timing_latest_minus2_max_config)
+        cg.add(var.set_diag_power_timing_latest_minus2_max_sensor(sens))
+    if diag_power_timing_latest_minus4_max_config := config.get(
+        CONF_DIAG_POWER_TIMING_LATEST_MINUS4_MAX
+    ):
+        sens = await sensor.new_sensor(diag_power_timing_latest_minus4_max_config)
+        cg.add(var.set_diag_power_timing_latest_minus4_max_sensor(sens))
+    if diag_power_timing_minus2_minus4_max_config := config.get(
+        CONF_DIAG_POWER_TIMING_MINUS2_MINUS4_MAX
+    ):
+        sens = await sensor.new_sensor(diag_power_timing_minus2_minus4_max_config)
+        cg.add(var.set_diag_power_timing_minus2_minus4_max_sensor(sens))
     if diag_last_sample_count_config := config.get(CONF_DIAG_LAST_SAMPLE_COUNT):
         sens = await sensor.new_sensor(diag_last_sample_count_config)
         cg.add(var.set_diag_last_sample_count_sensor(sens))

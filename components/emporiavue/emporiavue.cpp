@@ -2219,9 +2219,12 @@ EmporiaVueComponent::ManagedI2CInfoResult EmporiaVueComponent::query_managed_i2c
   *diagnostic = candidate;
   ESP_LOGD(TAG,
            "SAMD09 managed I2C diagnostic: seq=%" PRIu32 ", samples=%" PRIu32 ", built=%" PRIu32
-           ", read=%" PRIu32 ", dma_errors=%" PRIu32 ", overruns=%" PRIu32,
+           ", read=%" PRIu32 ", dma_errors=%" PRIu32 ", overruns=%" PRIu32
+           ", timing_latest_minus2=%" PRIu32 ", timing_latest_minus4=%" PRIu32
+           ", timing_minus2_minus4=%" PRIu32,
            candidate.diagnostic_sequence, candidate.sample_blocks, candidate.packets_built, candidate.packets_read,
-           candidate.dma_transfer_errors, candidate.packet_overruns);
+           candidate.dma_transfer_errors, candidate.packet_overruns, candidate.power_timing_latest_minus2_max,
+           candidate.power_timing_latest_minus4_max, candidate.power_timing_minus2_minus4_max);
   return ManagedI2CInfoResult::VALID_RESPONSE;
 }
 
@@ -2288,6 +2291,18 @@ void EmporiaVueComponent::publish_i2c_diagnostics_(const ManagedI2CDiagnostic &d
   }
   if (this->diag_i2c_oversize_reads_sensor_ != nullptr) {
     this->diag_i2c_oversize_reads_sensor_->publish_state(static_cast<float>(diagnostic.i2c_oversize_reads));
+  }
+  if (this->diag_power_timing_latest_minus2_max_sensor_ != nullptr) {
+    this->diag_power_timing_latest_minus2_max_sensor_->publish_state(
+        static_cast<float>(diagnostic.power_timing_latest_minus2_max));
+  }
+  if (this->diag_power_timing_latest_minus4_max_sensor_ != nullptr) {
+    this->diag_power_timing_latest_minus4_max_sensor_->publish_state(
+        static_cast<float>(diagnostic.power_timing_latest_minus4_max));
+  }
+  if (this->diag_power_timing_minus2_minus4_max_sensor_ != nullptr) {
+    this->diag_power_timing_minus2_minus4_max_sensor_->publish_state(
+        static_cast<float>(diagnostic.power_timing_minus2_minus4_max));
   }
   if (this->diag_last_sample_count_sensor_ != nullptr) {
     this->diag_last_sample_count_sensor_->publish_state(static_cast<float>(diagnostic.last_sample_count));

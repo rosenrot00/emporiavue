@@ -223,6 +223,9 @@ volatile uint32_t DiagDmaTransferErrors = 0;
 volatile uint32_t DiagPacketOverruns = 0;
 volatile uint32_t DiagI2cPartialReads = 0;
 volatile uint32_t DiagI2cOversizeReads = 0;
+volatile uint32_t DiagPowerTimingLatestMinus2Max = 0;
+volatile uint32_t DiagPowerTimingLatestMinus4Max = 0;
+volatile uint32_t DiagPowerTimingMinus2Minus4Max = 0;
 volatile uint16_t DiagLastSampleCount = 0;
 volatile uint16_t DiagLastI2cReadLen = 0;
 
@@ -265,7 +268,7 @@ uint8_t SensorSequence = 0;
 
 #define ESPpacketlength       0x11C
 #define EMPORIAVUE_HARDWARE_ID       2
-#define EMPORIAVUE_FIRMWARE_VERSION  23
+#define EMPORIAVUE_FIRMWARE_VERSION  24
 #define EMPORIAVUE_I2C_INFO_COMMAND  0xF0
 #define EMPORIAVUE_I2C_DIAGNOSTIC_COMMAND 0xF1
 
@@ -285,6 +288,7 @@ uint8_t SensorSequence = 0;
 #define ADC_OFFSET_STARTUP_WINDOWS     4
 #define ADC_OFFSET_SMOOTHING_SHIFT     4
 #define ADC_OFFSET_MAX_STEP            96
+#define POWER_TIMING_DIAG_CURRENT_THRESHOLD 8
 
 #define TC1_ADC_TRIGGER_PERIOD         0x4C
 #define ADC_SAMPLE_TIME_LENGTH         1
@@ -313,6 +317,9 @@ struct __attribute__((__packed__)) ManagedDiagnosticType
 	uint32_t packet_overruns;
 	uint32_t i2c_partial_reads;
 	uint32_t i2c_oversize_reads;
+	uint32_t power_timing_latest_minus2_max;
+	uint32_t power_timing_latest_minus4_max;
+	uint32_t power_timing_minus2_minus4_max;
 	uint16_t last_sample_count;
 	uint16_t last_i2c_read_len;
 	uint32_t crc32;
@@ -468,6 +475,27 @@ static inline int32_t clamp_i32(int32_t value, int32_t min, int32_t max)
 	if (value > max)
 		return max;
 	return value;
+}
+
+static inline uint32_t abs_i32_to_u32(int32_t value)
+{
+	if (value < 0)
+		return (uint32_t) (-(value + 1)) + 1;
+	return (uint32_t) value;
+}
+
+static inline void update_max_u32(volatile uint32_t *target, uint32_t value)
+{
+	if (value > *target)
+		*target = value;
+}
+
+static inline void update_power_timing_diagnostic(int32_t current_difference, int32_t latest_minus2,
+						  int32_t latest_minus4, int32_t minus2_minus4)
+{
+	update_max_u32(&DiagPowerTimingLatestMinus2Max, abs_i32_to_u32(current_difference * latest_minus2));
+	update_max_u32(&DiagPowerTimingLatestMinus4Max, abs_i32_to_u32(current_difference * latest_minus4));
+	update_max_u32(&DiagPowerTimingMinus2Minus4Max, abs_i32_to_u32(current_difference * minus2_minus4));
 }
 
 static inline int16_t sanitize_adc_offset_target(int32_t average)
@@ -698,6 +726,12 @@ void configure_managed_i2c_diagnostic(void)
 	ManagedDiagnostic.packet_overruns = DiagPacketOverruns;
 	ManagedDiagnostic.i2c_partial_reads = DiagI2cPartialReads;
 	ManagedDiagnostic.i2c_oversize_reads = DiagI2cOversizeReads;
+	ManagedDiagnostic.power_timing_latest_minus2_max = DiagPowerTimingLatestMinus2Max;
+	ManagedDiagnostic.power_timing_latest_minus4_max = DiagPowerTimingLatestMinus4Max;
+	ManagedDiagnostic.power_timing_minus2_minus4_max = DiagPowerTimingMinus2Minus4Max;
+	DiagPowerTimingLatestMinus2Max = 0;
+	DiagPowerTimingLatestMinus4Max = 0;
+	DiagPowerTimingMinus2Minus4Max = 0;
 	ManagedDiagnostic.last_sample_count = DiagLastSampleCount;
 	ManagedDiagnostic.last_i2c_read_len = DiagLastI2cReadLen;
 	ManagedDiagnostic.crc32 = crc32((uint8_t*) &ManagedDiagnostic, __SIZE_OF_VAR__(ManagedDiagnostic) - __SIZE_OF_VAR__(ManagedDiagnostic.crc32));
@@ -861,6 +895,11 @@ void irq_handler_dmac(void) //We've configured it to enable Channel Transfer Com
 	int a = 0;
 	int dif1;
 	int voltage_differences[3];
+	int voltage_differences_min2[3];
+	int voltage_differences_min4[3];
+	int voltage_latest_minus2[3];
+	int voltage_latest_minus4[3];
+	int voltage_min2_minus4[3];
 	FreqCT++;
 
 	//Now process the ADC results!
@@ -876,7 +915,14 @@ void irq_handler_dmac(void) //We've configured it to enable Channel Transfer Com
 	//For RawPV: Use amp result from point 2 above, multiply with (latest (!) ADC voltage - Average voltage (from last 0.5 second, so the value from 22 values table)).
 
 	for (int ct = 0; ct < 3; ct++)
+	{
 		voltage_differences[ct] = DMAresults[lastindex][ct * 2] - averages[ct];
+		voltage_differences_min2[ct] = DMAresults[lastindexMin2][ct * 2] - averages[ct];
+		voltage_differences_min4[ct] = DMAresults[lastindexMin4][ct * 2] - averages[ct];
+		voltage_latest_minus2[ct] = voltage_differences[ct] - voltage_differences_min2[ct];
+		voltage_latest_minus4[ct] = voltage_differences[ct] - voltage_differences_min4[ct];
+		voltage_min2_minus4[ct] = voltage_differences_min2[ct] - voltage_differences_min4[ct];
+	}
 
 	//Process the 3 mains first
 	for (int ct = 0; ct < 3; ct++)
@@ -932,9 +978,13 @@ void irq_handler_dmac(void) //We've configured it to enable Channel Transfer Com
 
 
 		//Process the RawPV's for the 3 mains
+		bool timing_diagnostic_active = abs_i32_to_u32(dif1) >= POWER_TIMING_DIAG_CURRENT_THRESHOLD;
 		for (int i = 0; i < 3; i++)
 		{
 			//int64_t RawPVsum[19][3];
+			if (timing_diagnostic_active)
+				update_power_timing_diagnostic(dif1, voltage_latest_minus2[i], voltage_latest_minus4[i],
+							       voltage_min2_minus4[i]);
 			calcblock[cbi].RawPVsum[ct][i] -= dif1 * voltage_differences[i];  //current * volts (at DMAresults 0,2,4)
 		}
 
@@ -951,8 +1001,12 @@ void irq_handler_dmac(void) //We've configured it to enable Channel Transfer Com
 		calcblock[cbi].ADCsquareCurrentsum[3 + (Muxnr*2) + i] += dif1 * dif1;
 
 		//Process the RawPV's for the 2 muxed small CT's
+		bool timing_diagnostic_active = abs_i32_to_u32(dif1) >= POWER_TIMING_DIAG_CURRENT_THRESHOLD;
 		for (int x = 0; x < 3; x++)
 		{
+			if (timing_diagnostic_active)
+				update_power_timing_diagnostic(dif1, voltage_latest_minus2[x], voltage_latest_minus4[x],
+							       voltage_min2_minus4[x]);
 			calcblock[cbi].RawPVsum[3 + (Muxnr*2) + i][x] -= dif1 * voltage_differences[x];  //current * volts
 
 		}
