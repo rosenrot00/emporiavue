@@ -896,7 +896,7 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
   } else if (restore_requested) {
     action = backup_valid ? FirmwareAction::RESTORE_STOCK : FirmwareAction::UNKNOWN;
     action_reason = backup_valid ? "stock backup is available" : "valid stock backup required";
-  } else if (this->require_backup_before_install_ && !backup_valid) {
+  } else if (current.kind == FirmwareKind::STOCK && this->require_backup_before_install_ && !backup_valid) {
     action = FirmwareAction::BACKUP_STOCK;
     action_reason = "stock backup required before update";
   } else {
@@ -1012,7 +1012,8 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
     return;
   }
 
-  if (selected_action == FirmwareAction::UPDATE_MANAGED && this->require_backup_before_install_ && !backup_valid) {
+  if (selected_action == FirmwareAction::UPDATE_MANAGED && current.kind == FirmwareKind::STOCK &&
+      this->require_backup_before_install_ && !backup_valid) {
     release_after_check();
     this->publish_firmware_status_("update blocked: valid stock backup required (" + backup_error + ")");
     ESP_LOGW(TAG, "SAMD09 firmware update blocked: valid backup required (%s)", backup_error.c_str());
