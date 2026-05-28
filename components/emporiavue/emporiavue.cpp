@@ -1099,9 +1099,23 @@ bool EmporiaVueComponent::connect_under_reset_active_() const {
   return this->connect_under_reset_ && this->reset_pin_ != nullptr;
 }
 
+void EmporiaVueComponent::cold_plug_swd_() {
+  // SAMD09 cold-plugging is detected when RESET is released while SWCLK is low.
+  this->swclk_pin_->pin_mode(gpio::FLAG_OUTPUT);
+  this->swclk_pin_->digital_write(false);
+  if (!this->target_reset_asserted_) {
+    this->assert_reset_();
+  }
+  ESP_LOGI(TAG, "Releasing SAMD09 reset with SWCLK low for cold-plug");
+  this->deassert_reset_for_swd_attach_();
+  delay(this->reset_release_time_ms_);
+}
+
 void EmporiaVueComponent::begin_swd_session_() {
   if (this->connect_under_reset_active_()) {
-    ESP_LOGI(TAG, "Asserting SAMD09 reset for connect-under-reset");
+    ESP_LOGI(TAG, "Holding SAMD09 SWCLK low and asserting reset for connect-under-reset");
+    this->swclk_pin_->pin_mode(gpio::FLAG_OUTPUT);
+    this->swclk_pin_->digital_write(false);
     this->assert_reset_();
     return;
   }
@@ -1162,6 +1176,9 @@ bool EmporiaVueComponent::probe_idcode_(const char *sequence_name, uint8_t swj_s
   ESP_LOGI(TAG, "Trying SAMD09 %s IDCODE probe", sequence_name);
   this->last_error_.clear();
   this->sample_before_clock_ = sample_before_clock;
+  if (this->connect_under_reset_active_()) {
+    this->cold_plug_swd_();
+  }
   this->swd_enter_debug_(swj_select_bits);
   if (this->transfer_(false, true, DP_IDCODE, 0, idcode, ack)) {
     return true;
@@ -1188,15 +1205,9 @@ bool EmporiaVueComponent::swd_initialize_(uint32_t *idcode) {
     this->last_error_.clear();
     this->sample_before_clock_ = variant.sample_before_clock;
     if (this->connect_under_reset_active_()) {
-      if (!this->target_reset_asserted_) {
-        this->assert_reset_();
-      }
-      this->swd_enter_debug_(variant.swj_select_bits);
-      ESP_LOGI(TAG, "Releasing SAMD09 reset for immediate SWD attach");
-      this->deassert_reset_for_swd_attach_();
-    } else {
-      this->swd_enter_debug_(variant.swj_select_bits);
+      this->cold_plug_swd_();
     }
+    this->swd_enter_debug_(variant.swj_select_bits);
     if (!this->dp_read_(DP_IDCODE, idcode)) {
       continue;
     }

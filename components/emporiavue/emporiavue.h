@@ -265,6 +265,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void deassert_reset_();
   void deassert_reset_for_swd_attach_();
   bool connect_under_reset_active_() const;
+  void cold_plug_swd_();
   void begin_swd_session_();
   void finish_swd_session_();
   void swd_enter_debug_(uint8_t swj_select_bits);
