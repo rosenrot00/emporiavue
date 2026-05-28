@@ -55,10 +55,14 @@ class EmporiaVueComponent : public Component {
   void set_dsu_did_sensor(text_sensor::TextSensor *sensor) { this->dsu_did_sensor_ = sensor; }
   void set_status_sensor(text_sensor::TextSensor *sensor) { this->status_sensor_ = sensor; }
   void set_firmware_status_sensor(text_sensor::TextSensor *sensor) { this->firmware_status_sensor_ = sensor; }
+  void set_firmware_action_sensor(text_sensor::TextSensor *sensor) { this->firmware_action_sensor_ = sensor; }
   void set_firmware_version_sensor(text_sensor::TextSensor *sensor) { this->firmware_version_sensor_ = sensor; }
   void set_read_allowed_sensor(binary_sensor::BinarySensor *sensor) { this->read_allowed_sensor_ = sensor; }
   void set_firmware_update_available_sensor(binary_sensor::BinarySensor *sensor) {
     this->firmware_update_available_sensor_ = sensor;
+  }
+  void set_firmware_restore_available_sensor(binary_sensor::BinarySensor *sensor) {
+    this->firmware_restore_available_sensor_ = sensor;
   }
 
   void read_samd();
@@ -66,6 +70,7 @@ class EmporiaVueComponent : public Component {
   void dump_flash();
   void backup_firmware();
   void install_firmware();
+  void restore_firmware();
 
  protected:
   static constexpr uint8_t DP_ABORT = 0x00;
@@ -176,6 +181,20 @@ class EmporiaVueComponent : public Component {
     FLASH_PAGES,
   };
 
+  enum class FirmwareAction : uint8_t {
+    UNKNOWN = 0,
+    NONE,
+    BACKUP_STOCK,
+    UPDATE_MANAGED,
+    RESTORE_STOCK,
+  };
+
+  enum class FlashSource : uint8_t {
+    NONE = 0,
+    BUNDLED,
+    BACKUP,
+  };
+
   enum class FirmwareKind : uint8_t {
     UNKNOWN = 0,
     STOCK,
@@ -208,8 +227,10 @@ class EmporiaVueComponent : public Component {
   void set_error_(const std::string &error);
   void publish_status_(const std::string &status);
   void publish_firmware_status_(const std::string &status);
+  void publish_firmware_action_(const std::string &action);
   void publish_firmware_version_(const FirmwareInfo &info);
   void publish_firmware_update_available_(bool available);
+  void publish_firmware_restore_available_(bool available);
   void publish_read_allowed_(bool value);
   static std::string hex32_(uint32_t value);
   static std::string hex16_(uint16_t value);
@@ -260,7 +281,12 @@ class EmporiaVueComponent : public Component {
   bool detect_managed_firmware_(uint32_t flash_size, bool *managed);
   bool read_managed_firmware_info_(uint32_t flash_size, ManagedFirmwareInfo *managed_info, bool *found);
   bool read_current_firmware_info_(FirmwareInfo *info);
+  bool read_valid_backup_(BackupHeader *header, std::string *error);
   bool backup_partition_valid_(std::string *error);
+  FirmwareAction determine_firmware_action_(const FirmwareInfo &current, const BackupHeader *backup_header,
+                                            std::string *reason) const;
+  void publish_detected_firmware_action_(FirmwareAction action, const std::string &reason);
+  void start_firmware_action_(FirmwareAction requested_action);
   bool bundled_firmware_available_() const;
   uint32_t bundled_firmware_version_() const;
   uint32_t bundled_firmware_size_() const;
@@ -269,8 +295,10 @@ class EmporiaVueComponent : public Component {
   bool nvm_check_errors_();
   bool nvm_command_(uint8_t command);
   bool erase_flash_row_(uint32_t address);
+  bool read_install_source_(uint32_t offset, uint32_t length, uint8_t *buffer);
   bool write_flash_page_(uint32_t address, uint32_t offset, uint32_t length);
   bool verify_flash_page_(uint32_t address, uint32_t offset, uint32_t length);
+  const char *install_action_name_() const;
   void process_install_();
   void fail_install_(const std::string &error);
   void finish_install_success_();
@@ -285,9 +313,11 @@ class EmporiaVueComponent : public Component {
   text_sensor::TextSensor *dsu_did_sensor_{nullptr};
   text_sensor::TextSensor *status_sensor_{nullptr};
   text_sensor::TextSensor *firmware_status_sensor_{nullptr};
+  text_sensor::TextSensor *firmware_action_sensor_{nullptr};
   text_sensor::TextSensor *firmware_version_sensor_{nullptr};
   binary_sensor::BinarySensor *read_allowed_sensor_{nullptr};
   binary_sensor::BinarySensor *firmware_update_available_sensor_{nullptr};
+  binary_sensor::BinarySensor *firmware_restore_available_sensor_{nullptr};
 
   bool reset_before_read_{false};
   bool reset_on_boot_{false};
@@ -329,7 +359,10 @@ class EmporiaVueComponent : public Component {
   bool install_active_{false};
   bool install_core_halted_{false};
   bool install_started_writing_{false};
+  FirmwareAction install_action_{FirmwareAction::UNKNOWN};
+  FlashSource install_source_{FlashSource::NONE};
   InstallStage install_stage_{InstallStage::IDLE};
+  BackupHeader install_backup_header_{};
   uint32_t install_next_offset_{0};
   uint32_t install_flash_size_{0};
   uint32_t install_page_size_{0};
@@ -367,6 +400,11 @@ class EmporiaVueBackupFirmwareButton : public button::Button, public Parented<Em
 class EmporiaVueInstallFirmwareButton : public button::Button, public Parented<EmporiaVueComponent> {
  protected:
   void press_action() override { this->parent_->install_firmware(); }
+};
+
+class EmporiaVueRestoreFirmwareButton : public button::Button, public Parented<EmporiaVueComponent> {
+ protected:
+  void press_action() override { this->parent_->restore_firmware(); }
 };
 
 }  // namespace emporiavue

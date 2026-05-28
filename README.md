@@ -59,8 +59,10 @@ firmware install for the SAMD09:
 - `Read SAMD09`: runs the fuller SWD read check, including DSU/NVM status reads after the Debug Port responds.
 - `Dump SAMD09 Flash Blocks`: reads a small number of flash blocks and logs numbered hex chunks that can later be reassembled.
 - `Backup SAMD09 Firmware`: backs up detected legacy SAMD09 firmware into the `samd_bak` ESP32 data partition. It refuses to back up firmware marked as managed by this project.
-- `Install SAMD09 Firmware`: checks whether the running SAMD09 firmware is older than the component's required managed
-  firmware version and can flash the bundled managed SAMD09 image when writes are explicitly enabled.
+- `Update SAMD09 Firmware`: checks whether the running SAMD09 firmware is stock or older than the component's required
+  managed firmware version and can flash the bundled managed SAMD09 image when writes are explicitly enabled.
+- `Restore Stock SAMD09 Firmware`: restores the verified stock backup from the `samd_bak` partition when the SAMD is
+  currently running managed firmware.
 
 You need the normal ESPHome `api:` setup in your node config for Home Assistant to see those buttons. The results appear in the ESPHome log/console at `INFO` level.
 If the `samd_bak` partition is not present at boot, the firmware status entity reports `backup partition missing` and
@@ -70,9 +72,10 @@ hide a button entity based on partition-table state.
 The install check identifies managed firmware through a footer at the end of SAMD flash. Firmware without that footer is
 treated as stock/legacy and therefore as version `0`. The current upstream `emporia_vue` I2C frame is 284 bytes; a future
 managed SAMD firmware can expose a version in its I2C payload too, but this SWD component does not depend on that yet.
-Because Home Assistant buttons cannot be disabled dynamically by an external component, use `SAMD Firmware Update
-Available` and `SAMD Firmware Status` as the authoritative state. The install button exits without writing if no update
-is needed, SAMD writes are not explicitly enabled, no bundled image is compiled in, or a valid backup is missing.
+Because Home Assistant buttons cannot be disabled dynamically by an external component, use `SAMD Firmware Action`,
+`SAMD Firmware Update Available`, `SAMD Stock Restore Available`, and `SAMD Firmware Status` as the authoritative state.
+The update and restore buttons exit without writing if their action is not applicable, SAMD writes are not explicitly
+enabled, no bundled image is compiled in, or a valid backup is missing.
 
 The bundled SAMD09 image is built from `firmware/samd09`, which is based on
 `gekkehenkie11/emporia-SAMD09` at commit `0baafe6d8812639d14f8f66b03844567f913ddc0` with small local build fixes for
@@ -176,14 +179,14 @@ emporiavue:
 ## Vue 2 managed package
 
 The repository includes `packages/vue2-managed.yaml`. It configures the Vue 2 internal SWD pins through
-`hardware: vue2`, adds a 64 KiB `samd_bak` data partition, and enables the firmware status entity plus the backup
-button.
+`hardware: vue2`, adds a 64 KiB `samd_bak` data partition, and enables the firmware status/action entities plus the
+backup, update, and restore buttons.
 
 Keep your private `external_components` block in the main node YAML, then include the package:
 
 ```yaml
 packages:
-  emporiavue_vue2:
+  emporiavue:
     url: https://github.com/rosenrot00/emporiavue
     ref: main
     username: !secret github_username

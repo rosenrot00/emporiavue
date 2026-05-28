@@ -35,6 +35,9 @@ EmporiaVueBackupFirmwareButton = emporiavue_ns.class_(
 EmporiaVueInstallFirmwareButton = emporiavue_ns.class_(
     "EmporiaVueInstallFirmwareButton", button.Button
 )
+EmporiaVueRestoreFirmwareButton = emporiavue_ns.class_(
+    "EmporiaVueRestoreFirmwareButton", button.Button
+)
 
 CONF_SWCLK_PIN = "swclk_pin"
 CONF_SWDIO_PIN = "swdio_pin"
@@ -43,9 +46,12 @@ CONF_PROBE_BUTTON = "probe_button"
 CONF_DUMP_FLASH_BUTTON = "dump_flash_button"
 CONF_BACKUP_FIRMWARE_BUTTON = "backup_firmware_button"
 CONF_INSTALL_FIRMWARE_BUTTON = "install_firmware_button"
+CONF_RESTORE_FIRMWARE_BUTTON = "restore_firmware_button"
 CONF_FIRMWARE_STATUS = "firmware_status"
+CONF_FIRMWARE_ACTION = "firmware_action"
 CONF_FIRMWARE_VERSION = "firmware_version"
 CONF_FIRMWARE_UPDATE_AVAILABLE = "firmware_update_available"
+CONF_FIRMWARE_RESTORE_AVAILABLE = "firmware_restore_available"
 CONF_BACKUP_PARTITION = "backup_partition"
 CONF_REQUIRED_FIRMWARE_VERSION = "required_firmware_version"
 CONF_ALLOW_SAMD_WRITE = "allow_samd_write"
@@ -142,6 +148,13 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
         cv.Optional(
+            CONF_FIRMWARE_ACTION,
+            default={CONF_NAME: "SAMD Firmware Action"},
+        ): text_sensor.text_sensor_schema(
+            icon="mdi:chip",
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(
             CONF_FIRMWARE_VERSION,
             default={CONF_NAME: "SAMD Firmware Version"},
         ): text_sensor.text_sensor_schema(
@@ -153,6 +166,13 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             default={CONF_NAME: "SAMD Firmware Update Available"},
         ): binary_sensor.binary_sensor_schema(
             icon="mdi:update",
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(
+            CONF_FIRMWARE_RESTORE_AVAILABLE,
+            default={CONF_NAME: "SAMD Stock Restore Available"},
+        ): binary_sensor.binary_sensor_schema(
+            icon="mdi:backup-restore",
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
         cv.Optional(
@@ -195,10 +215,18 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         ),
         cv.Optional(
             CONF_INSTALL_FIRMWARE_BUTTON,
-            default={CONF_NAME: "Install SAMD09 Firmware"},
+            default={CONF_NAME: "Update SAMD09 Firmware"},
         ): button.button_schema(
             EmporiaVueInstallFirmwareButton,
-            icon="mdi:chip",
+            icon="mdi:update",
+            entity_category=ENTITY_CATEGORY_CONFIG,
+        ),
+        cv.Optional(
+            CONF_RESTORE_FIRMWARE_BUTTON,
+            default={CONF_NAME: "Restore Stock SAMD09 Firmware"},
+        ): button.button_schema(
+            EmporiaVueRestoreFirmwareButton,
+            icon="mdi:backup-restore",
             entity_category=ENTITY_CATEGORY_CONFIG,
         ),
     }
@@ -250,6 +278,9 @@ async def to_code(config):
     if firmware_status_config := config.get(CONF_FIRMWARE_STATUS):
         sens = await text_sensor.new_text_sensor(firmware_status_config)
         cg.add(var.set_firmware_status_sensor(sens))
+    if firmware_action_config := config.get(CONF_FIRMWARE_ACTION):
+        sens = await text_sensor.new_text_sensor(firmware_action_config)
+        cg.add(var.set_firmware_action_sensor(sens))
     if firmware_version_config := config.get(CONF_FIRMWARE_VERSION):
         sens = await text_sensor.new_text_sensor(firmware_version_config)
         cg.add(var.set_firmware_version_sensor(sens))
@@ -259,6 +290,9 @@ async def to_code(config):
     if firmware_update_available_config := config.get(CONF_FIRMWARE_UPDATE_AVAILABLE):
         sens = await binary_sensor.new_binary_sensor(firmware_update_available_config)
         cg.add(var.set_firmware_update_available_sensor(sens))
+    if firmware_restore_available_config := config.get(CONF_FIRMWARE_RESTORE_AVAILABLE):
+        sens = await binary_sensor.new_binary_sensor(firmware_restore_available_config)
+        cg.add(var.set_firmware_restore_available_sensor(sens))
     if read_button_config := config.get(CONF_READ_BUTTON):
         btn = await button.new_button(read_button_config)
         await cg.register_parented(btn, var)
@@ -273,4 +307,7 @@ async def to_code(config):
         await cg.register_parented(btn, var)
     if install_firmware_button_config := config.get(CONF_INSTALL_FIRMWARE_BUTTON):
         btn = await button.new_button(install_firmware_button_config)
+        await cg.register_parented(btn, var)
+    if restore_firmware_button_config := config.get(CONF_RESTORE_FIRMWARE_BUTTON):
+        btn = await button.new_button(restore_firmware_button_config)
         await cg.register_parented(btn, var)

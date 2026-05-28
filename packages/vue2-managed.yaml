@@ -5,7 +5,7 @@
 # and the emporiavue component configuration.
 #
 # When adding this package to an already-flashed ESP32, update the partition
-# table once before using the backup button. ESPHome requires
+# table once before using the backup/update/restore buttons. ESPHome requires
 # `allow_partition_access: true` on the esphome OTA platform for that step.
 
 esp32:
@@ -32,10 +32,14 @@ emporiavue:
 
   firmware_status:
     name: "SAMD Firmware Status"
+  firmware_action:
+    name: "SAMD Firmware Action"
   firmware_version:
     name: "SAMD Firmware Version"
   firmware_update_available:
     name: "SAMD Firmware Update Available"
+  firmware_restore_available:
+    name: "SAMD Stock Restore Available"
   status:
     name: "SAMD SWD Status"
   swd_idcode:
@@ -48,7 +52,9 @@ emporiavue:
   backup_firmware_button:
     name: "Backup SAMD09 Firmware"
   install_firmware_button:
-    name: "Install SAMD09 Firmware"
+    name: "Update SAMD09 Firmware"
+  restore_firmware_button:
+    name: "Restore Stock SAMD09 Firmware"
   probe_button:
     name: "Probe SAMD09 SWD"
   read_button:
