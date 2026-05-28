@@ -308,6 +308,8 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   ManagedI2CInfoResult query_managed_i2c_info_(ManagedI2CInfo *managed_info);
   bool read_managed_i2c_info_(ManagedI2CInfo *managed_info);
   bool validate_managed_i2c_info_(const ManagedI2CInfo &managed_info) const;
+  i2c::ErrorCode read_normal_i2c_frame_(const char *context);
+  void probe_runtime_i2c_after_firmware_update_();
   void publish_initial_firmware_detection_();
   bool detect_managed_firmware_(uint32_t flash_size, bool *managed);
   bool read_managed_firmware_info_(uint32_t flash_size, ManagedFirmwareInfo *managed_info, bool *found);

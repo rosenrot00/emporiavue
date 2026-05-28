@@ -1940,6 +1940,70 @@ bool EmporiaVueComponent::validate_managed_i2c_info_(const ManagedI2CInfo &manag
   return managed_info.i2c_frame_length == STOCK_I2C_FRAME_SIZE;
 }
 
+i2c::ErrorCode EmporiaVueComponent::read_normal_i2c_frame_(const char *context) {
+  std::array<uint8_t, STOCK_I2C_FRAME_SIZE> frame{};
+  const i2c::ErrorCode error = this->read(frame.data(), frame.size());
+  if (error != i2c::ERROR_OK) {
+    ESP_LOGW(TAG, "SAMD09 normal I2C frame read failed (%s): i2c error %u", context,
+             static_cast<unsigned>(error));
+    return error;
+  }
+
+  std::string first16;
+  for (size_t i = 0; i < std::min<size_t>(16, frame.size()); i++) {
+    append_hex_byte_(&first16, frame[i]);
+  }
+
+  size_t nonzero = 0;
+  size_t non_ff = 0;
+  for (uint8_t byte : frame) {
+    if (byte != 0x00) {
+      nonzero++;
+    }
+    if (byte != 0xFF) {
+      non_ff++;
+    }
+  }
+
+  const uint16_t end_word = uint16_t(frame[STOCK_I2C_FRAME_SIZE - 2]) |
+                            (uint16_t(frame[STOCK_I2C_FRAME_SIZE - 1]) << 8);
+  ESP_LOGI(TAG,
+           "SAMD09 normal I2C frame read OK (%s): len=%u unread=%u checksum=%s unknown=%s sequence=%u end=%s "
+           "nonzero=%u non_ff=%u first16=%s",
+           context, static_cast<unsigned>(frame.size()), static_cast<unsigned>(frame[0]), hex8_(frame[1]).c_str(),
+           hex8_(frame[2]).c_str(), static_cast<unsigned>(frame[3]), hex16_(end_word).c_str(),
+           static_cast<unsigned>(nonzero), static_cast<unsigned>(non_ff), first16.c_str());
+  return i2c::ERROR_OK;
+}
+
+void EmporiaVueComponent::probe_runtime_i2c_after_firmware_update_() {
+  ManagedI2CInfo managed_i2c_info{};
+  FirmwareInfo info{};
+  const ManagedI2CInfoResult info_result = this->query_managed_i2c_info_(&managed_i2c_info);
+  if (info_result == ManagedI2CInfoResult::VALID_RESPONSE) {
+    info.kind = FirmwareKind::MANAGED;
+    info.hardware_id = managed_i2c_info.hardware_id;
+    info.version = managed_i2c_info.firmware_version;
+    info.i2c_frame_length = managed_i2c_info.i2c_frame_length;
+    info.detected_by_i2c = true;
+    this->detected_firmware_info_ = info;
+    this->detected_firmware_info_valid_ = true;
+    this->publish_firmware_version_(info);
+    ESP_LOGI(TAG, "SAMD09 runtime managed I2C info OK after update");
+  } else {
+    ESP_LOGW(TAG, "SAMD09 runtime managed I2C info failed after update: result=%u",
+             static_cast<unsigned>(info_result));
+  }
+
+  const i2c::ErrorCode frame_error = this->read_normal_i2c_frame_("post-update");
+  if (frame_error == i2c::ERROR_OK) {
+    this->publish_firmware_status_("update complete; normal i2c frame ok");
+  } else {
+    this->publish_firmware_status_(
+        str_sprintf("update complete; normal i2c frame failed: i2c error %u", static_cast<unsigned>(frame_error)));
+  }
+}
+
 void EmporiaVueComponent::publish_initial_firmware_detection_() {
   if (this->backup_active_ || this->install_active_ || this->dump_active_) {
     return;
@@ -1957,7 +2021,13 @@ void EmporiaVueComponent::publish_initial_firmware_detection_() {
     this->detected_firmware_info_ = info;
     this->detected_firmware_info_valid_ = true;
     this->publish_firmware_version_(info);
-    this->publish_firmware_status_("managed firmware detected");
+    const i2c::ErrorCode frame_error = this->read_normal_i2c_frame_("startup");
+    if (frame_error == i2c::ERROR_OK) {
+      this->publish_firmware_status_("managed firmware detected; normal i2c frame ok");
+    } else {
+      this->publish_firmware_status_(str_sprintf("managed firmware detected; normal i2c frame failed: i2c error %u",
+                                                 static_cast<unsigned>(frame_error)));
+    }
     return;
   }
 
@@ -2571,6 +2641,7 @@ void EmporiaVueComponent::finish_install_success_() {
              this->bundled_firmware_hardware_id_(), this->bundled_firmware_version_(),
              format_firmware_version_(this->bundled_firmware_version_()).c_str(), this->bundled_firmware_size_(),
              sha256_hex_(BUNDLED_SAMD_FIRMWARE_SHA256).c_str());
+    this->set_timeout("post_update_i2c_probe", 1000, [this]() { this->probe_runtime_i2c_after_firmware_update_(); });
   } else {
     this->publish_firmware_update_available_(this->bundled_firmware_available_() &&
                                              this->bundled_firmware_version_() >= this->required_firmware_version_);
