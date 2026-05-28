@@ -263,6 +263,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void reset_target_();
   void assert_reset_();
   void deassert_reset_();
+  void deassert_reset_for_swd_attach_();
   bool connect_under_reset_active_() const;
   void begin_swd_session_();
   void finish_swd_session_();
@@ -388,6 +389,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   bool reset_before_read_{false};
   bool reset_on_boot_{false};
   bool connect_under_reset_{false};
+  bool target_reset_asserted_{false};
   uint32_t reset_hold_time_ms_{100};
   uint32_t reset_release_time_ms_{50};
   uint8_t clock_delay_us_{2};

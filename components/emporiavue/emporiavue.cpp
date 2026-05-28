@@ -1080,12 +1080,19 @@ void EmporiaVueComponent::reset_target_() {
 void EmporiaVueComponent::assert_reset_() {
   this->reset_pin_->pin_mode(gpio::FLAG_OUTPUT);
   this->reset_pin_->digital_write(false);
+  this->target_reset_asserted_ = true;
   delay(this->reset_hold_time_ms_);
 }
 
 void EmporiaVueComponent::deassert_reset_() {
   this->reset_pin_->digital_write(true);
+  this->target_reset_asserted_ = false;
   delay(this->reset_release_time_ms_);
+}
+
+void EmporiaVueComponent::deassert_reset_for_swd_attach_() {
+  this->reset_pin_->digital_write(true);
+  this->target_reset_asserted_ = false;
 }
 
 bool EmporiaVueComponent::connect_under_reset_active_() const {
@@ -1105,7 +1112,7 @@ void EmporiaVueComponent::begin_swd_session_() {
 }
 
 void EmporiaVueComponent::finish_swd_session_() {
-  if (this->connect_under_reset_active_()) {
+  if (this->connect_under_reset_active_() && this->target_reset_asserted_) {
     ESP_LOGI(TAG, "Releasing SAMD09 reset after connect-under-reset");
     this->deassert_reset_();
   }
@@ -1180,7 +1187,16 @@ bool EmporiaVueComponent::swd_initialize_(uint32_t *idcode) {
     ESP_LOGI(TAG, "Trying SAMD09 %s initialization", variant.name);
     this->last_error_.clear();
     this->sample_before_clock_ = variant.sample_before_clock;
-    this->swd_enter_debug_(variant.swj_select_bits);
+    if (this->connect_under_reset_active_()) {
+      if (!this->target_reset_asserted_) {
+        this->assert_reset_();
+      }
+      this->swd_enter_debug_(variant.swj_select_bits);
+      ESP_LOGI(TAG, "Releasing SAMD09 reset for immediate SWD attach");
+      this->deassert_reset_for_swd_attach_();
+    } else {
+      this->swd_enter_debug_(variant.swj_select_bits);
+    }
     if (!this->dp_read_(DP_IDCODE, idcode)) {
       continue;
     }
@@ -1237,6 +1253,7 @@ void EmporiaVueComponent::prepare_pins_() {
 void EmporiaVueComponent::release_pins_() {
   if ((this->reset_before_read_ || this->connect_under_reset_) && this->reset_pin_ != nullptr) {
     this->reset_pin_->digital_write(true);
+    this->target_reset_asserted_ = false;
     this->reset_pin_->pin_mode(gpio::FLAG_INPUT | gpio::FLAG_PULLUP);
   }
   if (this->swclk_pin_ != nullptr) {
