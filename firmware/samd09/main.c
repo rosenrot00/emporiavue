@@ -12,6 +12,8 @@ typedef uint8_t bool;
 #define true 1
 #define CHAR_BIT 8
 #define UINT32_C(value) value##UL
+#define INT16_MIN (-32768)
+#define INT16_MAX 32767
 
 __attribute__((used, noinline, optimize("O0")))
 void *memset(void *dst, int value, unsigned int length)
@@ -209,6 +211,8 @@ int16_t DMAresults[6][8]; //We copy the 8 ADC results to this buffer using DMA
 uint8_t MuxCounter = 0; //Varies between 0 and 7 to switch between the 8 muxes, each serving 2 50A CT's
 uint32_t outputpinTable [8] = { 0x1000000, 0x1010000, 0x1020000, 0x1030000, 0, 0x10000, 0x20000, 0x30000 }; //all possible combinations of pin 16, 17 and 24.
 int16_t averages[22]; //Here we save the averages: 3x voltages, 3x  Main CT current, 16x small CT current
+int32_t OffsetEstimateQ8[22];
+uint8_t OffsetWarmupWindows = 0;
 uint8_t MuxTable[16] = { 12, 4, 13, 5, 14, 6, 11, 3, 15, 7, 18, 10, 16, 8, 17, 9 }; //used for the order of saving Current data to the final output packet
 
 volatile uint32_t DiagSequence = 0;
@@ -285,7 +289,7 @@ uint8_t SensorSequence = 0;
 
 #define ESPpacketlength       0x11C
 #define EMPORIAVUE_HARDWARE_ID       2
-#define EMPORIAVUE_FIRMWARE_VERSION  19
+#define EMPORIAVUE_FIRMWARE_VERSION  20
 #define EMPORIAVUE_I2C_INFO_COMMAND  0xF0
 #define EMPORIAVUE_I2C_DIAGNOSTIC_COMMAND 0xF1
 
@@ -299,6 +303,12 @@ uint8_t SensorSequence = 0;
 #define MUX_RMS_SCALE_NUMERATOR        800.0f
 #define MAIN_POWER_SCALE_MULTIPLIER    10
 #define MUX_POWER_SCALE_MULTIPLIER     80
+#define ADC_OFFSET_CHANNEL_COUNT       22
+#define ADC_OFFSET_Q_SHIFT             8
+#define ADC_OFFSET_INVALID_MIN         -1999
+#define ADC_OFFSET_STARTUP_WINDOWS     4
+#define ADC_OFFSET_SMOOTHING_SHIFT     4
+#define ADC_OFFSET_MAX_STEP            96
 
 #define TC1_ADC_TRIGGER_PERIOD         0x4C
 #define ADC_SAMPLE_TIME_LENGTH         1
@@ -380,6 +390,47 @@ static inline int32_t scale_power_main(int64_t raw)
 static inline int32_t scale_power_mux(int64_t raw)
 {
 	return (int32_t) ((raw * MUX_POWER_SCALE_MULTIPLIER) / MAIN_SAMPLE_COUNT);
+}
+
+static inline int32_t clamp_i32(int32_t value, int32_t min, int32_t max)
+{
+	if (value < min)
+		return min;
+	if (value > max)
+		return max;
+	return value;
+}
+
+static inline int16_t sanitize_adc_offset_target(int32_t average)
+{
+	if (average < ADC_OFFSET_INVALID_MIN)
+		return 0;
+	if (average > INT16_MAX)
+		return INT16_MAX;
+	if (average < INT16_MIN)
+		return INT16_MIN;
+	return (int16_t) average;
+}
+
+__attribute__((noinline))
+static void update_adc_offset(uint8_t channel, int32_t window_average)
+{
+	int32_t target_q8 = ((int32_t) sanitize_adc_offset_target(window_average)) << ADC_OFFSET_Q_SHIFT;
+	if (OffsetWarmupWindows < ADC_OFFSET_STARTUP_WINDOWS)
+	{
+		OffsetEstimateQ8[channel] = target_q8;
+	}
+	else
+	{
+		const int32_t max_step_q8 = ((int32_t) ADC_OFFSET_MAX_STEP) << ADC_OFFSET_Q_SHIFT;
+		int32_t delta_q8 = target_q8 - OffsetEstimateQ8[channel];
+		delta_q8 = clamp_i32(delta_q8, -max_step_q8, max_step_q8);
+		if (delta_q8 >= 0)
+			OffsetEstimateQ8[channel] += delta_q8 >> ADC_OFFSET_SMOOTHING_SHIFT;
+		else
+			OffsetEstimateQ8[channel] -= (-delta_q8) >> ADC_OFFSET_SMOOTHING_SHIFT;
+	}
+	averages[channel] = (int16_t) (OffsetEstimateQ8[channel] >> ADC_OFFSET_Q_SHIFT);
 }
 
 volatile int8_t cbi = 0; //calcblock index varies between 0 and 1 for the double buffer
@@ -961,27 +1012,23 @@ void Check_and_sendESPpacket()
 		packet_ready = false;
 		struct SensorReadingType* SensorReading = &SensorReadings[BuildSensorReadingIndex];
 
-		//Calculate and save the averages
+		//Track raw ADC DC offsets before RMS and power are calculated.
 		for (int i = 0; i < 3; i++)
 		{
 			//First the MainCT Voltages
-			averages[i] = calcblock[cbo].ADCVoltagesum[i] / (int32_t) MAIN_SAMPLE_COUNT;
-			if (averages[i] < (int16_t) -1999)
-				averages[i] = 0;
+			update_adc_offset(i, calcblock[cbo].ADCVoltagesum[i] / (int32_t) MAIN_SAMPLE_COUNT);
 
 			//Now the MainCT Currents
-			averages[3+i] = calcblock[cbo].ADCCurrentsum[i] / (int32_t) MAIN_SAMPLE_COUNT;
-			if (averages[3+i] < (int16_t) -1999)
-				averages[3+i] = 0;
+			update_adc_offset(3+i, calcblock[cbo].ADCCurrentsum[i] / (int32_t) MAIN_SAMPLE_COUNT);
 		}
 
 		//And the 16 50A CT currents
 		for (int i = 0; i < 16; i++)
 		{
-			averages[6+i] = calcblock[cbo].ADCCurrentsum[3+i] / (int32_t) MUX_SAMPLE_COUNT;	// Because 12987/8 = 1623
-			if (averages[6+i] < (int16_t) -1999)
-				averages[6+i] = 0;
+			update_adc_offset(6+i, calcblock[cbo].ADCCurrentsum[3+i] / (int32_t) MUX_SAMPLE_COUNT); // Because 12987/8 = 1623
 		}
+		if (OffsetWarmupWindows < ADC_OFFSET_STARTUP_WINDOWS)
+			OffsetWarmupWindows++;
 
 		//Now put it all in the ESP packet buffer
 		for (int i = 0; i < 3; i++)
@@ -1251,8 +1298,12 @@ int main(void)
 	configure_managed_i2c_info();
 	set_boot_stage(BOOT_STAGE_MANAGED_INFO_READY);
 
-	for (int i = 0; i < 22; i++)
+	for (int i = 0; i < ADC_OFFSET_CHANNEL_COUNT; i++)
+	{
 		averages[i] = 0;
+		OffsetEstimateQ8[i] = 0;
+	}
+	OffsetWarmupWindows = 0;
 	set_boot_stage(BOOT_STAGE_AVERAGES_CLEARED);
 
 	config_PORT();

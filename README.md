@@ -96,6 +96,14 @@ Flashing is intentionally opt-in. The component erases one SAMD NVM row at a tim
 cycle, verifies each page immediately, and leaves the SAMD core halted if a write has started and a later step fails.
 That keeps the ESP32 and ESPHome reachable while avoiding a reset into a partially written SAMD image.
 
+### Managed SAMD09 changes from stock
+
+- The managed firmware keeps the stock-compatible 284-byte I2C measurement frame, but exposes separate managed info and
+  diagnostic I2C commands before returning to the normal frame stream.
+- Raw ADC offset correction is intentionally changed from the stock-like direct per-window average replacement to a
+  smoothed per-channel DC offset tracker. The tracker runs on all 22 raw ADC channels before RMS, power, phase, and
+  frequency are calculated, so it reduces baseline jitter without clamping or filtering finished watt values.
+
 By default the SWD pins are not initialized at boot. `init_pins_on_boot` defaults to `false`, so SWDIO/SWCLK are only touched while a SAMD09 button action is running. The optional reset pin is only touched when `reset_before_read: true` or `connect_under_reset: true` is set. After the check, the component releases the touched pins back to input/pullup.
 
 To test a reset-assisted read, set the reset pin explicitly:
