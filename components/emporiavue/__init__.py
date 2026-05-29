@@ -52,6 +52,7 @@ EmporiaVueFlashExternalFirmwareButton = emporiavue_ns.class_(
 )
 MeteringPhaseConfig = emporiavue_ns.class_("MeteringPhaseConfig")
 MeteringCTClampConfig = emporiavue_ns.class_("MeteringCTClampConfig")
+MeteringGroupConfig = emporiavue_ns.class_("MeteringGroupConfig")
 MeteringCalibrationNumber = emporiavue_ns.class_(
     "MeteringCalibrationNumber", number.Number
 )
@@ -96,6 +97,7 @@ CONF_GRID_IMPORT_POWER = "grid_import_power"
 CONF_GRID_EXPORT_POWER = "grid_export_power"
 CONF_MAINS = "mains"
 CONF_CIRCUITS = "circuits"
+CONF_GROUPS = "groups"
 CONF_LINE = "line"
 CONF_PHASE_ID = "phase_id"
 CONF_CALIBRATION_NUMBER = "calibration_number"
@@ -615,18 +617,45 @@ def _validate_circuits(value):
     return circuits
 
 
+METERING_GROUP_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.declare_id(MeteringGroupConfig),
+        cv.Required(CONF_CIRCUITS): cv.ensure_list(cv.string_strict),
+        cv.Optional(CONF_POWER): POWER_SENSOR_SCHEMA,
+    }
+)
+
+
+def _validate_groups(value):
+    groups = cv.Schema({cv.string_strict: METERING_GROUP_SCHEMA})(value)
+
+    for group_key, group_config in groups.items():
+        circuits = group_config[CONF_CIRCUITS]
+        if not circuits:
+            raise cv.Invalid("Group needs at least one circuit", path=[group_key, CONF_CIRCUITS])
+        if len(circuits) != len(set(circuits)):
+            raise cv.Invalid("Group circuit entries must be unique", path=[group_key, CONF_CIRCUITS])
+
+    return groups
+
+
 def _validate_metering_topology(config):
     circuits = config.get(CONF_CIRCUITS, {})
-    if not circuits:
-        return config
-
     mains = config.get(CONF_MAINS, {})
+
     for circuit_key, circuit_config in circuits.items():
         line_key = f"line_{circuit_config[CONF_LINE]}"
         if line_key not in mains:
             raise cv.Invalid(
                 f"circuits.{circuit_key}.line references {line_key}, but mains.{line_key} is not configured"
             )
+
+    for group_key, group_config in config.get(CONF_GROUPS, {}).items():
+        for circuit_key in group_config[CONF_CIRCUITS]:
+            if circuit_key not in circuits:
+                raise cv.Invalid(
+                    f"groups.{group_key}.circuits references {circuit_key}, but circuits.{circuit_key} is not configured"
+                )
 
     return config
 
@@ -670,6 +699,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_GRID_EXPORT_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_MAINS): _validate_mains,
         cv.Optional(CONF_CIRCUITS): _validate_circuits,
+        cv.Optional(CONF_GROUPS): _validate_groups,
         cv.Optional(CONF_PHASES): _validate_metering_phases,
         cv.Optional(CONF_CT_CLAMPS): cv.ensure_list(METERING_CT_CLAMP_SCHEMA),
         cv.Optional(CONF_BACKUP_PARTITION, default="samd_bak"): cv.string_strict,
@@ -871,6 +901,7 @@ async def to_code(config):
     phases = []
     ct_clamps = []
     main_phase_vars_by_line = {}
+    circuit_ct_clamps_by_key = {}
     for phase_key, main_config in config.get(CONF_MAINS, {}).items():
         phase_var = cg.new_Pvariable(main_config[CONF_ID], MeteringPhaseConfig())
         cg.add(phase_var.set_input_wire(PHASE_INPUTS[main_config[CONF_VOLTAGE_INPUT]]))
@@ -912,7 +943,7 @@ async def to_code(config):
             cg.add(ct_clamp_var.set_current_sensor(sens))
         ct_clamps.append(ct_clamp_var)
 
-    for circuit_config in config.get(CONF_CIRCUITS, {}).values():
+    for circuit_key, circuit_config in config.get(CONF_CIRCUITS, {}).items():
         ct_clamp_var = cg.new_Pvariable(circuit_config[CONF_CT_ID], MeteringCTClampConfig())
         phase_var = main_phase_vars_by_line[circuit_config[CONF_LINE]]
         cg.add(ct_clamp_var.set_phase(phase_var))
@@ -926,6 +957,7 @@ async def to_code(config):
             cg.add(ct_clamp_var.set_current_sensor(sens))
 
         ct_clamps.append(ct_clamp_var)
+        circuit_ct_clamps_by_key[circuit_key] = ct_clamp_var
 
     for phase_config in config.get(CONF_PHASES, []):
         phase_var = cg.new_Pvariable(phase_config[CONF_ID], MeteringPhaseConfig())
@@ -973,6 +1005,20 @@ async def to_code(config):
         ct_clamps.append(ct_clamp_var)
     if ct_clamps:
         cg.add(var.set_metering_ct_clamps(ct_clamps))
+
+    groups = []
+    for group_config in config.get(CONF_GROUPS, {}).values():
+        group_var = cg.new_Pvariable(group_config[CONF_ID], MeteringGroupConfig())
+        group_ct_clamps = [
+            circuit_ct_clamps_by_key[circuit_key] for circuit_key in group_config[CONF_CIRCUITS]
+        ]
+        cg.add(group_var.set_ct_clamps(group_ct_clamps))
+        if power_config := group_config.get(CONF_POWER):
+            sens = await sensor.new_sensor(power_config)
+            cg.add(group_var.set_power_sensor(sens))
+        groups.append(group_var)
+    if groups:
+        cg.add(var.set_metering_groups(groups))
 
     if backup_firmware_button_config := config.get(CONF_BACKUP_FIRMWARE_BUTTON):
         btn = await button.new_button(backup_firmware_button_config)

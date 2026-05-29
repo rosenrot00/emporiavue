@@ -25,6 +25,7 @@ namespace emporiavue {
 
 class MeteringPhaseConfig;
 class MeteringCTClampConfig;
+class MeteringGroupConfig;
 class MeteringCalibrationNumber;
 
 class EmporiaVueComponent : public Component, public i2c::I2CDevice {
@@ -66,6 +67,9 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   }
   void set_metering_ct_clamps(std::vector<MeteringCTClampConfig *> ct_clamps) {
     this->metering_ct_clamps_ = std::move(ct_clamps);
+  }
+  void set_metering_groups(std::vector<MeteringGroupConfig *> groups) {
+    this->metering_groups_ = std::move(groups);
   }
   void set_backup_partition_name(const std::string &backup_partition_name) {
     this->backup_partition_name_ = backup_partition_name;
@@ -469,6 +473,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void process_backup_();
   void fail_backup_(const std::string &error);
   void finish_backup_success_();
+  bool calculate_ct_power_(const MeteringFrame &frame, const MeteringCTClampConfig *ct_clamp, float *power) const;
 
   InternalGPIOPin *swdio_pin_{nullptr};
   InternalGPIOPin *swclk_pin_{nullptr};
@@ -508,6 +513,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   sensor::Sensor *grid_export_power_sensor_{nullptr};
   std::vector<MeteringPhaseConfig *> metering_phases_{};
   std::vector<MeteringCTClampConfig *> metering_ct_clamps_{};
+  std::vector<MeteringGroupConfig *> metering_groups_{};
   std::string backup_partition_name_{"samd_bak"};
   const esp_partition_t *backup_partition_{nullptr};
   bool backup_active_{false};
@@ -604,6 +610,20 @@ class MeteringCTClampConfig {
   uint8_t input_port_{0};
   sensor::Sensor *power_sensor_{nullptr};
   sensor::Sensor *current_sensor_{nullptr};
+};
+
+class MeteringGroupConfig {
+ public:
+  void set_ct_clamps(std::vector<MeteringCTClampConfig *> ct_clamps) {
+    this->ct_clamps_ = std::move(ct_clamps);
+  }
+  const std::vector<MeteringCTClampConfig *> &get_ct_clamps() const { return this->ct_clamps_; }
+  void set_power_sensor(sensor::Sensor *sensor) { this->power_sensor_ = sensor; }
+  sensor::Sensor *get_power_sensor() const { return this->power_sensor_; }
+
+ protected:
+  std::vector<MeteringCTClampConfig *> ct_clamps_{};
+  sensor::Sensor *power_sensor_{nullptr};
 };
 
 class EmporiaVueBackupFirmwareButton : public button::Button, public Parented<EmporiaVueComponent> {
