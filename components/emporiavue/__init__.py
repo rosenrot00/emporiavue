@@ -95,6 +95,10 @@ CONF_GRID_DEADBAND = "grid_deadband"
 CONF_TOTAL_POWER = "total_power"
 CONF_GRID_IMPORT_POWER = "grid_import_power"
 CONF_GRID_EXPORT_POWER = "grid_export_power"
+CONF_RAW_POWER = "raw_power"
+CONF_RAW_TOTAL_POWER = "raw_total_power"
+CONF_RAW_GRID_IMPORT_POWER = "raw_grid_import_power"
+CONF_RAW_GRID_EXPORT_POWER = "raw_grid_export_power"
 CONF_MAINS = "mains"
 CONF_CIRCUITS = "circuits"
 CONF_GROUPS = "groups"
@@ -106,6 +110,8 @@ CONF_CT_ID = "ct_id"
 CONF_VOLTAGE_INPUT = "voltage_input"
 CONF_PHASES = "phases"
 CONF_CT_CLAMPS = "ct_clamps"
+CONF_INTERNAL = "internal"
+CONF_FILTERS = "filters"
 
 HARDWARE_CUSTOM = "custom"
 HARDWARE_VUE2 = "vue2"
@@ -122,6 +128,14 @@ HARDWARE_IDS = {
 MODE_IDS = {
     MODE_I2C: 0,
     MODE_SPI: 1,
+}
+
+RATE_LIMIT_FILTERS = {
+    "heartbeat",
+    "throttle",
+    "throttle_average",
+    "throttle_with_priority",
+    "timeout",
 }
 
 PHASE_INPUTS = {
@@ -294,6 +308,128 @@ def _apply_mains_defaults(config):
     return config
 
 
+def _integration_filters(filters):
+    if not isinstance(filters, list):
+        return []
+
+    integration_filters = []
+    for filter_config in filters:
+        if isinstance(filter_config, dict) and any(key in RATE_LIMIT_FILTERS for key in filter_config):
+            continue
+        integration_filters.append(filter_config)
+    return integration_filters
+
+
+def _split_power_sensor_config(parent_config, raw_id):
+    power_config = parent_config.get(CONF_POWER)
+    if power_config is None:
+        return parent_config
+    if not isinstance(power_config, dict):
+        raise cv.Invalid("power must be a mapping")
+
+    parent_config = dict(parent_config)
+    power_config = dict(power_config)
+    raw_config = parent_config.get(CONF_RAW_POWER)
+    if raw_config is None:
+        raw_config = {}
+    elif not isinstance(raw_config, dict):
+        raise cv.Invalid("raw_power must be a mapping")
+    else:
+        raw_config = dict(raw_config)
+
+    raw_config.setdefault(CONF_ID, power_config.pop(CONF_ID, raw_id))
+    raw_config.setdefault(CONF_INTERNAL, True)
+    if CONF_FILTERS not in raw_config and CONF_FILTERS in power_config:
+        filters = _integration_filters(power_config[CONF_FILTERS])
+        if filters:
+            raw_config[CONF_FILTERS] = filters
+    parent_config[CONF_RAW_POWER] = raw_config
+
+    if power_config:
+        parent_config[CONF_POWER] = power_config
+    else:
+        parent_config.pop(CONF_POWER, None)
+    return parent_config
+
+
+def _split_top_power_sensor_config(config, visible_key, raw_key, raw_id):
+    power_config = config.get(visible_key)
+    if power_config is None:
+        return config
+    if not isinstance(power_config, dict):
+        raise cv.Invalid(f"{visible_key} must be a mapping")
+
+    config = dict(config)
+    power_config = dict(power_config)
+    raw_config = config.get(raw_key)
+    if raw_config is None:
+        raw_config = {}
+    elif not isinstance(raw_config, dict):
+        raise cv.Invalid(f"{raw_key} must be a mapping")
+    else:
+        raw_config = dict(raw_config)
+
+    raw_config.setdefault(CONF_ID, power_config.pop(CONF_ID, raw_id))
+    raw_config.setdefault(CONF_INTERNAL, True)
+    if CONF_FILTERS not in raw_config and CONF_FILTERS in power_config:
+        filters = _integration_filters(power_config[CONF_FILTERS])
+        if filters:
+            raw_config[CONF_FILTERS] = filters
+    config[raw_key] = raw_config
+
+    if power_config:
+        config[visible_key] = power_config
+    else:
+        config.pop(visible_key, None)
+    return config
+
+
+def _apply_raw_power_defaults(config):
+    config = dict(config)
+
+    config = _split_top_power_sensor_config(
+        config, CONF_TOTAL_POWER, CONF_RAW_TOTAL_POWER, CONF_TOTAL_POWER
+    )
+    config = _split_top_power_sensor_config(
+        config, CONF_GRID_IMPORT_POWER, CONF_RAW_GRID_IMPORT_POWER, "grid_import_w"
+    )
+    config = _split_top_power_sensor_config(
+        config, CONF_GRID_EXPORT_POWER, CONF_RAW_GRID_EXPORT_POWER, "grid_export_w"
+    )
+
+    if CONF_MAINS in config and isinstance(config[CONF_MAINS], dict):
+        mains = dict(config[CONF_MAINS])
+        for main_key, main_config in list(mains.items()):
+            if isinstance(main_config, dict):
+                mains[main_key] = _split_power_sensor_config(main_config, f"{main_key}_power")
+        config[CONF_MAINS] = mains
+
+    if CONF_CIRCUITS in config and isinstance(config[CONF_CIRCUITS], dict):
+        circuits = dict(config[CONF_CIRCUITS])
+        for circuit_key, circuit_config in list(circuits.items()):
+            if isinstance(circuit_config, dict):
+                circuits[circuit_key] = _split_power_sensor_config(circuit_config, circuit_key)
+        config[CONF_CIRCUITS] = circuits
+
+    if CONF_GROUPS in config and isinstance(config[CONF_GROUPS], dict):
+        groups = dict(config[CONF_GROUPS])
+        for group_key, group_config in list(groups.items()):
+            if isinstance(group_config, dict):
+                groups[group_key] = _split_power_sensor_config(group_config, group_key)
+        config[CONF_GROUPS] = groups
+
+    if CONF_CT_CLAMPS in config and isinstance(config[CONF_CT_CLAMPS], list):
+        ct_clamps = []
+        for index, ct_config in enumerate(config[CONF_CT_CLAMPS]):
+            if isinstance(ct_config, dict):
+                ct_clamps.append(_split_power_sensor_config(ct_config, f"ct_{index}_power"))
+            else:
+                ct_clamps.append(ct_config)
+        config[CONF_CT_CLAMPS] = ct_clamps
+
+    return config
+
+
 def _apply_external_firmware_defaults(config):
     config = dict(config)
     if CONF_EXTERNAL_SAMD_FIRMWARE not in config:
@@ -371,7 +507,9 @@ def _apply_hardware_defaults(config):
 def _apply_defaults(config):
     return _apply_entity_name_defaults(
         _apply_diagnostics_defaults(
-            _apply_mains_defaults(_apply_external_firmware_defaults(_apply_hardware_defaults(config)))
+            _apply_raw_power_defaults(
+                _apply_mains_defaults(_apply_external_firmware_defaults(_apply_hardware_defaults(config)))
+            )
         )
     )
 
@@ -558,6 +696,7 @@ METERING_MAIN_SCHEMA = cv.Schema(
         cv.Optional(CONF_FREQUENCY): PHASE_FREQUENCY_SENSOR_SCHEMA,
         cv.Optional(CONF_PHASE_ANGLE): PHASE_ANGLE_SENSOR_SCHEMA,
         cv.Optional(CONF_POWER): POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_RAW_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_CURRENT): CURRENT_SENSOR_SCHEMA,
     }
 )
@@ -602,6 +741,7 @@ METERING_CIRCUIT_SCHEMA = cv.Schema(
         cv.Required(CONF_INPUT): cv.one_of(*BRANCH_CT_INPUTS.keys(), upper=True),
         cv.Required(CONF_LINE): cv.int_range(min=1, max=3),
         cv.Optional(CONF_POWER): POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_RAW_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_CURRENT): CURRENT_SENSOR_SCHEMA,
     }
 )
@@ -622,6 +762,7 @@ METERING_GROUP_SCHEMA = cv.Schema(
         cv.GenerateID(): cv.declare_id(MeteringGroupConfig),
         cv.Required(CONF_CIRCUITS): cv.ensure_list(cv.string_strict),
         cv.Optional(CONF_POWER): POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_RAW_POWER): POWER_SENSOR_SCHEMA,
     }
 )
 
@@ -666,6 +807,7 @@ METERING_CT_CLAMP_SCHEMA = cv.Schema(
         cv.Required(CONF_PHASE_ID): cv.use_id(MeteringPhaseConfig),
         cv.Required(CONF_INPUT): cv.one_of(*CT_INPUTS.keys(), upper=True),
         cv.Optional(CONF_POWER): POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_RAW_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_CURRENT): CURRENT_SENSOR_SCHEMA,
     }
 )
@@ -695,8 +837,11 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_METERING_INTERVAL): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_GRID_DEADBAND, default=2.0): cv.positive_float,
         cv.Optional(CONF_TOTAL_POWER): POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_RAW_TOTAL_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_GRID_IMPORT_POWER): POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_RAW_GRID_IMPORT_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_GRID_EXPORT_POWER): POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_RAW_GRID_EXPORT_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_MAINS): _validate_mains,
         cv.Optional(CONF_CIRCUITS): _validate_circuits,
         cv.Optional(CONF_GROUPS): _validate_groups,
@@ -861,12 +1006,21 @@ async def to_code(config):
         cg.add(var.set_metering_interval(metering_interval))
     cg.add(var.set_grid_deadband(config[CONF_GRID_DEADBAND]))
     cg.add(var.set_backup_partition_name(config[CONF_BACKUP_PARTITION]))
+    if raw_total_power_config := config.get(CONF_RAW_TOTAL_POWER):
+        sens = await sensor.new_sensor(raw_total_power_config)
+        cg.add(var.set_raw_total_power_sensor(sens))
     if total_power_config := config.get(CONF_TOTAL_POWER):
         sens = await sensor.new_sensor(total_power_config)
         cg.add(var.set_total_power_sensor(sens))
+    if raw_grid_import_power_config := config.get(CONF_RAW_GRID_IMPORT_POWER):
+        sens = await sensor.new_sensor(raw_grid_import_power_config)
+        cg.add(var.set_raw_grid_import_power_sensor(sens))
     if grid_import_power_config := config.get(CONF_GRID_IMPORT_POWER):
         sens = await sensor.new_sensor(grid_import_power_config)
         cg.add(var.set_grid_import_power_sensor(sens))
+    if raw_grid_export_power_config := config.get(CONF_RAW_GRID_EXPORT_POWER):
+        sens = await sensor.new_sensor(raw_grid_export_power_config)
+        cg.add(var.set_raw_grid_export_power_sensor(sens))
     if grid_export_power_config := config.get(CONF_GRID_EXPORT_POWER):
         sens = await sensor.new_sensor(grid_export_power_config)
         cg.add(var.set_grid_export_power_sensor(sens))
@@ -935,6 +1089,9 @@ async def to_code(config):
         ct_clamp_var = cg.new_Pvariable(main_config[CONF_CT_ID], MeteringCTClampConfig())
         cg.add(ct_clamp_var.set_phase(phase_var))
         cg.add(ct_clamp_var.set_input_port(CT_INPUTS[main_config[CONF_MAIN_CLAMP]]))
+        if raw_power_config := main_config.get(CONF_RAW_POWER):
+            sens = await sensor.new_sensor(raw_power_config)
+            cg.add(ct_clamp_var.set_raw_power_sensor(sens))
         if power_config := main_config.get(CONF_POWER):
             sens = await sensor.new_sensor(power_config)
             cg.add(ct_clamp_var.set_power_sensor(sens))
@@ -949,6 +1106,9 @@ async def to_code(config):
         cg.add(ct_clamp_var.set_phase(phase_var))
         cg.add(ct_clamp_var.set_input_port(BRANCH_CT_INPUTS[circuit_config[CONF_INPUT]]))
 
+        if raw_power_config := circuit_config.get(CONF_RAW_POWER):
+            sens = await sensor.new_sensor(raw_power_config)
+            cg.add(ct_clamp_var.set_raw_power_sensor(sens))
         if power_config := circuit_config.get(CONF_POWER):
             sens = await sensor.new_sensor(power_config)
             cg.add(ct_clamp_var.set_power_sensor(sens))
@@ -995,6 +1155,9 @@ async def to_code(config):
         cg.add(ct_clamp_var.set_phase(phase_var))
         cg.add(ct_clamp_var.set_input_port(CT_INPUTS[ct_config[CONF_INPUT]]))
 
+        if raw_power_config := ct_config.get(CONF_RAW_POWER):
+            sens = await sensor.new_sensor(raw_power_config)
+            cg.add(ct_clamp_var.set_raw_power_sensor(sens))
         if power_config := ct_config.get(CONF_POWER):
             sens = await sensor.new_sensor(power_config)
             cg.add(ct_clamp_var.set_power_sensor(sens))
@@ -1013,6 +1176,9 @@ async def to_code(config):
             circuit_ct_clamps_by_key[circuit_key] for circuit_key in group_config[CONF_CIRCUITS]
         ]
         cg.add(group_var.set_ct_clamps(group_ct_clamps))
+        if raw_power_config := group_config.get(CONF_RAW_POWER):
+            sens = await sensor.new_sensor(raw_power_config)
+            cg.add(group_var.set_raw_power_sensor(sens))
         if power_config := group_config.get(CONF_POWER):
             sens = await sensor.new_sensor(power_config)
             cg.add(group_var.set_power_sensor(sens))

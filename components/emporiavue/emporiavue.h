@@ -74,8 +74,11 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void set_backup_partition_name(const std::string &backup_partition_name) {
     this->backup_partition_name_ = backup_partition_name;
   }
+  void set_raw_total_power_sensor(sensor::Sensor *sensor) { this->raw_total_power_sensor_ = sensor; }
   void set_total_power_sensor(sensor::Sensor *sensor) { this->total_power_sensor_ = sensor; }
+  void set_raw_grid_import_power_sensor(sensor::Sensor *sensor) { this->raw_grid_import_power_sensor_ = sensor; }
   void set_grid_import_power_sensor(sensor::Sensor *sensor) { this->grid_import_power_sensor_ = sensor; }
+  void set_raw_grid_export_power_sensor(sensor::Sensor *sensor) { this->raw_grid_export_power_sensor_ = sensor; }
   void set_grid_export_power_sensor(sensor::Sensor *sensor) { this->grid_export_power_sensor_ = sensor; }
   void set_firmware_version_sensor(text_sensor::TextSensor *sensor) { this->firmware_version_sensor_ = sensor; }
   void set_bundled_firmware_version_sensor(text_sensor::TextSensor *sensor) {
@@ -508,8 +511,11 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   bool last_metering_sequence_valid_{false};
   MeteringFrame last_metering_frame_{};
   float grid_deadband_{2.0f};
+  sensor::Sensor *raw_total_power_sensor_{nullptr};
   sensor::Sensor *total_power_sensor_{nullptr};
+  sensor::Sensor *raw_grid_import_power_sensor_{nullptr};
   sensor::Sensor *grid_import_power_sensor_{nullptr};
+  sensor::Sensor *raw_grid_export_power_sensor_{nullptr};
   sensor::Sensor *grid_export_power_sensor_{nullptr};
   std::vector<MeteringPhaseConfig *> metering_phases_{};
   std::vector<MeteringCTClampConfig *> metering_ct_clamps_{};
@@ -600,6 +606,8 @@ class MeteringCTClampConfig {
   const MeteringPhaseConfig *get_phase() const { return this->phase_; }
   void set_input_port(uint8_t input_port) { this->input_port_ = input_port; }
   uint8_t get_input_port() const { return this->input_port_; }
+  void set_raw_power_sensor(sensor::Sensor *sensor) { this->raw_power_sensor_ = sensor; }
+  sensor::Sensor *get_raw_power_sensor() const { return this->raw_power_sensor_; }
   void set_power_sensor(sensor::Sensor *sensor) { this->power_sensor_ = sensor; }
   sensor::Sensor *get_power_sensor() const { return this->power_sensor_; }
   void set_current_sensor(sensor::Sensor *sensor) { this->current_sensor_ = sensor; }
@@ -608,6 +616,7 @@ class MeteringCTClampConfig {
  protected:
   MeteringPhaseConfig *phase_{nullptr};
   uint8_t input_port_{0};
+  sensor::Sensor *raw_power_sensor_{nullptr};
   sensor::Sensor *power_sensor_{nullptr};
   sensor::Sensor *current_sensor_{nullptr};
 };
@@ -618,11 +627,14 @@ class MeteringGroupConfig {
     this->ct_clamps_ = std::move(ct_clamps);
   }
   const std::vector<MeteringCTClampConfig *> &get_ct_clamps() const { return this->ct_clamps_; }
+  void set_raw_power_sensor(sensor::Sensor *sensor) { this->raw_power_sensor_ = sensor; }
+  sensor::Sensor *get_raw_power_sensor() const { return this->raw_power_sensor_; }
   void set_power_sensor(sensor::Sensor *sensor) { this->power_sensor_ = sensor; }
   sensor::Sensor *get_power_sensor() const { return this->power_sensor_; }
 
  protected:
   std::vector<MeteringCTClampConfig *> ct_clamps_{};
+  sensor::Sensor *raw_power_sensor_{nullptr};
   sensor::Sensor *power_sensor_{nullptr};
 };
 

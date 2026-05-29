@@ -87,8 +87,11 @@ void EmporiaVueComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Grid deadband: %.1f W", this->grid_deadband_);
   const char *entity_prefix = this->entity_prefix_.empty() ? "(default)" : this->entity_prefix_.c_str();
   ESP_LOGCONFIG(TAG, "  Entity prefix: %s", entity_prefix);
+  LOG_SENSOR("  ", "Raw total power", this->raw_total_power_sensor_);
   LOG_SENSOR("  ", "Total power", this->total_power_sensor_);
+  LOG_SENSOR("  ", "Raw grid import power", this->raw_grid_import_power_sensor_);
   LOG_SENSOR("  ", "Grid import power", this->grid_import_power_sensor_);
+  LOG_SENSOR("  ", "Raw grid export power", this->raw_grid_export_power_sensor_);
   LOG_SENSOR("  ", "Grid export power", this->grid_export_power_sensor_);
   LOG_TEXT_SENSOR("  ", "Firmware version", this->firmware_version_sensor_);
   LOG_TEXT_SENSOR("  ", "Bundled firmware version", this->bundled_firmware_version_sensor_);
@@ -104,12 +107,14 @@ void EmporiaVueComponent::dump_config() {
   for (auto *ct_clamp : this->metering_ct_clamps_) {
     ESP_LOGCONFIG(TAG, "  Metering CT clamp");
     ESP_LOGCONFIG(TAG, "    Input port: %u", static_cast<unsigned>(ct_clamp->get_input_port()));
+    LOG_SENSOR("    ", "Raw power", ct_clamp->get_raw_power_sensor());
     LOG_SENSOR("    ", "Power", ct_clamp->get_power_sensor());
     LOG_SENSOR("    ", "Current", ct_clamp->get_current_sensor());
   }
   for (auto *group : this->metering_groups_) {
     ESP_LOGCONFIG(TAG, "  Metering group");
     ESP_LOGCONFIG(TAG, "    Circuit count: %u", static_cast<unsigned>(group->get_ct_clamps().size()));
+    LOG_SENSOR("    ", "Raw power", group->get_raw_power_sensor());
     LOG_SENSOR("    ", "Power", group->get_power_sensor());
   }
 }
@@ -1605,6 +1610,9 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
         total_power += power;
         has_total_power = true;
       }
+      if (ct_clamp->get_raw_power_sensor() != nullptr) {
+        ct_clamp->get_raw_power_sensor()->publish_state(power);
+      }
       if (ct_clamp->get_power_sensor() != nullptr) {
         ct_clamp->get_power_sensor()->publish_state(power);
       }
@@ -1616,7 +1624,7 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
   }
 
   for (auto *group : this->metering_groups_) {
-    if (group->get_power_sensor() == nullptr) {
+    if (group->get_raw_power_sensor() == nullptr && group->get_power_sensor() == nullptr) {
       continue;
     }
 
@@ -1630,19 +1638,35 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
       }
     }
     if (has_group_power) {
-      group->get_power_sensor()->publish_state(group_power);
+      if (group->get_raw_power_sensor() != nullptr) {
+        group->get_raw_power_sensor()->publish_state(group_power);
+      }
+      if (group->get_power_sensor() != nullptr) {
+        group->get_power_sensor()->publish_state(group_power);
+      }
     }
   }
 
   if (has_total_power) {
+    if (this->raw_total_power_sensor_ != nullptr) {
+      this->raw_total_power_sensor_->publish_state(total_power);
+    }
     if (this->total_power_sensor_ != nullptr) {
       this->total_power_sensor_->publish_state(total_power);
     }
+    const float grid_import_power = total_power > this->grid_deadband_ ? total_power : 0.0f;
+    if (this->raw_grid_import_power_sensor_ != nullptr) {
+      this->raw_grid_import_power_sensor_->publish_state(grid_import_power);
+    }
     if (this->grid_import_power_sensor_ != nullptr) {
-      this->grid_import_power_sensor_->publish_state(total_power > this->grid_deadband_ ? total_power : 0.0f);
+      this->grid_import_power_sensor_->publish_state(grid_import_power);
+    }
+    const float grid_export_power = total_power < -this->grid_deadband_ ? -total_power : 0.0f;
+    if (this->raw_grid_export_power_sensor_ != nullptr) {
+      this->raw_grid_export_power_sensor_->publish_state(grid_export_power);
     }
     if (this->grid_export_power_sensor_ != nullptr) {
-      this->grid_export_power_sensor_->publish_state(total_power < -this->grid_deadband_ ? -total_power : 0.0f);
+      this->grid_export_power_sensor_->publish_state(grid_export_power);
     }
   }
 }
