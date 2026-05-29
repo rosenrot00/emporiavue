@@ -74,6 +74,55 @@ MODE_IDS = {
     MODE_SPI: 1,
 }
 
+DEFAULT_ENTITY_NAMES = {
+    CONF_FIRMWARE_STATUS: "SAMD Firmware Status",
+    CONF_FIRMWARE_VERSION: "SAMD Firmware Version",
+    CONF_DIAGNOSTICS_STATUS: "SAMD Diagnostics Status",
+    CONF_DIAG_SAMPLE_BLOCKS: "SAMD Sample Blocks",
+    CONF_DIAG_PACKETS_BUILT: "SAMD Packets Built",
+    CONF_DIAG_PACKETS_READ: "SAMD Packets Read",
+    CONF_DIAG_DMA_TRANSFER_ERRORS: "SAMD DMA Transfer Errors",
+    CONF_DIAG_PACKET_OVERRUNS: "SAMD Packet Overruns",
+    CONF_DIAG_I2C_PARTIAL_READS: "SAMD I2C Partial Reads",
+    CONF_DIAG_I2C_OVERSIZE_READS: "SAMD I2C Oversize Reads",
+    CONF_DIAG_LAST_SAMPLE_COUNT: "SAMD Last Sample Count",
+    CONF_DIAG_LAST_I2C_READ_LEN: "SAMD Last I2C Read Length",
+    CONF_BACKUP_FIRMWARE_BUTTON: "Backup SAMD09 Firmware",
+    CONF_INSTALL_FIRMWARE_BUTTON: "Update SAMD09 Firmware",
+    CONF_RESTORE_FIRMWARE_BUTTON: "Restore SAMD09 Backup Firmware",
+}
+
+
+def _prefixed_entity_name(prefix, name):
+    if not prefix:
+        return name
+    full_prefix = f"{prefix} "
+    if name == prefix or name.startswith(full_prefix):
+        return name
+    return f"{full_prefix}{name}"
+
+
+def _apply_entity_name_defaults(config):
+    config = dict(config)
+    prefix = config.get(CONF_ENTITY_PREFIX, "")
+    if not prefix:
+        return config
+
+    for key, default_name in DEFAULT_ENTITY_NAMES.items():
+        entity_config = config.get(key)
+        if entity_config is None:
+            entity_config = {}
+        elif not isinstance(entity_config, dict):
+            continue
+        else:
+            entity_config = dict(entity_config)
+
+        if entity_config.get(CONF_NAME, default_name) == default_name:
+            entity_config[CONF_NAME] = _prefixed_entity_name(prefix, default_name)
+
+        config[key] = entity_config
+    return config
+
 
 def _apply_hardware_defaults(config):
     config = dict(config)
@@ -90,6 +139,10 @@ def _apply_hardware_defaults(config):
         config.setdefault(CONF_RETRY_COUNT, 40)
         config.setdefault(CONF_INIT_PINS_ON_BOOT, False)
     return config
+
+
+def _apply_defaults(config):
+    return _apply_entity_name_defaults(_apply_hardware_defaults(config))
 
 
 EMPORIAVUE_SCHEMA = cv.Schema(
@@ -110,7 +163,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_RETRY_COUNT, default=40): cv.int_range(min=1, max=255),
         cv.Optional(CONF_INIT_PINS_ON_BOOT, default=False): cv.boolean,
         cv.Optional(CONF_MODE, default=MODE_I2C): cv.one_of(MODE_I2C, MODE_SPI, lower=True),
-        cv.Optional(CONF_ENTITY_PREFIX, default=""): cv.string_strict,
+        cv.Optional(CONF_ENTITY_PREFIX): cv.string_strict,
         cv.Optional(CONF_BACKUP_PARTITION, default="samd_bak"): cv.string_strict,
         cv.Optional(
             CONF_FIRMWARE_STATUS,
@@ -232,7 +285,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
     }
 ).extend(cv.COMPONENT_SCHEMA).extend(i2c.i2c_device_schema(0x64))
 
-CONFIG_SCHEMA = cv.All(_apply_hardware_defaults, EMPORIAVUE_SCHEMA)
+CONFIG_SCHEMA = cv.All(_apply_defaults, EMPORIAVUE_SCHEMA)
 
 
 async def to_code(config):
@@ -258,7 +311,7 @@ async def to_code(config):
     cg.add(var.set_retry_count(config[CONF_RETRY_COUNT]))
     cg.add(var.set_init_pins_on_boot(config[CONF_INIT_PINS_ON_BOOT]))
     cg.add(var.set_runtime_mode(MODE_IDS[config[CONF_MODE]]))
-    cg.add(var.set_entity_prefix(config[CONF_ENTITY_PREFIX]))
+    cg.add(var.set_entity_prefix(config.get(CONF_ENTITY_PREFIX, "")))
     cg.add(var.set_backup_partition_name(config[CONF_BACKUP_PARTITION]))
     if firmware_status_config := config.get(CONF_FIRMWARE_STATUS):
         sens = await text_sensor.new_text_sensor(firmware_status_config)

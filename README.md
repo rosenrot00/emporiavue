@@ -54,6 +54,9 @@ The default config creates only the SAMD firmware controls that are needed durin
 - `Restore SAMD09 Backup Firmware`: restores the verified firmware image from the `samd_bak` partition.
 
 You need the normal ESPHome `api:` setup in your node config for Home Assistant to see those buttons. The results appear in the ESPHome log/console at `INFO` level.
+Default entity names intentionally do not include the device name; ESPHome/Home Assistant use `esphome.friendly_name`
+for that prefix when needed. Set `entity_prefix` only when you need this component to write an explicit legacy prefix
+into its generated entity names. Set an individual entity `name:` if you need an exact custom name.
 If the `samd_bak` partition is not present at boot, the firmware status entity reports `backup partition missing` and
 pressing the backup button is ignored. ESPHome does not currently provide a safe runtime API to dynamically disable or
 hide a button entity based on partition-table state.
