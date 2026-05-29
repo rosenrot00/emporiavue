@@ -59,8 +59,8 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void set_backup_partition_name(const std::string &backup_partition_name) {
     this->backup_partition_name_ = backup_partition_name;
   }
-  void set_allow_samd_write(bool allow_samd_write) { this->allow_samd_write_ = allow_samd_write; }
-  void set_require_backup_before_install(bool require_backup) { this->require_backup_before_install_ = require_backup; }
+  void set_allow_samd_write(bool) {}
+  void set_require_backup_before_install(bool) {}
 
   void set_swd_idcode_sensor(text_sensor::TextSensor *sensor) { this->swd_idcode_sensor_ = sensor; }
   void set_dsu_did_sensor(text_sensor::TextSensor *sensor) { this->dsu_did_sensor_ = sensor; }
@@ -266,7 +266,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   enum class FirmwareAction : uint8_t {
     UNKNOWN = 0,
     NONE,
-    BACKUP_STOCK,
     UPDATE_MANAGED,
     RESTORE_STOCK,
     FLASH_STOCK_DUMP,
@@ -470,8 +469,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   bool dump_core_halted_{false};
   uint32_t dump_next_block_{0};
   std::string backup_partition_name_{"samd_bak"};
-  bool allow_samd_write_{false};
-  bool require_backup_before_install_{true};
   const esp_partition_t *backup_partition_{nullptr};
   bool backup_active_{false};
   bool backup_core_halted_{false};

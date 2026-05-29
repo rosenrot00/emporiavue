@@ -21,8 +21,6 @@ emporiavue:
   mode: i2c
   backup_partition: samd_bak
   connect_under_reset: true
-  allow_samd_write: false
-  require_backup_before_install: true
 
   dump_start_address: 0
   dump_block_size: 64

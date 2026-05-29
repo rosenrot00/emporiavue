@@ -218,13 +218,7 @@ When adding `samd_bak` to a device that is already flashed, update the ESP32 par
 custom partition lists under `esp32.partitions`, and partition-table OTA needs `allow_partition_access: true` on the
 ESPHome OTA platform before running `esphome upload --partition-table`.
 
-The managed package keeps SAMD writes disabled by default. After a valid legacy backup exists, enable a test flash in
-the main YAML by overriding only this option:
-
-```yaml
-emporiavue:
-  allow_samd_write: true
-```
+SAMD writes are enabled by default, and updating the managed SAMD firmware does not require a legacy backup.
 
 ## Notes
 

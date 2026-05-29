@@ -145,8 +145,8 @@ void EmporiaVueComponent::dump_config() {
                 YESNO(this->bundled_firmware_matches_hardware_()));
   ESP_LOGCONFIG(TAG, "  Bundled stock dump size: %" PRIu32 " bytes", this->stock_dump_firmware_size_());
   ESP_LOGCONFIG(TAG, "  Bundled stock dump compatible: %s", YESNO(this->stock_dump_firmware_matches_hardware_()));
-  ESP_LOGCONFIG(TAG, "  SAMD writes enabled: %s", YESNO(this->allow_samd_write_));
-  ESP_LOGCONFIG(TAG, "  Require backup before install: %s", YESNO(this->require_backup_before_install_));
+  ESP_LOGCONFIG(TAG, "  SAMD writes enabled: YES");
+  ESP_LOGCONFIG(TAG, "  Require backup before install: NO");
   ESP_LOGCONFIG(TAG, "  Init pins on boot: %s", YESNO(this->init_pins_on_boot_));
   ESP_LOGCONFIG(TAG, "  Runtime mode: %s", this->runtime_mode_ == RuntimeMode::SPI ? "spi" : "i2c");
   const char *entity_prefix = this->entity_prefix_.empty() ? "(default)" : this->entity_prefix_.c_str();
@@ -594,11 +594,6 @@ void EmporiaVueComponent::test_flash_write() {
   this->publish_status_("test write: checking");
   this->publish_firmware_status_("test write checking");
 
-  if (!this->allow_samd_write_) {
-    this->publish_firmware_status_("test write blocked: allow_samd_write is false");
-    ESP_LOGW(TAG, "SAMD09 flash write test blocked because allow_samd_write is false");
-    return;
-  }
   if (this->swdio_pin_ == nullptr || this->swclk_pin_ == nullptr) {
     this->set_error_("SWD pins are not configured");
     this->publish_firmware_status_("test write failed: SWD pins missing");
@@ -912,9 +907,6 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
   } else if (restore_requested) {
     action = backup_valid ? FirmwareAction::RESTORE_STOCK : FirmwareAction::UNKNOWN;
     action_reason = backup_valid ? "stock backup is available" : "valid stock backup required";
-  } else if (current.kind == FirmwareKind::STOCK && this->require_backup_before_install_ && !backup_valid) {
-    action = FirmwareAction::BACKUP_STOCK;
-    action_reason = "stock backup required before update";
   } else {
     action = FirmwareAction::UPDATE_MANAGED;
     action_reason = "firmware update requested";
@@ -922,14 +914,6 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
   this->publish_detected_firmware_action_(action, action_reason);
   if (restore_requested && backup_valid) {
     this->publish_firmware_restore_available_(true);
-  }
-
-  if (!restore_requested && !stock_dump_requested && action == FirmwareAction::BACKUP_STOCK) {
-    release_after_check();
-    this->publish_firmware_action_("backup required before update");
-    this->publish_firmware_status_("backup required before update; starting backup");
-    this->backup_firmware();
-    return;
   }
 
   if (!restore_requested && !stock_dump_requested && action == FirmwareAction::UNKNOWN) {
@@ -960,17 +944,6 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
   const FirmwareAction selected_action = stock_dump_requested
                                              ? FirmwareAction::FLASH_STOCK_DUMP
                                              : (restore_requested ? FirmwareAction::RESTORE_STOCK : action);
-  const std::string selected_reason =
-      stock_dump_requested ? "dumped stock test image requested"
-                           : (restore_requested ? "stock backup is available" : action_reason);
-
-  if (!this->allow_samd_write_) {
-    release_after_check();
-    this->publish_firmware_action_("blocked: " + selected_reason + " (allow_samd_write is false)");
-    this->publish_firmware_status_(std::string(requested_name) + " blocked: allow_samd_write is false");
-    ESP_LOGW(TAG, "SAMD09 firmware %s blocked because allow_samd_write is false", requested_name);
-    return;
-  }
 
   if (selected_action == FirmwareAction::UPDATE_MANAGED && !this->bundled_firmware_available_()) {
     release_after_check();
@@ -1033,14 +1006,6 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
     release_after_check();
     this->publish_firmware_status_(std::string(requested_name) + " blocked: unsupported flash geometry");
     ESP_LOGW(TAG, "SAMD09 firmware %s blocked by unsupported flash geometry", requested_name);
-    return;
-  }
-
-  if (selected_action == FirmwareAction::UPDATE_MANAGED && current.kind == FirmwareKind::STOCK &&
-      this->require_backup_before_install_ && !backup_valid) {
-    release_after_check();
-    this->publish_firmware_status_("update blocked: valid stock backup required (" + backup_error + ")");
-    ESP_LOGW(TAG, "SAMD09 firmware update blocked: valid backup required (%s)", backup_error.c_str());
     return;
   }
 
@@ -2600,12 +2565,6 @@ EmporiaVueComponent::FirmwareAction EmporiaVueComponent::determine_firmware_acti
       }
       return FirmwareAction::NONE;
     }
-    if (this->require_backup_before_install_ && !backup_valid) {
-      if (reason != nullptr) {
-        *reason = "stock firmware detected; backup required before update";
-      }
-      return FirmwareAction::BACKUP_STOCK;
-    }
     if (reason != nullptr) {
       *reason = str_sprintf("stock firmware detected; update to managed hw=%" PRIu32 " v%s",
                             this->bundled_firmware_hardware_id_(),
@@ -2664,14 +2623,10 @@ EmporiaVueComponent::FirmwareAction EmporiaVueComponent::determine_firmware_acti
 }
 
 void EmporiaVueComponent::publish_detected_firmware_action_(FirmwareAction action, const std::string &reason) {
-  this->publish_firmware_update_available_(action == FirmwareAction::UPDATE_MANAGED ||
-                                           action == FirmwareAction::BACKUP_STOCK);
+  this->publish_firmware_update_available_(action == FirmwareAction::UPDATE_MANAGED);
   this->publish_firmware_restore_available_(action == FirmwareAction::RESTORE_STOCK);
 
   switch (action) {
-    case FirmwareAction::BACKUP_STOCK:
-      this->publish_firmware_action_("backup required before update: " + reason);
-      break;
     case FirmwareAction::UPDATE_MANAGED:
       this->publish_firmware_action_("update available: " + reason);
       break;
@@ -2942,8 +2897,6 @@ const char *EmporiaVueComponent::install_action_name_() const {
       return "restore";
     case FirmwareAction::FLASH_STOCK_DUMP:
       return "flash dump";
-    case FirmwareAction::BACKUP_STOCK:
-      return "backup";
     case FirmwareAction::NONE:
       return "none";
     case FirmwareAction::UNKNOWN:
