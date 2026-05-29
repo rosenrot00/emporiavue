@@ -104,7 +104,7 @@ Private GitHub raw URLs can use a token without putting credentials into the URL
 emporiavue:
   external_samd_firmware:
     - id: stock
-      url: "https://raw.githubusercontent.com/rosenrot00/emporiavue/main/firmware/images/i2c/vue2-stock-dump.bin"
+      url: "https://raw.githubusercontent.com/rosenrot00/emporiavue/main/firmware/samd09/images/i2c/vue2-stock-dump.bin"
       token: !secret github_token
 ```
 
