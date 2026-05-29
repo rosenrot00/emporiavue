@@ -91,6 +91,8 @@ CONF_AUTO_UPDATE_SAMD = "auto_update_samd"
 CONF_DIAGNOSTICS_INTERVAL = "diagnostics_interval"
 CONF_METERING_INTERVAL = "metering_interval"
 CONF_MAINS = "mains"
+CONF_CIRCUITS = "circuits"
+CONF_LINE = "line"
 CONF_PHASE_ID = "phase_id"
 CONF_CALIBRATION_NUMBER = "calibration_number"
 CONF_MAIN_CLAMP = "main_clamp"
@@ -143,6 +145,8 @@ CT_INPUTS = {
     "15": 17,
     "16": 18,
 }
+
+BRANCH_CT_INPUTS = {key: value for key, value in CT_INPUTS.items() if key not in {"A", "B", "C"}}
 
 MAIN_PHASE_DEFAULTS = {
     "line_1": {
@@ -586,6 +590,43 @@ def _validate_mains(value):
     return mains
 
 
+METERING_CIRCUIT_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(CONF_CT_ID): cv.declare_id(MeteringCTClampConfig),
+        cv.Required(CONF_INPUT): cv.one_of(*BRANCH_CT_INPUTS.keys(), upper=True),
+        cv.Required(CONF_LINE): cv.int_range(min=1, max=3),
+        cv.Optional(CONF_POWER): POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_CURRENT): CURRENT_SENSOR_SCHEMA,
+    }
+)
+
+
+def _validate_circuits(value):
+    circuits = cv.Schema({cv.string_strict: METERING_CIRCUIT_SCHEMA})(value)
+
+    inputs = [circuit_config[CONF_INPUT] for circuit_config in circuits.values()]
+    if len(inputs) != len(set(inputs)):
+        raise cv.Invalid("Only one circuit entry per branch CT input is allowed")
+
+    return circuits
+
+
+def _validate_metering_topology(config):
+    circuits = config.get(CONF_CIRCUITS, {})
+    if not circuits:
+        return config
+
+    mains = config.get(CONF_MAINS, {})
+    for circuit_key, circuit_config in circuits.items():
+        line_key = f"line_{circuit_config[CONF_LINE]}"
+        if line_key not in mains:
+            raise cv.Invalid(
+                f"circuits.{circuit_key}.line references {line_key}, but mains.{line_key} is not configured"
+            )
+
+    return config
+
+
 METERING_CT_CLAMP_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(MeteringCTClampConfig),
@@ -620,6 +661,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_DIAGNOSTICS_INTERVAL): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_METERING_INTERVAL): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_MAINS): _validate_mains,
+        cv.Optional(CONF_CIRCUITS): _validate_circuits,
         cv.Optional(CONF_PHASES): _validate_metering_phases,
         cv.Optional(CONF_CT_CLAMPS): cv.ensure_list(METERING_CT_CLAMP_SCHEMA),
         cv.Optional(CONF_BACKUP_PARTITION, default="samd_bak"): cv.string_strict,
@@ -734,7 +776,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
     }
 ).extend(cv.COMPONENT_SCHEMA).extend(i2c.i2c_device_schema(0x64))
 
-CONFIG_SCHEMA = cv.All(_apply_defaults, EMPORIAVUE_SCHEMA)
+CONFIG_SCHEMA = cv.All(_apply_defaults, EMPORIAVUE_SCHEMA, _validate_metering_topology)
 
 
 async def to_code(config):
@@ -810,10 +852,13 @@ async def to_code(config):
 
     phases = []
     ct_clamps = []
+    main_phase_vars_by_line = {}
     for phase_key, main_config in config.get(CONF_MAINS, {}).items():
         phase_var = cg.new_Pvariable(main_config[CONF_ID], MeteringPhaseConfig())
         cg.add(phase_var.set_input_wire(PHASE_INPUTS[main_config[CONF_VOLTAGE_INPUT]]))
         cg.add(phase_var.set_calibration(main_config[CONF_CALIBRATION]))
+        line_number = int(phase_key.rsplit("_", 1)[1])
+        main_phase_vars_by_line[line_number] = phase_var
 
         if calibration_number_config := main_config.get(CONF_CALIBRATION_NUMBER):
             cal_num = await number.new_number(
@@ -847,6 +892,21 @@ async def to_code(config):
         if current_config := main_config.get(CONF_CURRENT):
             sens = await sensor.new_sensor(current_config)
             cg.add(ct_clamp_var.set_current_sensor(sens))
+        ct_clamps.append(ct_clamp_var)
+
+    for circuit_config in config.get(CONF_CIRCUITS, {}).values():
+        ct_clamp_var = cg.new_Pvariable(circuit_config[CONF_CT_ID], MeteringCTClampConfig())
+        phase_var = main_phase_vars_by_line[circuit_config[CONF_LINE]]
+        cg.add(ct_clamp_var.set_phase(phase_var))
+        cg.add(ct_clamp_var.set_input_port(BRANCH_CT_INPUTS[circuit_config[CONF_INPUT]]))
+
+        if power_config := circuit_config.get(CONF_POWER):
+            sens = await sensor.new_sensor(power_config)
+            cg.add(ct_clamp_var.set_power_sensor(sens))
+        if current_config := circuit_config.get(CONF_CURRENT):
+            sens = await sensor.new_sensor(current_config)
+            cg.add(ct_clamp_var.set_current_sensor(sens))
+
         ct_clamps.append(ct_clamp_var)
 
     for phase_config in config.get(CONF_PHASES, []):
