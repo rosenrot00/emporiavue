@@ -11,40 +11,40 @@ emporiavue:
       main_clamp: A
       calibration: 0.022
       voltage:
-        id: phase_a_voltage
-        name: "Phase A Voltage"
+        id: line_1_voltage
+        name: "Line 1 Voltage"
       frequency:
-        id: phase_a_frequency
-        name: "Phase A Frequency"
+        id: line_1_frequency
+        name: "Line 1 Frequency"
       power:
-        id: phase_a_power
-        name: "Phase A Power"
+        id: line_1_power
+        name: "Line 1 Power"
     line_2:
       voltage_input: RED
       main_clamp: B
       calibration: 0.022
       voltage:
-        id: phase_b_voltage
-        name: "Phase B Voltage"
+        id: line_2_voltage
+        name: "Line 2 Voltage"
       phase_angle:
-        id: phase_b_phase_angle
-        name: "Phase B Phase Angle"
+        id: line_2_phase_angle
+        name: "Line 2 Phase Angle"
       power:
-        id: phase_b_power
-        name: "Phase B Power"
+        id: line_2_power
+        name: "Line 2 Power"
     line_3:
       voltage_input: BLUE
       main_clamp: C
       calibration: 0.022
       voltage:
-        id: phase_c_voltage
-        name: "Phase C Voltage"
+        id: line_3_voltage
+        name: "Line 3 Voltage"
       phase_angle:
-        id: phase_c_phase_angle
-        name: "Phase C Phase Angle"
+        id: line_3_phase_angle
+        name: "Line 3 Phase Angle"
       power:
-        id: phase_c_power
-        name: "Phase C Power"
+        id: line_3_power
+        name: "Line 3 Power"
   total_power:
     id: total_power
     name: "Total Power"

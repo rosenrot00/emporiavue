@@ -222,31 +222,31 @@ emporiavue:
       main_clamp: A
       calibration: 0.022
       voltage:
-        name: "NEW_Phase A Voltage"
+        name: "Line 1 Voltage"
       frequency:
-        name: "NEW_Phase A Frequency"
+        name: "Line 1 Frequency"
       power:
-        name: "NEW_Phase A Power"
+        name: "Line 1 Power"
     line_2:
       voltage_input: RED
       main_clamp: B
       calibration: 0.022
       voltage:
-        name: "NEW_Phase B Voltage"
+        name: "Line 2 Voltage"
       phase_angle:
-        name: "NEW_Phase B Phase Angle"
+        name: "Line 2 Phase Angle"
       power:
-        name: "NEW_Phase B Power"
+        name: "Line 2 Power"
     line_3:
       voltage_input: BLUE
       main_clamp: C
       calibration: 0.022
       voltage:
-        name: "NEW_Phase C Voltage"
+        name: "Line 3 Voltage"
       phase_angle:
-        name: "NEW_Phase C Phase Angle"
+        name: "Line 3 Phase Angle"
       power:
-        name: "NEW_Phase C Power"
+        name: "Line 3 Power"
   ct_clamps:
     - phase_id: vue_metering_line_1
       input: "1"
