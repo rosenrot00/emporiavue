@@ -77,9 +77,9 @@ decisions compare the detected raw integer against the bundled image's raw integ
 `emporia_vue` I2C frame is 284 bytes; a future managed SAMD firmware can expose these values in its I2C payload too,
 but this SWD component does not depend on that yet.
 Because Home Assistant buttons cannot be disabled dynamically by an external component, use `SAMD Firmware Action`,
-`SAMD Firmware Update Available`, `SAMD Stock Restore Available`, and `SAMD Firmware Status` as the authoritative state.
-The update and restore buttons exit without writing if their action is not applicable, SAMD writes are not explicitly
-enabled, no bundled image is compiled in, or a valid backup is missing.
+`SAMD Firmware Update Available`, and `SAMD Firmware Status` as the authoritative state. The update and restore buttons
+exit without writing if their action is not applicable, no bundled image is compiled in, or a required backup image is
+missing.
 
 The bundled SAMD09 image is built from `firmware/samd09`, which is based on
 `gekkehenkie11/emporia-SAMD09` at commit `0baafe6d8812639d14f8f66b03844567f913ddc0` with small local build fixes for
@@ -181,25 +181,11 @@ emporiavue:
   connect_under_reset: true
 ```
 
-Optional low-level diagnostic entities can be enabled if you later want the values in Home Assistant too:
-
-```yaml
-emporiavue:
-  id: samd_reader
-  swd_idcode:
-    name: "SAMD09 SWD IDCODE"
-  read_allowed:
-    name: "SAMD09 Read Allowed"
-  status:
-    name: "SAMD09 SWD Status"
-```
-
 ## Vue 2 managed package
 
 The repository includes `packages/vue2-managed.yaml`. It configures the Vue 2 internal SWD pins through
 `hardware: vue2`, adds a 64 KiB `samd_bak` data partition, and enables the firmware status/action entities plus the
-backup, update, and restore buttons. Low-level probe/read diagnostics such as SWD IDCODE, DSU DID, SWD status, and
-read-allowed stay opt-in and are not exposed by the package.
+backup, update, and restore buttons.
 
 Keep your private `external_components` block in the main node YAML, then include the package:
 
@@ -219,10 +205,6 @@ custom partition lists under `esp32.partitions`, and partition-table OTA needs `
 ESPHome OTA platform before running `esphome upload --partition-table`.
 
 SAMD writes are enabled by default, and updating the managed SAMD firmware does not require a legacy backup.
-
-## Notes
-
-`read_allowed` is `true` only if DSU `STATUSB.PROT` is clear and a read from flash address `0x00000000` succeeds.
 
 ## Future SAMD09 firmware improvements
 

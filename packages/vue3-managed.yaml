@@ -38,8 +38,6 @@ emporiavue:
     name: "SAMD Firmware Version"
   firmware_update_available:
     name: "SAMD Firmware Update Available"
-  firmware_restore_available:
-    name: "SAMD Stock Restore Available"
 
   backup_firmware_button:
     name: "Backup SAMD09 Firmware"

@@ -59,21 +59,11 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void set_backup_partition_name(const std::string &backup_partition_name) {
     this->backup_partition_name_ = backup_partition_name;
   }
-  void set_allow_samd_write(bool) {}
-  void set_require_backup_before_install(bool) {}
-
-  void set_swd_idcode_sensor(text_sensor::TextSensor *sensor) { this->swd_idcode_sensor_ = sensor; }
-  void set_dsu_did_sensor(text_sensor::TextSensor *sensor) { this->dsu_did_sensor_ = sensor; }
-  void set_status_sensor(text_sensor::TextSensor *sensor) { this->status_sensor_ = sensor; }
   void set_firmware_status_sensor(text_sensor::TextSensor *sensor) { this->firmware_status_sensor_ = sensor; }
   void set_firmware_action_sensor(text_sensor::TextSensor *sensor) { this->firmware_action_sensor_ = sensor; }
   void set_firmware_version_sensor(text_sensor::TextSensor *sensor) { this->firmware_version_sensor_ = sensor; }
-  void set_read_allowed_sensor(binary_sensor::BinarySensor *sensor) { this->read_allowed_sensor_ = sensor; }
   void set_firmware_update_available_sensor(binary_sensor::BinarySensor *sensor) {
     this->firmware_update_available_sensor_ = sensor;
-  }
-  void set_firmware_restore_available_sensor(binary_sensor::BinarySensor *sensor) {
-    this->firmware_restore_available_sensor_ = sensor;
   }
   void set_diagnostics_status_sensor(text_sensor::TextSensor *sensor) { this->diagnostics_status_sensor_ = sensor; }
   void set_diag_sample_blocks_sensor(sensor::Sensor *sensor) { this->diag_sample_blocks_sensor_ = sensor; }
@@ -324,8 +314,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void publish_firmware_action_(const std::string &action);
   void publish_firmware_version_(const FirmwareInfo &info);
   void publish_firmware_update_available_(bool available);
-  void publish_firmware_restore_available_(bool available);
-  void publish_read_allowed_(bool value);
   static std::string hex32_(uint32_t value);
   static std::string hex16_(uint16_t value);
   static std::string hex8_(uint8_t value);
@@ -426,16 +414,11 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   InternalGPIOPin *swdio_pin_{nullptr};
   InternalGPIOPin *swclk_pin_{nullptr};
   InternalGPIOPin *reset_pin_{nullptr};
-  text_sensor::TextSensor *swd_idcode_sensor_{nullptr};
-  text_sensor::TextSensor *dsu_did_sensor_{nullptr};
-  text_sensor::TextSensor *status_sensor_{nullptr};
   text_sensor::TextSensor *firmware_status_sensor_{nullptr};
   text_sensor::TextSensor *firmware_action_sensor_{nullptr};
   text_sensor::TextSensor *firmware_version_sensor_{nullptr};
   text_sensor::TextSensor *diagnostics_status_sensor_{nullptr};
-  binary_sensor::BinarySensor *read_allowed_sensor_{nullptr};
   binary_sensor::BinarySensor *firmware_update_available_sensor_{nullptr};
-  binary_sensor::BinarySensor *firmware_restore_available_sensor_{nullptr};
   sensor::Sensor *diag_sample_blocks_sensor_{nullptr};
   sensor::Sensor *diag_packets_built_sensor_{nullptr};
   sensor::Sensor *diag_packets_read_sensor_{nullptr};

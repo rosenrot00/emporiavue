@@ -6,7 +6,6 @@ from esphome.const import (
     CONF_ID,
     CONF_NAME,
     CONF_RESET_PIN,
-    CONF_STATUS,
     ENTITY_CATEGORY_CONFIG,
     ENTITY_CATEGORY_DIAGNOSTIC,
     ICON_CHIP,
@@ -73,14 +72,8 @@ CONF_FIRMWARE_STATUS = "firmware_status"
 CONF_FIRMWARE_ACTION = "firmware_action"
 CONF_FIRMWARE_VERSION = "firmware_version"
 CONF_FIRMWARE_UPDATE_AVAILABLE = "firmware_update_available"
-CONF_FIRMWARE_RESTORE_AVAILABLE = "firmware_restore_available"
 CONF_BACKUP_PARTITION = "backup_partition"
-CONF_ALLOW_SAMD_WRITE = "allow_samd_write"
-CONF_REQUIRE_BACKUP_BEFORE_INSTALL = "require_backup_before_install"
 CONF_HARDWARE = "hardware"
-CONF_SWD_IDCODE = "swd_idcode"
-CONF_DSU_DID = "dsu_did"
-CONF_READ_ALLOWED = "read_allowed"
 CONF_DUMP_START_ADDRESS = "dump_start_address"
 CONF_DUMP_BLOCK_SIZE = "dump_block_size"
 CONF_DUMP_BLOCK_COUNT = "dump_block_count"
@@ -153,32 +146,12 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_MODE, default=MODE_I2C): cv.one_of(MODE_I2C, MODE_SPI, lower=True),
         cv.Optional(CONF_ENTITY_PREFIX, default=""): cv.string_strict,
         cv.Optional(CONF_BACKUP_PARTITION, default="samd_bak"): cv.string_strict,
-        cv.Optional(CONF_ALLOW_SAMD_WRITE, default=True): cv.boolean,
-        cv.Optional(CONF_REQUIRE_BACKUP_BEFORE_INSTALL, default=False): cv.boolean,
         cv.Optional(CONF_DUMP_START_ADDRESS, default=0): cv.int_range(min=0, max=0xFFFFFFFF),
         cv.Optional(CONF_DUMP_BLOCK_SIZE, default=64): cv.int_range(min=1, max=128),
         cv.Optional(CONF_DUMP_BLOCK_COUNT, default=5): cv.int_range(min=1, max=4096),
         cv.Optional(CONF_DUMP_FULL_FLASH, default=False): cv.boolean,
         cv.Optional(CONF_DUMP_HALT_CORE, default=True): cv.boolean,
         cv.Optional(CONF_DUMP_RESUME_BETWEEN_BLOCKS, default=False): cv.boolean,
-        cv.Optional(
-            CONF_SWD_IDCODE,
-        ): text_sensor.text_sensor_schema(
-            icon=ICON_CHIP,
-            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
-        ),
-        cv.Optional(
-            CONF_DSU_DID,
-        ): text_sensor.text_sensor_schema(
-            icon=ICON_CHIP,
-            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
-        ),
-        cv.Optional(
-            CONF_STATUS,
-        ): text_sensor.text_sensor_schema(
-            icon=ICON_DATABASE,
-            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
-        ),
         cv.Optional(
             CONF_FIRMWARE_STATUS,
             default={CONF_NAME: "SAMD Firmware Status"},
@@ -205,13 +178,6 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             default={CONF_NAME: "SAMD Firmware Update Available"},
         ): binary_sensor.binary_sensor_schema(
             icon="mdi:update",
-            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
-        ),
-        cv.Optional(
-            CONF_FIRMWARE_RESTORE_AVAILABLE,
-            default={CONF_NAME: "SAMD Stock Restore Available"},
-        ): binary_sensor.binary_sensor_schema(
-            icon="mdi:backup-restore",
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
         cv.Optional(
@@ -291,12 +257,6 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         ): sensor.sensor_schema(
             icon="mdi:counter",
             accuracy_decimals=0,
-            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
-        ),
-        cv.Optional(
-            CONF_READ_ALLOWED,
-        ): binary_sensor.binary_sensor_schema(
-            icon="mdi:database-check",
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
         cv.Optional(
@@ -408,18 +368,6 @@ async def to_code(config):
     cg.add(var.set_dump_halt_core(config[CONF_DUMP_HALT_CORE]))
     cg.add(var.set_dump_resume_between_blocks(config[CONF_DUMP_RESUME_BETWEEN_BLOCKS]))
     cg.add(var.set_backup_partition_name(config[CONF_BACKUP_PARTITION]))
-    cg.add(var.set_allow_samd_write(config[CONF_ALLOW_SAMD_WRITE]))
-    cg.add(var.set_require_backup_before_install(config[CONF_REQUIRE_BACKUP_BEFORE_INSTALL]))
-
-    if swd_idcode_config := config.get(CONF_SWD_IDCODE):
-        sens = await text_sensor.new_text_sensor(swd_idcode_config)
-        cg.add(var.set_swd_idcode_sensor(sens))
-    if dsu_did_config := config.get(CONF_DSU_DID):
-        sens = await text_sensor.new_text_sensor(dsu_did_config)
-        cg.add(var.set_dsu_did_sensor(sens))
-    if status_config := config.get(CONF_STATUS):
-        sens = await text_sensor.new_text_sensor(status_config)
-        cg.add(var.set_status_sensor(sens))
     if firmware_status_config := config.get(CONF_FIRMWARE_STATUS):
         sens = await text_sensor.new_text_sensor(firmware_status_config)
         cg.add(var.set_firmware_status_sensor(sens))
@@ -429,15 +377,9 @@ async def to_code(config):
     if firmware_version_config := config.get(CONF_FIRMWARE_VERSION):
         sens = await text_sensor.new_text_sensor(firmware_version_config)
         cg.add(var.set_firmware_version_sensor(sens))
-    if read_allowed_config := config.get(CONF_READ_ALLOWED):
-        sens = await binary_sensor.new_binary_sensor(read_allowed_config)
-        cg.add(var.set_read_allowed_sensor(sens))
     if firmware_update_available_config := config.get(CONF_FIRMWARE_UPDATE_AVAILABLE):
         sens = await binary_sensor.new_binary_sensor(firmware_update_available_config)
         cg.add(var.set_firmware_update_available_sensor(sens))
-    if firmware_restore_available_config := config.get(CONF_FIRMWARE_RESTORE_AVAILABLE):
-        sens = await binary_sensor.new_binary_sensor(firmware_restore_available_config)
-        cg.add(var.set_firmware_restore_available_sensor(sens))
     if diagnostics_status_config := config.get(CONF_DIAGNOSTICS_STATUS):
         sens = await text_sensor.new_text_sensor(diagnostics_status_config)
         cg.add(var.set_diagnostics_status_sensor(sens))

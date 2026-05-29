@@ -21,7 +21,6 @@ void EmporiaVueComponent::setup() {
   }
   this->inspect_backup_partition_();
   this->publish_firmware_update_available_(false);
-  this->publish_firmware_restore_available_(false);
   this->publish_firmware_action_("unknown");
   FirmwareInfo unknown_info{};
   this->publish_firmware_version_(unknown_info);
@@ -145,22 +144,15 @@ void EmporiaVueComponent::dump_config() {
                 YESNO(this->bundled_firmware_matches_hardware_()));
   ESP_LOGCONFIG(TAG, "  Bundled stock dump size: %" PRIu32 " bytes", this->stock_dump_firmware_size_());
   ESP_LOGCONFIG(TAG, "  Bundled stock dump compatible: %s", YESNO(this->stock_dump_firmware_matches_hardware_()));
-  ESP_LOGCONFIG(TAG, "  SAMD writes enabled: YES");
-  ESP_LOGCONFIG(TAG, "  Require backup before install: NO");
   ESP_LOGCONFIG(TAG, "  Init pins on boot: %s", YESNO(this->init_pins_on_boot_));
   ESP_LOGCONFIG(TAG, "  Runtime mode: %s", this->runtime_mode_ == RuntimeMode::SPI ? "spi" : "i2c");
   const char *entity_prefix = this->entity_prefix_.empty() ? "(default)" : this->entity_prefix_.c_str();
   ESP_LOGCONFIG(TAG, "  Entity prefix: %s", entity_prefix);
-  LOG_TEXT_SENSOR("  ", "SWD IDCODE", this->swd_idcode_sensor_);
-  LOG_TEXT_SENSOR("  ", "DSU DID", this->dsu_did_sensor_);
-  LOG_TEXT_SENSOR("  ", "Status", this->status_sensor_);
   LOG_TEXT_SENSOR("  ", "Firmware status", this->firmware_status_sensor_);
   LOG_TEXT_SENSOR("  ", "Firmware action", this->firmware_action_sensor_);
   LOG_TEXT_SENSOR("  ", "Firmware version", this->firmware_version_sensor_);
   LOG_TEXT_SENSOR("  ", "Diagnostics status", this->diagnostics_status_sensor_);
-  LOG_BINARY_SENSOR("  ", "Read allowed", this->read_allowed_sensor_);
   LOG_BINARY_SENSOR("  ", "Firmware update available", this->firmware_update_available_sensor_);
-  LOG_BINARY_SENSOR("  ", "Firmware restore available", this->firmware_restore_available_sensor_);
 }
 
 void EmporiaVueComponent::read_samd() {
@@ -176,7 +168,6 @@ void EmporiaVueComponent::read_samd() {
   this->last_error_.clear();
   ESP_LOGI(TAG, "Starting SAMD09 SWD read check");
   this->publish_status_("reading");
-  this->publish_read_allowed_(false);
 
   if (this->swdio_pin_ == nullptr || this->swclk_pin_ == nullptr) {
     this->set_error_("SWD pins are not configured");
@@ -193,9 +184,6 @@ void EmporiaVueComponent::read_samd() {
     this->publish_status_("failed: " + this->last_error_);
     ESP_LOGW(TAG, "SAMD09 read check failed: %s", this->last_error_.c_str());
     return;
-  }
-  if (this->swd_idcode_sensor_ != nullptr) {
-    this->swd_idcode_sensor_->publish_state(hex32_(swd_idcode));
   }
 
   if (!this->power_up_debug_()) {
@@ -223,12 +211,9 @@ void EmporiaVueComponent::read_samd() {
   }
 
   uint32_t dsu_did = 0;
-  if (this->mem_read32_(DSU_DID, &dsu_did)) {
-    if (this->dsu_did_sensor_ != nullptr) {
-      this->dsu_did_sensor_->publish_state(hex32_(dsu_did));
-    }
-  } else if (this->dsu_did_sensor_ != nullptr) {
-    this->dsu_did_sensor_->publish_state("unreadable");
+  if (!this->mem_read32_(DSU_DID, &dsu_did)) {
+    dsu_did = 0;
+    this->last_error_.clear();
   }
 
   const bool dsu_protected = (dsu_statusb & 0x01) != 0;
@@ -254,7 +239,6 @@ void EmporiaVueComponent::read_samd() {
   }
 
   this->release_pins_();
-  this->publish_read_allowed_(read_allowed);
   this->publish_status_(status);
   ESP_LOGI(TAG, "SAMD09 read check: SWD IDCODE=%s, DSU DID=%s, read_allowed=%s, %s", hex32_(swd_idcode).c_str(),
            hex32_(dsu_did).c_str(), YESNO(read_allowed), status.c_str());
@@ -292,9 +276,6 @@ void EmporiaVueComponent::probe_swd() {
       this->probe_idcode_("SWJ JTAG-to-SWD 32-bit, odewdney sample", 32, true, &swd_idcode, &ack)) {
     this->finish_swd_session_();
     this->release_pins_();
-    if (this->swd_idcode_sensor_ != nullptr) {
-      this->swd_idcode_sensor_->publish_state(hex32_(swd_idcode));
-    }
     ESP_LOGI(TAG, "SAMD09 SWD probe OK: DP IDCODE=%s, ACK=%s", hex32_(swd_idcode).c_str(), hex8_(ack).c_str());
     return;
   }
@@ -351,9 +332,6 @@ void EmporiaVueComponent::dump_flash() {
     this->publish_status_("failed: " + this->last_error_);
     ESP_LOGW(TAG, "SAMD09 flash dump failed: %s", this->last_error_.c_str());
     return;
-  }
-  if (this->swd_idcode_sensor_ != nullptr) {
-    this->swd_idcode_sensor_->publish_state(hex32_(swd_idcode));
   }
 
   if (!this->power_up_debug_()) {
@@ -477,9 +455,6 @@ void EmporiaVueComponent::backup_firmware() {
     ESP_LOGW(TAG, "SAMD09 firmware backup failed: %s", this->last_error_.c_str());
     return;
   }
-  if (this->swd_idcode_sensor_ != nullptr) {
-    this->swd_idcode_sensor_->publish_state(hex32_(swd_idcode));
-  }
 
   if (!this->power_up_debug_()) {
     this->finish_swd_session_();
@@ -515,11 +490,7 @@ void EmporiaVueComponent::backup_firmware() {
     return;
   }
 
-  if (this->mem_read32_(DSU_DID, &this->backup_dsu_did_)) {
-    if (this->dsu_did_sensor_ != nullptr) {
-      this->dsu_did_sensor_->publish_state(hex32_(this->backup_dsu_did_));
-    }
-  } else {
+  if (!this->mem_read32_(DSU_DID, &this->backup_dsu_did_)) {
     this->backup_dsu_did_ = 0;
     ESP_LOGW(TAG, "SAMD09 backup could not read DSU DID: %s", this->last_error_.c_str());
     this->last_error_.clear();
@@ -622,9 +593,6 @@ void EmporiaVueComponent::test_flash_write() {
     this->finish_swd_session_();
     fail(this->last_error_);
     return;
-  }
-  if (this->swd_idcode_sensor_ != nullptr) {
-    this->swd_idcode_sensor_->publish_state(hex32_(swd_idcode));
   }
 
   if (!this->power_up_debug_()) {
@@ -799,7 +767,6 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
   if (this->swdio_pin_ == nullptr || this->swclk_pin_ == nullptr) {
     this->set_error_("SWD pins are not configured");
     this->publish_firmware_update_available_(false);
-    this->publish_firmware_restore_available_(false);
     this->publish_firmware_action_("blocked: SWD pins missing");
     this->publish_firmware_status_(std::string(requested_name) + " failed: SWD pins missing");
     return;
@@ -827,21 +794,16 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
     this->finish_swd_session_();
     release_after_check();
     this->publish_firmware_update_available_(false);
-    this->publish_firmware_restore_available_(false);
     this->publish_firmware_action_("failed: " + this->last_error_);
     this->publish_firmware_status_(std::string(requested_name) + " failed: " + this->last_error_);
     ESP_LOGW(TAG, "SAMD09 firmware %s check failed: %s", requested_name, this->last_error_.c_str());
     return;
-  }
-  if (this->swd_idcode_sensor_ != nullptr) {
-    this->swd_idcode_sensor_->publish_state(hex32_(swd_idcode));
   }
 
   if (!this->power_up_debug_()) {
     this->finish_swd_session_();
     release_after_check();
     this->publish_firmware_update_available_(false);
-    this->publish_firmware_restore_available_(false);
     this->publish_firmware_action_("failed: " + this->last_error_);
     this->publish_firmware_status_(std::string(requested_name) + " failed: " + this->last_error_);
     ESP_LOGW(TAG, "SAMD09 firmware %s check failed: %s", requested_name, this->last_error_.c_str());
@@ -852,7 +814,6 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
   if (!this->verify_mem_ap_()) {
     release_after_check();
     this->publish_firmware_update_available_(false);
-    this->publish_firmware_restore_available_(false);
     this->publish_firmware_action_("failed: " + this->last_error_);
     this->publish_firmware_status_(std::string(requested_name) + " failed: " + this->last_error_);
     ESP_LOGW(TAG, "SAMD09 firmware %s check failed: %s", requested_name, this->last_error_.c_str());
@@ -875,7 +836,6 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
   if (!this->read_flash_geometry_(&nvm_param, &page_size, &page_count, &flash_size)) {
     release_after_check();
     this->publish_firmware_update_available_(false);
-    this->publish_firmware_restore_available_(false);
     this->publish_firmware_action_("failed: " + this->last_error_);
     this->publish_firmware_status_(std::string(requested_name) + " failed: " + this->last_error_);
     ESP_LOGW(TAG, "SAMD09 firmware %s check failed: %s", requested_name, this->last_error_.c_str());
@@ -912,10 +872,6 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
     action_reason = "firmware update requested";
   }
   this->publish_detected_firmware_action_(action, action_reason);
-  if (restore_requested && backup_valid) {
-    this->publish_firmware_restore_available_(true);
-  }
-
   if (!restore_requested && !stock_dump_requested && action == FirmwareAction::UNKNOWN) {
     release_after_check();
     this->publish_firmware_update_available_(false);
@@ -934,7 +890,6 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
 
   if (restore_requested && !backup_valid) {
     release_after_check();
-    this->publish_firmware_restore_available_(false);
     this->publish_firmware_action_("restore unavailable");
     this->publish_firmware_status_("restore unavailable: " + action_reason);
     ESP_LOGI(TAG, "SAMD09 stock restore unavailable: %s", action_reason.c_str());
@@ -964,7 +919,6 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
 
   if (selected_action == FirmwareAction::RESTORE_STOCK && !backup_valid) {
     release_after_check();
-    this->publish_firmware_restore_available_(false);
     this->publish_firmware_status_("restore blocked: valid stock backup required (" + backup_error + ")");
     ESP_LOGW(TAG, "SAMD09 stock restore blocked: valid backup required (%s)", backup_error.c_str());
     return;
@@ -1272,11 +1226,7 @@ void EmporiaVueComponent::set_error_(const std::string &error) {
   ESP_LOGW(TAG, "%s", error.c_str());
 }
 
-void EmporiaVueComponent::publish_status_(const std::string &status) {
-  if (this->status_sensor_ != nullptr) {
-    this->status_sensor_->publish_state(status);
-  }
-}
+void EmporiaVueComponent::publish_status_(const std::string &) {}
 
 void EmporiaVueComponent::publish_firmware_status_(const std::string &status) {
   if (this->firmware_status_sensor_ != nullptr) {
@@ -1314,18 +1264,6 @@ void EmporiaVueComponent::publish_firmware_version_(const FirmwareInfo &info) {
 void EmporiaVueComponent::publish_firmware_update_available_(bool available) {
   if (this->firmware_update_available_sensor_ != nullptr) {
     this->firmware_update_available_sensor_->publish_state(available);
-  }
-}
-
-void EmporiaVueComponent::publish_firmware_restore_available_(bool available) {
-  if (this->firmware_restore_available_sensor_ != nullptr) {
-    this->firmware_restore_available_sensor_->publish_state(available);
-  }
-}
-
-void EmporiaVueComponent::publish_read_allowed_(bool value) {
-  if (this->read_allowed_sensor_ != nullptr) {
-    this->read_allowed_sensor_->publish_state(value);
   }
 }
 
@@ -1712,9 +1650,6 @@ bool EmporiaVueComponent::collect_runtime_diagnostic_(std::string *summary) {
   if (!this->swd_initialize_(&swd_idcode)) {
     this->release_pins_();
     return false;
-  }
-  if (this->swd_idcode_sensor_ != nullptr) {
-    this->swd_idcode_sensor_->publish_state(hex32_(swd_idcode));
   }
   if (!this->power_up_debug_()) {
     this->release_pins_();
@@ -2624,7 +2559,6 @@ EmporiaVueComponent::FirmwareAction EmporiaVueComponent::determine_firmware_acti
 
 void EmporiaVueComponent::publish_detected_firmware_action_(FirmwareAction action, const std::string &reason) {
   this->publish_firmware_update_available_(action == FirmwareAction::UPDATE_MANAGED);
-  this->publish_firmware_restore_available_(action == FirmwareAction::RESTORE_STOCK);
 
   switch (action) {
     case FirmwareAction::UPDATE_MANAGED:
@@ -3024,15 +2958,8 @@ void EmporiaVueComponent::finish_install_success_() {
     this->release_pins_();
   }
 
-  BackupHeader backup_header{};
-  std::string backup_error;
-  bool backup_valid = false;
-  if (completed_action != FirmwareAction::FLASH_STOCK_DUMP) {
-    backup_valid = this->read_valid_backup_(&backup_header, &backup_error);
-  }
   if (completed_action == FirmwareAction::UPDATE_MANAGED) {
     this->publish_firmware_update_available_(false);
-    this->publish_firmware_restore_available_(backup_valid);
     this->publish_status_("update complete");
     this->publish_firmware_action_(str_sprintf("up to date: managed hw=%" PRIu32 " v%s",
                                                this->bundled_firmware_hardware_id_(),
@@ -3054,7 +2981,6 @@ void EmporiaVueComponent::finish_install_success_() {
     }
   } else if (completed_action == FirmwareAction::FLASH_STOCK_DUMP) {
     this->publish_firmware_update_available_(this->bundled_firmware_matches_hardware_());
-    this->publish_firmware_restore_available_(backup_valid);
     this->publish_status_("stock dump flash complete");
     this->publish_firmware_action_("stock dump firmware flashed");
     this->publish_firmware_status_("stock dump flash complete: stock firmware");
@@ -3071,7 +2997,6 @@ void EmporiaVueComponent::finish_install_success_() {
     });
   } else {
     this->publish_firmware_update_available_(this->bundled_firmware_matches_hardware_());
-    this->publish_firmware_restore_available_(false);
     this->publish_status_("restore complete");
     this->publish_firmware_action_("stock firmware restored");
     this->publish_firmware_status_("restore complete: stock firmware");
