@@ -1248,49 +1248,7 @@ bool EmporiaVueComponent::write_backup_hash_and_footer_(const uint8_t hash[32], 
          ESP_OK;
 }
 
-EmporiaVueComponent::ManagedI2CInfoResult EmporiaVueComponent::query_managed_i2c_info_(
-    ManagedI2CInfo *managed_info) {
-  ManagedI2CInfo candidate{};
-  const uint8_t command = MANAGED_I2C_INFO_COMMAND;
-  const i2c::ErrorCode error =
-      this->write_read(&command, 1, reinterpret_cast<uint8_t *>(&candidate), sizeof(candidate));
-  if (error != i2c::ERROR_OK) {
-    ESP_LOGD(TAG, "SAMD09 managed I2C info query failed: i2c error %u", static_cast<unsigned>(error));
-    return ManagedI2CInfoResult::I2C_ERROR;
-  }
-  if (!this->validate_managed_i2c_info_(candidate)) {
-    ESP_LOGD(TAG, "SAMD09 managed I2C info query returned no valid managed firmware response");
-    return ManagedI2CInfoResult::INVALID_RESPONSE;
-  }
-
-  *managed_info = candidate;
-  ESP_LOGD(TAG, "SAMD09 managed I2C info: hardware_id=%u, version=%" PRIu32 " (v%s), i2c_frame_length=%u",
-           static_cast<unsigned>(candidate.hardware_id), candidate.firmware_version,
-           format_firmware_version_(candidate.firmware_version).c_str(),
-           static_cast<unsigned>(candidate.i2c_frame_length));
-  return ManagedI2CInfoResult::VALID_RESPONSE;
-}
-
-bool EmporiaVueComponent::read_managed_i2c_info_(ManagedI2CInfo *managed_info) {
-  return this->query_managed_i2c_info_(managed_info) == ManagedI2CInfoResult::VALID_RESPONSE;
-}
-
-bool EmporiaVueComponent::validate_managed_i2c_info_(const ManagedI2CInfo &managed_info) const {
-  const uint32_t expected_crc =
-      crc32_(reinterpret_cast<const uint8_t *>(&managed_info), offsetof(ManagedI2CInfo, crc32));
-  if (expected_crc != managed_info.crc32) {
-    return false;
-  }
-  if (managed_info.hardware_id != 2 && managed_info.hardware_id != 3) {
-    return false;
-  }
-  if (managed_info.firmware_version == 0) {
-    return false;
-  }
-  return managed_info.i2c_frame_length == STOCK_I2C_FRAME_SIZE;
-}
-
-EmporiaVueComponent::ManagedI2CInfoResult EmporiaVueComponent::query_managed_i2c_diagnostic_(
+EmporiaVueComponent::ManagedI2CDiagnosticResult EmporiaVueComponent::query_managed_i2c_diagnostic_(
     ManagedI2CDiagnostic *diagnostic) {
   ManagedI2CDiagnostic candidate{};
   const uint8_t command = MANAGED_I2C_DIAGNOSTIC_COMMAND;
@@ -1298,11 +1256,11 @@ EmporiaVueComponent::ManagedI2CInfoResult EmporiaVueComponent::query_managed_i2c
       this->write_read(&command, 1, reinterpret_cast<uint8_t *>(&candidate), sizeof(candidate));
   if (error != i2c::ERROR_OK) {
     ESP_LOGD(TAG, "SAMD09 managed I2C diagnostic query failed: i2c error %u", static_cast<unsigned>(error));
-    return ManagedI2CInfoResult::I2C_ERROR;
+    return ManagedI2CDiagnosticResult::I2C_ERROR;
   }
   if (!this->validate_managed_i2c_diagnostic_(candidate)) {
     ESP_LOGD(TAG, "SAMD09 managed I2C diagnostic query returned no valid managed firmware response");
-    return ManagedI2CInfoResult::INVALID_RESPONSE;
+    return ManagedI2CDiagnosticResult::INVALID_RESPONSE;
   }
 
   *diagnostic = candidate;
@@ -1311,7 +1269,7 @@ EmporiaVueComponent::ManagedI2CInfoResult EmporiaVueComponent::query_managed_i2c
            ", read=%" PRIu32 ", dma_errors=%" PRIu32 ", overruns=%" PRIu32,
            candidate.diagnostic_sequence, candidate.sample_blocks, candidate.packets_built, candidate.packets_read,
            candidate.dma_transfer_errors, candidate.packet_overruns);
-  return ManagedI2CInfoResult::VALID_RESPONSE;
+  return ManagedI2CDiagnosticResult::VALID_RESPONSE;
 }
 
 bool EmporiaVueComponent::validate_managed_i2c_diagnostic_(const ManagedI2CDiagnostic &diagnostic) const {
@@ -1327,6 +1285,18 @@ bool EmporiaVueComponent::validate_managed_i2c_diagnostic_(const ManagedI2CDiagn
     return false;
   }
   return diagnostic.i2c_frame_length == STOCK_I2C_FRAME_SIZE;
+}
+
+void EmporiaVueComponent::publish_firmware_info_from_diagnostic_(const ManagedI2CDiagnostic &diagnostic) {
+  FirmwareInfo info{};
+  info.kind = FirmwareKind::MANAGED;
+  info.hardware_id = diagnostic.hardware_id;
+  info.version = diagnostic.firmware_version;
+  info.i2c_frame_length = diagnostic.i2c_frame_length;
+  info.detected_by_i2c = true;
+  this->detected_firmware_info_ = info;
+  this->detected_firmware_info_valid_ = true;
+  this->publish_firmware_version_(info);
 }
 
 void EmporiaVueComponent::refresh_i2c_diagnostics_() {
@@ -1347,12 +1317,13 @@ void EmporiaVueComponent::refresh_i2c_diagnostics_() {
   }
 
   ManagedI2CDiagnostic diagnostic{};
-  const ManagedI2CInfoResult result = this->query_managed_i2c_diagnostic_(&diagnostic);
-  if (result == ManagedI2CInfoResult::VALID_RESPONSE) {
+  const ManagedI2CDiagnosticResult result = this->query_managed_i2c_diagnostic_(&diagnostic);
+  if (result == ManagedI2CDiagnosticResult::VALID_RESPONSE) {
+    this->publish_firmware_info_from_diagnostic_(diagnostic);
     this->publish_i2c_diagnostics_(diagnostic);
   } else if (this->diagnostics_status_sensor_ != nullptr) {
     this->diagnostics_status_sensor_->publish_state(
-        result == ManagedI2CInfoResult::I2C_ERROR ? "failed: i2c error" : "failed: invalid response");
+        result == ManagedI2CDiagnosticResult::I2C_ERROR ? "failed: i2c error" : "failed: invalid response");
   }
 }
 
@@ -1434,21 +1405,14 @@ void EmporiaVueComponent::probe_runtime_i2c_after_firmware_update_() {
     return;
   }
 
-  ManagedI2CInfo managed_i2c_info{};
-  FirmwareInfo info{};
-  const ManagedI2CInfoResult info_result = this->query_managed_i2c_info_(&managed_i2c_info);
-  if (info_result == ManagedI2CInfoResult::VALID_RESPONSE) {
-    info.kind = FirmwareKind::MANAGED;
-    info.hardware_id = managed_i2c_info.hardware_id;
-    info.version = managed_i2c_info.firmware_version;
-    info.i2c_frame_length = managed_i2c_info.i2c_frame_length;
-    info.detected_by_i2c = true;
-    this->detected_firmware_info_ = info;
-    this->detected_firmware_info_valid_ = true;
-    this->publish_firmware_version_(info);
-    ESP_LOGI(TAG, "SAMD09 runtime managed I2C info OK after update");
+  ManagedI2CDiagnostic diagnostic{};
+  const ManagedI2CDiagnosticResult info_result = this->query_managed_i2c_diagnostic_(&diagnostic);
+  if (info_result == ManagedI2CDiagnosticResult::VALID_RESPONSE) {
+    this->publish_firmware_info_from_diagnostic_(diagnostic);
+    this->publish_i2c_diagnostics_(diagnostic);
+    ESP_LOGI(TAG, "SAMD09 runtime managed I2C diagnostic OK after update");
   } else {
-    ESP_LOGW(TAG, "SAMD09 runtime managed I2C info failed after update: result=%u",
+    ESP_LOGW(TAG, "SAMD09 runtime managed I2C diagnostic failed after update: result=%u",
              static_cast<unsigned>(info_result));
   }
 
@@ -1474,18 +1438,12 @@ void EmporiaVueComponent::publish_initial_firmware_detection_() {
     return;
   }
 
-  ManagedI2CInfo managed_i2c_info{};
+  ManagedI2CDiagnostic diagnostic{};
   FirmwareInfo info{};
-  const ManagedI2CInfoResult result = this->query_managed_i2c_info_(&managed_i2c_info);
-  if (result == ManagedI2CInfoResult::VALID_RESPONSE) {
-    info.kind = FirmwareKind::MANAGED;
-    info.hardware_id = managed_i2c_info.hardware_id;
-    info.version = managed_i2c_info.firmware_version;
-    info.i2c_frame_length = managed_i2c_info.i2c_frame_length;
-    info.detected_by_i2c = true;
-    this->detected_firmware_info_ = info;
-    this->detected_firmware_info_valid_ = true;
-    this->publish_firmware_version_(info);
+  const ManagedI2CDiagnosticResult result = this->query_managed_i2c_diagnostic_(&diagnostic);
+  if (result == ManagedI2CDiagnosticResult::VALID_RESPONSE) {
+    this->publish_firmware_info_from_diagnostic_(diagnostic);
+    this->publish_i2c_diagnostics_(diagnostic);
     const i2c::ErrorCode frame_error = this->read_normal_i2c_frame_("startup");
     if (frame_error == i2c::ERROR_OK) {
       this->publish_firmware_status_("managed firmware detected; normal i2c frame ok");
@@ -1496,7 +1454,7 @@ void EmporiaVueComponent::publish_initial_firmware_detection_() {
     return;
   }
 
-  if (result == ManagedI2CInfoResult::INVALID_RESPONSE) {
+  if (result == ManagedI2CDiagnosticResult::INVALID_RESPONSE) {
     info.kind = FirmwareKind::STOCK;
     info.i2c_frame_length = STOCK_I2C_FRAME_SIZE;
     this->detected_firmware_info_ = info;

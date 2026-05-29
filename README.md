@@ -63,8 +63,9 @@ treated as stock/legacy and therefore as `hardware_id=0`, `firmware_version=0`. 
 `hardware_id` and `firmware_version` as compatibility keys; the bundled Vue 2 image is `hardware_id=2`. Internally the
 version is a monotonic integer in tenths, so `16` is shown as `v1.6` and `100` as `v10.0`; comparisons and update
 decisions compare the detected raw integer against the bundled image's raw integer. The current upstream
-`emporia_vue` I2C frame is 284 bytes; a future managed SAMD firmware can expose these values in its I2C payload too,
-but this SWD component does not depend on that yet.
+`emporia_vue` I2C frame is 284 bytes. Managed firmware also returns `hardware_id`, `firmware_version`, and frame length
+through the same I2C diagnostic command that reports runtime counters. The SWD flash footer remains separate on purpose,
+so the ESP32 can still identify managed firmware when I2C is unavailable.
 Because Home Assistant buttons cannot be disabled dynamically by an external component, use `SAMD Firmware Status` as
 the authoritative state. The update and restore buttons exit without writing if their action is not applicable, no
 bundled image is compiled in, or no valid backup is present.
@@ -86,8 +87,9 @@ That keeps the ESP32 and ESPHome reachable while avoiding a reset into a partial
 
 ### Managed SAMD09 changes from stock
 
-- The managed firmware keeps the stock-compatible 284-byte I2C measurement frame, but exposes separate managed info and
-  diagnostic I2C commands before returning to the normal frame stream.
+- The managed firmware keeps the stock-compatible 284-byte I2C measurement frame, but exposes one diagnostic I2C command
+  for runtime identity (`hardware_id`, `firmware_version`, frame length) and health counters before returning to the
+  normal frame stream.
 - Raw ADC offset correction is intentionally changed from the stock-like direct per-window average replacement to a
   smoothed per-channel DC offset tracker. The tracker runs on all 22 raw ADC channels before RMS, power, phase, and
   frequency are calculated, so it reduces baseline jitter without clamping or filtering finished watt values.

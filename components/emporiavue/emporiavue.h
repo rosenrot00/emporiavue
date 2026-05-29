@@ -156,7 +156,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   static constexpr uint32_t MANAGED_INFO_MAGIC = 0x4556534DUL;  // "EVSM"
   static constexpr uint16_t MANAGED_INFO_FORMAT_VERSION = 1;
   static constexpr uint16_t STOCK_I2C_FRAME_SIZE = 284;
-  static constexpr uint8_t MANAGED_I2C_INFO_COMMAND = 0xF0;
   static constexpr uint8_t MANAGED_I2C_DIAGNOSTIC_COMMAND = 0xF1;
   static constexpr uint32_t DIAGNOSTICS_INTERVAL_MS = 60000;
 
@@ -191,13 +190,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
     uint8_t image_sha256[32];
     char marker[MANAGED_MARKER_LENGTH];
     uint8_t reserved1;
-  } __attribute__((packed));
-
-  struct ManagedI2CInfo {
-    uint16_t hardware_id;
-    uint32_t firmware_version;
-    uint16_t i2c_frame_length;
-    uint32_t crc32;
   } __attribute__((packed));
 
   struct ManagedI2CDiagnostic {
@@ -253,7 +245,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
     MANAGED,
   };
 
-  enum class ManagedI2CInfoResult : uint8_t {
+  enum class ManagedI2CDiagnosticResult : uint8_t {
     I2C_ERROR = 0,
     INVALID_RESPONSE,
     VALID_RESPONSE,
@@ -339,12 +331,10 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
                             uint32_t nvm_param, uint32_t dsu_did);
   bool write_backup_state_(uint8_t state);
   bool write_backup_hash_and_footer_(const uint8_t hash[32], uint32_t flash_size);
-  ManagedI2CInfoResult query_managed_i2c_info_(ManagedI2CInfo *managed_info);
-  bool read_managed_i2c_info_(ManagedI2CInfo *managed_info);
-  bool validate_managed_i2c_info_(const ManagedI2CInfo &managed_info) const;
-  ManagedI2CInfoResult query_managed_i2c_diagnostic_(ManagedI2CDiagnostic *diagnostic);
+  ManagedI2CDiagnosticResult query_managed_i2c_diagnostic_(ManagedI2CDiagnostic *diagnostic);
   bool validate_managed_i2c_diagnostic_(const ManagedI2CDiagnostic &diagnostic) const;
   void refresh_i2c_diagnostics_();
+  void publish_firmware_info_from_diagnostic_(const ManagedI2CDiagnostic &diagnostic);
   void publish_i2c_diagnostics_(const ManagedI2CDiagnostic &diagnostic);
   i2c::ErrorCode read_normal_i2c_frame_(const char *context);
   void probe_runtime_i2c_after_firmware_update_();

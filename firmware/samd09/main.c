@@ -154,7 +154,7 @@ typedef volatile       uint32_t RoReg;   /**< Read only 32-bit register (volatil
 #define BOOT_STAGE_NVM_READ_WAIT 11
 #define BOOT_STAGE_CALCBLOCK_CLEARED 12
 #define BOOT_STAGE_SENSOR_CLEARED 13
-#define BOOT_STAGE_MANAGED_INFO_READY 14
+#define BOOT_STAGE_MANAGED_DIAGNOSTIC_READY 14
 #define BOOT_STAGE_AVERAGES_CLEARED 15
 #define BOOT_STAGE_PORT_CONFIGURED 16
 #define BOOT_STAGE_CLOCK_CONFIGURED 17
@@ -265,13 +265,11 @@ uint8_t SensorSequence = 0;
 
 #define ESPpacketlength       0x11C
 #define EMPORIAVUE_HARDWARE_ID       2
-#define EMPORIAVUE_FIRMWARE_VERSION  24
-#define EMPORIAVUE_I2C_INFO_COMMAND  0xF0
+#define EMPORIAVUE_FIRMWARE_VERSION  25
 #define EMPORIAVUE_I2C_DIAGNOSTIC_COMMAND 0xF1
 
 #define MANAGED_READ_COMMAND_NONE       0
-#define MANAGED_READ_COMMAND_INFO       1
-#define MANAGED_READ_COMMAND_DIAGNOSTIC 2
+#define MANAGED_READ_COMMAND_DIAGNOSTIC 1
 
 #define MAIN_SAMPLE_COUNT              12987
 #define MUX_SAMPLE_COUNT               1623
@@ -291,14 +289,6 @@ uint8_t SensorSequence = 0;
 #define ADC_REFCTRL_VREFA              3
 #define ADC_INPUTCTRL_SCAN8_DIFF_GAIN2 0x1270000UL
 #define ADC_CTRLB_DIV8_12BIT_DIFF      0x101
-
-struct __attribute__((__packed__)) ManagedInfoType
-{
-	uint16_t hardware_id;
-	uint32_t firmware_version;
-	uint16_t i2c_frame_length;
-	uint32_t crc32;
-} ManagedInfo;
 
 struct __attribute__((__packed__)) ManagedDiagnosticType
 {
@@ -517,7 +507,6 @@ void irq_handler_reset(void);
 void irq_handler_dmac(void);
 void irq_handler_sercom1(void);
 uint32_t crc32(const uint8_t *data, unsigned int length);
-void configure_managed_i2c_info(void);
 void configure_managed_i2c_diagnostic(void);
 DUMMY void irq_handler_nmi(void);
 void irq_handler_hard_fault(void);
@@ -677,14 +666,6 @@ uint32_t crc32(const uint8_t *data, unsigned int length)
 	return ~crc;
 }
 
-void configure_managed_i2c_info(void)
-{
-	ManagedInfo.hardware_id = EMPORIAVUE_HARDWARE_ID;
-	ManagedInfo.firmware_version = EMPORIAVUE_FIRMWARE_VERSION;
-	ManagedInfo.i2c_frame_length = ESPpacketlength;
-	ManagedInfo.crc32 = crc32((uint8_t*) &ManagedInfo, __SIZE_OF_VAR__(ManagedInfo) - __SIZE_OF_VAR__(ManagedInfo.crc32));
-}
-
 void configure_managed_i2c_diagnostic(void)
 {
 	ManagedDiagnostic.hardware_id = EMPORIAVUE_HARDWARE_ID;
@@ -709,21 +690,7 @@ void irq_handler_sercom1(void) //We've configured sercom to use IRQ sources "Dat
 	{
 		if ((REG_SERCOM1_I2CS_STATUS & 8) == 8) //DIR == 1 = Master read operation is in progress.
 		{
-			if (ManagedReadCommand == MANAGED_READ_COMMAND_INFO)
-			{
-				if (ESPbyteIndex < __SIZE_OF_VAR__(ManagedInfo))
-				{
-					uint8_t* px = (uint8_t*) &ManagedInfo;
-					px = px + ESPbyteIndex;
-					REG_SERCOM1_I2CS_DATA = *px;
-				}
-				else
-					REG_SERCOM1_I2CS_DATA = 0xFF;
-
-				if (ESPbyteIndex <= __SIZE_OF_VAR__(ManagedInfo))
-					ESPbyteIndex++;
-			}
-			else if (ManagedReadCommand == MANAGED_READ_COMMAND_DIAGNOSTIC)
+			if (ManagedReadCommand == MANAGED_READ_COMMAND_DIAGNOSTIC)
 			{
 				if (ESPbyteIndex < __SIZE_OF_VAR__(ManagedDiagnostic))
 				{
@@ -757,12 +724,7 @@ void irq_handler_sercom1(void) //We've configured sercom to use IRQ sources "Dat
 		}
 		else {
 			uint8_t received = REG_SERCOM1_I2CS_DATA; //read data
-			if (received == EMPORIAVUE_I2C_INFO_COMMAND)
-			{
-				ManagedReadCommand = MANAGED_READ_COMMAND_INFO;
-				ESPbyteIndex = 0;
-			}
-			else if (received == EMPORIAVUE_I2C_DIAGNOSTIC_COMMAND)
+			if (received == EMPORIAVUE_I2C_DIAGNOSTIC_COMMAND)
 			{
 				configure_managed_i2c_diagnostic();
 				ManagedReadCommand = MANAGED_READ_COMMAND_DIAGNOSTIC;
@@ -1278,8 +1240,8 @@ int main(void)
 		*(uint8_t*)(idp+x) = 0;
 	set_boot_stage(BOOT_STAGE_SENSOR_CLEARED);
 
-	configure_managed_i2c_info();
-	set_boot_stage(BOOT_STAGE_MANAGED_INFO_READY);
+	configure_managed_i2c_diagnostic();
+	set_boot_stage(BOOT_STAGE_MANAGED_DIAGNOSTIC_READY);
 
 	for (int i = 0; i < ADC_OFFSET_CHANNEL_COUNT; i++)
 	{
