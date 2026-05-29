@@ -29,8 +29,12 @@ void EmporiaVueComponent::setup() {
     this->diagnostics_status_sensor_->publish_state("unknown");
   }
   this->set_timeout("initial_firmware_detection", 5000, [this]() { this->publish_initial_firmware_detection_(); });
-  this->set_timeout("initial_samd_i2c_diagnostics", 10000, [this]() { this->refresh_i2c_diagnostics_(); });
-  this->set_interval("samd_i2c_diagnostics", DIAGNOSTICS_INTERVAL_MS, [this]() { this->refresh_i2c_diagnostics_(); });
+  if (this->runtime_mode_ == RuntimeMode::I2C) {
+    this->set_timeout("initial_samd_i2c_diagnostics", 10000, [this]() { this->refresh_i2c_diagnostics_(); });
+    this->set_interval("samd_i2c_diagnostics", DIAGNOSTICS_INTERVAL_MS, [this]() { this->refresh_i2c_diagnostics_(); });
+  } else if (this->diagnostics_status_sensor_ != nullptr) {
+    this->diagnostics_status_sensor_->publish_state("spi mode: i2c diagnostics disabled");
+  }
 }
 
 void EmporiaVueComponent::loop() {
@@ -144,6 +148,7 @@ void EmporiaVueComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  SAMD writes enabled: %s", YESNO(this->allow_samd_write_));
   ESP_LOGCONFIG(TAG, "  Require backup before install: %s", YESNO(this->require_backup_before_install_));
   ESP_LOGCONFIG(TAG, "  Init pins on boot: %s", YESNO(this->init_pins_on_boot_));
+  ESP_LOGCONFIG(TAG, "  Runtime mode: %s", this->runtime_mode_ == RuntimeMode::SPI ? "spi" : "i2c");
   LOG_TEXT_SENSOR("  ", "SWD IDCODE", this->swd_idcode_sensor_);
   LOG_TEXT_SENSOR("  ", "DSU DID", this->dsu_did_sensor_);
   LOG_TEXT_SENSOR("  ", "Status", this->status_sensor_);
@@ -2255,6 +2260,12 @@ void EmporiaVueComponent::refresh_i2c_diagnostics_() {
   if (this->backup_active_ || this->install_active_ || this->dump_active_) {
     return;
   }
+  if (this->runtime_mode_ != RuntimeMode::I2C) {
+    if (this->diagnostics_status_sensor_ != nullptr) {
+      this->diagnostics_status_sensor_->publish_state("unavailable: spi mode");
+    }
+    return;
+  }
   if (!this->detected_firmware_info_valid_ || this->detected_firmware_info_.kind != FirmwareKind::MANAGED) {
     if (this->diagnostics_status_sensor_ != nullptr) {
       this->diagnostics_status_sensor_->publish_state("unavailable: managed firmware not detected");
@@ -2345,6 +2356,11 @@ i2c::ErrorCode EmporiaVueComponent::read_normal_i2c_frame_(const char *context) 
 }
 
 void EmporiaVueComponent::probe_runtime_i2c_after_firmware_update_() {
+  if (this->runtime_mode_ != RuntimeMode::I2C) {
+    this->publish_firmware_status_("update complete; spi mode active");
+    return;
+  }
+
   ManagedI2CInfo managed_i2c_info{};
   FirmwareInfo info{};
   const ManagedI2CInfoResult info_result = this->query_managed_i2c_info_(&managed_i2c_info);
@@ -2381,6 +2397,14 @@ void EmporiaVueComponent::probe_runtime_i2c_after_firmware_update_() {
 
 void EmporiaVueComponent::publish_initial_firmware_detection_() {
   if (this->backup_active_ || this->install_active_ || this->dump_active_) {
+    return;
+  }
+  if (this->runtime_mode_ != RuntimeMode::I2C) {
+    FirmwareInfo unknown_info{};
+    this->detected_firmware_info_ = unknown_info;
+    this->detected_firmware_info_valid_ = false;
+    this->publish_firmware_version_(unknown_info);
+    this->publish_firmware_status_("spi mode: i2c firmware detection disabled");
     return;
   }
 
@@ -3068,7 +3092,11 @@ void EmporiaVueComponent::finish_install_success_() {
              this->bundled_firmware_hardware_id_(), this->bundled_firmware_version_(),
              format_firmware_version_(this->bundled_firmware_version_()).c_str(), this->bundled_firmware_size_(),
              sha256_hex_(BUNDLED_SAMD_FIRMWARE_SHA256).c_str());
-    this->set_timeout("post_update_i2c_probe", 1000, [this]() { this->probe_runtime_i2c_after_firmware_update_(); });
+    if (this->runtime_mode_ == RuntimeMode::I2C) {
+      this->set_timeout("post_update_i2c_probe", 1000, [this]() { this->probe_runtime_i2c_after_firmware_update_(); });
+    } else {
+      this->publish_firmware_status_("update complete: spi mode active");
+    }
   } else if (completed_action == FirmwareAction::FLASH_STOCK_DUMP) {
     this->publish_firmware_update_available_(this->bundled_firmware_matches_hardware_());
     this->publish_firmware_restore_available_(backup_valid);

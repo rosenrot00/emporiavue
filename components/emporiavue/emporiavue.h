@@ -22,6 +22,11 @@ namespace emporiavue {
 
 class EmporiaVueComponent : public Component, public i2c::I2CDevice {
  public:
+  enum class RuntimeMode : uint8_t {
+    I2C = 0,
+    SPI = 1,
+  };
+
   void setup() override;
   void loop() override;
   void dump_config() override;
@@ -39,6 +44,9 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void set_clock_delay_us(uint8_t clock_delay_us) { this->clock_delay_us_ = clock_delay_us; }
   void set_retry_count(uint8_t retry_count) { this->retry_count_ = retry_count; }
   void set_init_pins_on_boot(bool init_pins_on_boot) { this->init_pins_on_boot_ = init_pins_on_boot; }
+  void set_runtime_mode(uint8_t mode) {
+    this->runtime_mode_ = mode == 1 ? RuntimeMode::SPI : RuntimeMode::I2C;
+  }
   void set_dump_start_address(uint32_t dump_start_address) { this->dump_start_address_ = dump_start_address; }
   void set_dump_block_size(uint16_t dump_block_size) { this->dump_block_size_ = dump_block_size; }
   void set_dump_block_count(uint32_t dump_block_count) { this->dump_block_count_ = dump_block_count; }
@@ -447,6 +455,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   uint32_t reset_release_time_ms_{50};
   uint8_t clock_delay_us_{2};
   uint8_t retry_count_{40};
+  RuntimeMode runtime_mode_{RuntimeMode::I2C};
   uint32_t dump_start_address_{FLASH_START};
   uint16_t dump_block_size_{64};
   uint32_t dump_block_count_{5};
