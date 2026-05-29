@@ -1,3 +1,6 @@
+from pathlib import Path
+import urllib.request
+
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import pins
@@ -27,12 +30,18 @@ EmporiaVueInstallFirmwareButton = emporiavue_ns.class_(
 EmporiaVueRestoreFirmwareButton = emporiavue_ns.class_(
     "EmporiaVueRestoreFirmwareButton", button.Button
 )
+EmporiaVueFlashExternalFirmwareButton = emporiavue_ns.class_(
+    "EmporiaVueFlashExternalFirmwareButton", button.Button
+)
 
 CONF_SWCLK_PIN = "swclk_pin"
 CONF_SWDIO_PIN = "swdio_pin"
 CONF_BACKUP_FIRMWARE_BUTTON = "backup_firmware_button"
 CONF_INSTALL_FIRMWARE_BUTTON = "install_firmware_button"
 CONF_RESTORE_FIRMWARE_BUTTON = "restore_firmware_button"
+CONF_FLASH_EXTERNAL_FIRMWARE_BUTTON = "flash_external_firmware_button"
+CONF_EXTERNAL_SAMD_FIRMWARE = "external_samd_firmware"
+CONF_URL = "url"
 CONF_DIAG_SAMPLE_BLOCKS = "diag_sample_blocks"
 CONF_DIAG_PACKETS_BUILT = "diag_packets_built"
 CONF_DIAG_PACKETS_READ = "diag_packets_read"
@@ -74,12 +83,15 @@ MODE_IDS = {
     MODE_SPI: 1,
 }
 
+EXTERNAL_SAMD_FIRMWARE_HEADER = Path(__file__).with_name("external_samd_firmware.h")
+
 CORE_ENTITY_NAMES = {
     CONF_FIRMWARE_VERSION: "SAMD Firmware Version",
     CONF_BUNDLED_FIRMWARE_VERSION: "SAMD Bundled Firmware Version",
-    CONF_BACKUP_FIRMWARE_BUTTON: "Backup SAMD09 Firmware",
-    CONF_INSTALL_FIRMWARE_BUTTON: "Update SAMD09 Firmware",
-    CONF_RESTORE_FIRMWARE_BUTTON: "Restore SAMD09 Backup Firmware",
+    CONF_BACKUP_FIRMWARE_BUTTON: "Read SAMD Firmware",
+    CONF_INSTALL_FIRMWARE_BUTTON: "Flash SAMD Bundled Firmware",
+    CONF_RESTORE_FIRMWARE_BUTTON: "Flash SAMD Backup Firmware",
+    CONF_FLASH_EXTERNAL_FIRMWARE_BUTTON: "Flash SAMD External Firmware",
 }
 
 DIAGNOSTIC_ENTITY_NAMES = {
@@ -108,6 +120,12 @@ def _apply_entity_name_defaults(config):
         return config
 
     for key, default_name in CORE_ENTITY_NAMES.items():
+        if (
+            key == CONF_FLASH_EXTERNAL_FIRMWARE_BUTTON
+            and CONF_EXTERNAL_SAMD_FIRMWARE not in config
+            and key not in config
+        ):
+            continue
         entity_config = config.get(key)
         if entity_config is None:
             entity_config = {}
@@ -153,6 +171,19 @@ def _apply_diagnostics_defaults(config):
     return config
 
 
+def _apply_external_firmware_defaults(config):
+    config = dict(config)
+    if CONF_EXTERNAL_SAMD_FIRMWARE not in config:
+        return config
+
+    entity_config = config.get(CONF_FLASH_EXTERNAL_FIRMWARE_BUTTON)
+    if entity_config is None:
+        config[CONF_FLASH_EXTERNAL_FIRMWARE_BUTTON] = {
+            CONF_NAME: CORE_ENTITY_NAMES[CONF_FLASH_EXTERNAL_FIRMWARE_BUTTON]
+        }
+    return config
+
+
 def _apply_hardware_defaults(config):
     config = dict(config)
     if config.get(CONF_HARDWARE) == HARDWARE_VUE2:
@@ -171,7 +202,68 @@ def _apply_hardware_defaults(config):
 
 
 def _apply_defaults(config):
-    return _apply_entity_name_defaults(_apply_diagnostics_defaults(_apply_hardware_defaults(config)))
+    return _apply_entity_name_defaults(
+        _apply_diagnostics_defaults(_apply_external_firmware_defaults(_apply_hardware_defaults(config)))
+    )
+
+
+def _download_external_samd_firmware(url):
+    try:
+        with urllib.request.urlopen(url, timeout=30) as response:
+            data = response.read()
+    except Exception as err:
+        raise cv.Invalid(f"external_samd_firmware download failed: {err}") from err
+
+    if not data:
+        raise cv.Invalid("external_samd_firmware URL returned an empty file")
+    return data
+
+
+def _external_samd_firmware_header(data=None):
+    if not data:
+        return """#pragma once
+
+#include <cstdint>
+
+namespace esphome {
+namespace emporiavue {
+
+static constexpr uint32_t EXTERNAL_SAMD_FIRMWARE_SIZE = 0UL;
+static constexpr uint8_t EXTERNAL_SAMD_FIRMWARE[1] = {0x00};
+
+}  // namespace emporiavue
+}  // namespace esphome
+"""
+
+    rows = []
+    for offset in range(0, len(data), 12):
+        chunk = data[offset : offset + 12]
+        rows.append("    " + ", ".join(f"0x{byte:02x}" for byte in chunk) + ",")
+    body = "\n".join(rows)
+    return f"""#pragma once
+
+#include <cstdint>
+
+namespace esphome {{
+namespace emporiavue {{
+
+static constexpr uint32_t EXTERNAL_SAMD_FIRMWARE_SIZE = {len(data)}UL;
+static constexpr uint8_t EXTERNAL_SAMD_FIRMWARE[EXTERNAL_SAMD_FIRMWARE_SIZE] = {{
+{body}
+}};
+
+}}  // namespace emporiavue
+}}  // namespace esphome
+"""
+
+
+def _write_external_samd_firmware_header(data=None):
+    try:
+        EXTERNAL_SAMD_FIRMWARE_HEADER.write_text(
+            _external_samd_firmware_header(data), encoding="utf-8"
+        )
+    except OSError as err:
+        raise cv.Invalid(f"external_samd_firmware header generation failed: {err}") from err
 
 
 EMPORIAVUE_SCHEMA = cv.Schema(
@@ -196,6 +288,11 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_AUTO_UPDATE_SAMD, default=False): cv.boolean,
         cv.Optional(CONF_DIAGNOSTICS_INTERVAL): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_BACKUP_PARTITION, default="samd_bak"): cv.string_strict,
+        cv.Optional(CONF_EXTERNAL_SAMD_FIRMWARE): cv.Schema(
+            {
+                cv.Required(CONF_URL): cv.string_strict,
+            }
+        ),
         cv.Optional(
             CONF_FIRMWARE_VERSION,
             default={CONF_NAME: "SAMD Firmware Version"},
@@ -268,7 +365,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         ),
         cv.Optional(
             CONF_BACKUP_FIRMWARE_BUTTON,
-            default={CONF_NAME: "Backup SAMD09 Firmware"},
+            default={CONF_NAME: "Read SAMD Firmware"},
         ): button.button_schema(
             EmporiaVueBackupFirmwareButton,
             icon="mdi:content-save",
@@ -276,18 +373,23 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         ),
         cv.Optional(
             CONF_INSTALL_FIRMWARE_BUTTON,
-            default={CONF_NAME: "Update SAMD09 Firmware"},
+            default={CONF_NAME: "Flash SAMD Bundled Firmware"},
         ): button.button_schema(
             EmporiaVueInstallFirmwareButton,
-            icon="mdi:update",
+            icon="mdi:package-variant-closed",
             entity_category=ENTITY_CATEGORY_CONFIG,
         ),
         cv.Optional(
             CONF_RESTORE_FIRMWARE_BUTTON,
-            default={CONF_NAME: "Restore SAMD09 Backup Firmware"},
+            default={CONF_NAME: "Flash SAMD Backup Firmware"},
         ): button.button_schema(
             EmporiaVueRestoreFirmwareButton,
             icon="mdi:backup-restore",
+            entity_category=ENTITY_CATEGORY_CONFIG,
+        ),
+        cv.Optional(CONF_FLASH_EXTERNAL_FIRMWARE_BUTTON): button.button_schema(
+            EmporiaVueFlashExternalFirmwareButton,
+            icon="mdi:web",
             entity_category=ENTITY_CATEGORY_CONFIG,
         ),
     }
@@ -297,6 +399,11 @@ CONFIG_SCHEMA = cv.All(_apply_defaults, EMPORIAVUE_SCHEMA)
 
 
 async def to_code(config):
+    external_firmware = None
+    if external_firmware_config := config.get(CONF_EXTERNAL_SAMD_FIRMWARE):
+        external_firmware = _download_external_samd_firmware(external_firmware_config[CONF_URL])
+    _write_external_samd_firmware_header(external_firmware)
+
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
     await i2c.register_i2c_device(var, config)
@@ -359,4 +466,7 @@ async def to_code(config):
         await cg.register_parented(btn, var)
     if restore_firmware_button_config := config.get(CONF_RESTORE_FIRMWARE_BUTTON):
         btn = await button.new_button(restore_firmware_button_config)
+        await cg.register_parented(btn, var)
+    if flash_external_firmware_button_config := config.get(CONF_FLASH_EXTERNAL_FIRMWARE_BUTTON):
+        btn = await button.new_button(flash_external_firmware_button_config)
         await cg.register_parented(btn, var)

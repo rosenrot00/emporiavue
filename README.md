@@ -48,18 +48,26 @@ external_components:
 
 The default config creates only the SAMD firmware controls that are needed during normal use:
 
-- `Backup SAMD09 Firmware`: backs up detected legacy SAMD09 firmware into the `samd_bak` ESP32 data partition. It refuses to back up firmware marked as managed by this project.
-- `Update SAMD09 Firmware`: checks whether the running SAMD09 firmware is stock or older than the bundled managed
-  SAMD09 image and flashes that bundled image.
-- `Restore SAMD09 Backup Firmware`: restores the verified firmware image from the `samd_bak` partition.
+- `Read SAMD Firmware`: backs up detected legacy SAMD09 firmware into the `samd_bak` ESP32 data partition. It refuses to back up firmware marked as managed by this project.
+- `Flash SAMD Bundled Firmware`: flashes the bundled managed SAMD09 image.
+- `Flash SAMD Backup Firmware`: restores the verified firmware image from the `samd_bak` partition.
+- `Flash SAMD External Firmware`: appears when `external_samd_firmware.url` is configured. ESPHome downloads that raw image during code generation, embeds it in the ESP32 build, and flashes it without requiring a managed footer or SHA metadata. Images shorter than the detected SAMD flash are padded with `0xFF`; images larger than the detected flash are rejected.
+
+Example external image configuration:
+
+```yaml
+emporiavue:
+  external_samd_firmware:
+    url: "https://example.com/samd09.bin"
+```
 
 You need the normal ESPHome `api:` setup in your node config for Home Assistant to see those buttons. The results appear in the ESPHome log/console at `INFO` level.
 Default entity names intentionally do not include the device name; ESPHome/Home Assistant use `esphome.friendly_name`
 for that prefix when needed. Set `entity_prefix` only when you need this component to write an explicit legacy prefix
 into its generated entity names. Set an individual entity `name:` if you need an exact custom name.
-If the `samd_bak` partition is not present at boot, the firmware status entity reports `backup partition missing` and
-pressing the backup button is ignored. ESPHome does not currently provide a safe runtime API to dynamically disable or
-hide a button entity based on partition-table state.
+If the `samd_bak` partition is not present, pressing the read or backup-flash buttons logs the partition error and
+exits without writing. ESPHome does not currently provide a safe runtime API to dynamically disable or hide a button
+entity based on partition-table state.
 
 The install check identifies managed firmware through a footer at the end of SAMD flash. Firmware without that footer is
 treated as stock/legacy and therefore as `hardware_id=0`, `mode_id=0`, `firmware_version=0`. Managed firmware uses
@@ -74,9 +82,8 @@ By default the component only reads this SWD footer at boot and updates the stat
 stock firmware, when a matching managed firmware is older than the bundled image, or when the detected `mode_id` differs
 from the configured `mode:`. The selected bundled image must match both the configured hardware and the configured
 `mode:`; the automatic path does not overwrite a managed image with a different hardware id.
-Because Home Assistant buttons cannot be disabled dynamically by an external component, use `SAMD Firmware Status` as
-the authoritative state. The update and restore buttons exit without writing if their action is not applicable, no
-bundled image is compiled in, or no valid backup is present.
+Because Home Assistant buttons cannot be disabled dynamically by an external component, the flash buttons exit without
+writing if their action is not applicable, no bundled/external image is compiled in, or no valid backup is present.
 
 The bundled SAMD09 image is built from `firmware/samd09`, which is based on
 `gekkehenkie11/emporia-SAMD09` at commit `0baafe6d8812639d14f8f66b03844567f913ddc0` with small local build fixes for

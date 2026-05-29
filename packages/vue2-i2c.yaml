@@ -28,11 +28,11 @@ emporiavue:
     name: "SAMD Bundled Firmware Version"
 
   backup_firmware_button:
-    name: "Backup SAMD09 Firmware"
+    name: "Read SAMD Firmware"
     entity_category: config
   install_firmware_button:
-    name: "Update SAMD09 Firmware"
+    name: "Flash SAMD Bundled Firmware"
     entity_category: config
   restore_firmware_button:
-    name: "Restore SAMD09 Backup Firmware"
+    name: "Flash SAMD Backup Firmware"
     entity_category: config

@@ -1,4 +1,5 @@
 #include "emporiavue.h"
+#include "external_samd_firmware.h"
 #include "samd09_firmware.h"
 
 #include "esphome/core/log.h"
@@ -60,6 +61,7 @@ void EmporiaVueComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Bundled managed firmware size: %" PRIu32 " bytes", this->bundled_firmware_size_());
   ESP_LOGCONFIG(TAG, "  Bundled managed firmware compatible: %s",
                 YESNO(this->bundled_firmware_matches_target_()));
+  ESP_LOGCONFIG(TAG, "  External SAMD firmware size: %" PRIu32 " bytes", this->external_firmware_size_());
   ESP_LOGCONFIG(TAG, "  Init pins on boot: %s", YESNO(this->init_pins_on_boot_));
   ESP_LOGCONFIG(TAG, "  Runtime mode: %s", this->runtime_mode_ == RuntimeMode::SPI ? "spi" : "i2c");
   ESP_LOGCONFIG(TAG, "  Auto-update SAMD: %s", YESNO(this->auto_update_samd_));
@@ -207,13 +209,20 @@ void EmporiaVueComponent::install_firmware() { this->start_firmware_action_(Firm
 
 void EmporiaVueComponent::restore_firmware() { this->start_firmware_action_(FirmwareAction::RESTORE_STOCK, false); }
 
+void EmporiaVueComponent::flash_external_firmware() {
+  this->start_firmware_action_(FirmwareAction::FLASH_EXTERNAL, true);
+}
+
 void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action, bool force_update) {
-  if (requested_action != FirmwareAction::UPDATE_MANAGED && requested_action != FirmwareAction::RESTORE_STOCK) {
+  if (requested_action != FirmwareAction::UPDATE_MANAGED && requested_action != FirmwareAction::RESTORE_STOCK &&
+      requested_action != FirmwareAction::FLASH_EXTERNAL) {
     ESP_LOGW(TAG, "Unsupported SAMD09 firmware action requested");
     return;
   }
   const bool restore_requested = requested_action == FirmwareAction::RESTORE_STOCK;
-  const char *requested_name = restore_requested ? "restore" : "update";
+  const bool external_requested = requested_action == FirmwareAction::FLASH_EXTERNAL;
+  const char *requested_name =
+      restore_requested ? "backup flash" : (external_requested ? "external flash" : "bundled flash");
 
   if (this->install_active_) {
     ESP_LOGW(TAG, "SAMD09 firmware %s is already running", this->install_action_name_());
@@ -295,15 +304,27 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
   core_halted = true;
 
   FirmwareInfo current{};
-  if (!this->read_current_firmware_info_(&current)) {
-    release_after_check();
-    this->publish_firmware_status_(std::string(requested_name) + " failed: " + this->last_error_);
-    ESP_LOGW(TAG, "SAMD09 firmware update check failed reading current firmware info: %s", this->last_error_.c_str());
-    return;
+  if (external_requested) {
+    if (!this->read_flash_geometry_(&current.nvm_param, &current.page_size, &current.page_count,
+                                    &current.flash_size)) {
+      release_after_check();
+      this->publish_firmware_status_(std::string(requested_name) + " failed: " + this->last_error_);
+      ESP_LOGW(TAG, "SAMD09 external firmware flash failed reading flash geometry: %s", this->last_error_.c_str());
+      return;
+    }
+    current.kind = FirmwareKind::UNKNOWN;
+    current.source = FirmwareDetectionSource::SWD;
+  } else {
+    if (!this->read_current_firmware_info_(&current)) {
+      release_after_check();
+      this->publish_firmware_status_(std::string(requested_name) + " failed: " + this->last_error_);
+      ESP_LOGW(TAG, "SAMD09 firmware update check failed reading current firmware info: %s", this->last_error_.c_str());
+      return;
+    }
+    this->detected_firmware_info_ = current;
+    this->detected_firmware_info_valid_ = true;
+    this->publish_firmware_version_(current);
   }
-  this->detected_firmware_info_ = current;
-  this->detected_firmware_info_valid_ = true;
-  this->publish_firmware_version_(current);
 
   BackupHeader backup_header{};
   std::string backup_error;
@@ -319,6 +340,15 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
     }
     selected_action = FirmwareAction::RESTORE_STOCK;
     action_reason = "valid backup is available";
+  } else if (external_requested) {
+    if (!this->external_firmware_available_()) {
+      release_after_check();
+      this->publish_firmware_status_("external flash unavailable: no external firmware image is compiled in");
+      ESP_LOGW(TAG, "SAMD09 external firmware flash requested but no external image is compiled in");
+      return;
+    }
+    selected_action = FirmwareAction::FLASH_EXTERNAL;
+    action_reason = "manual external firmware requested";
   } else {
     if (force_update) {
       selected_action = FirmwareAction::UPDATE_MANAGED;
@@ -360,9 +390,20 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
     }
   }
 
-  const uint32_t source_size =
-      selected_action == FirmwareAction::RESTORE_STOCK ? backup_header.flash_size : this->bundled_firmware_size_();
-  if (source_size != current.flash_size) {
+  uint32_t source_size = this->bundled_firmware_size_();
+  if (selected_action == FirmwareAction::RESTORE_STOCK) {
+    source_size = backup_header.flash_size;
+  } else if (selected_action == FirmwareAction::FLASH_EXTERNAL) {
+    source_size = this->external_firmware_size_();
+  }
+  if (selected_action == FirmwareAction::FLASH_EXTERNAL && source_size > current.flash_size) {
+    release_after_check();
+    this->publish_firmware_status_(str_sprintf("%s blocked: image size %" PRIu32 " > flash size %" PRIu32,
+                                               requested_name, source_size, current.flash_size));
+    ESP_LOGW(TAG, "SAMD09 firmware %s blocked because external image is larger than flash", requested_name);
+    return;
+  }
+  if (selected_action != FirmwareAction::FLASH_EXTERNAL && source_size != current.flash_size) {
     release_after_check();
     this->publish_firmware_status_(str_sprintf("%s blocked: image size %" PRIu32 " != flash size %" PRIu32,
                                                requested_name, source_size, current.flash_size));
@@ -395,7 +436,13 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
   }
 
   this->install_action_ = selected_action;
-  this->install_source_ = selected_action == FirmwareAction::RESTORE_STOCK ? FlashSource::BACKUP : FlashSource::BUNDLED;
+  if (selected_action == FirmwareAction::RESTORE_STOCK) {
+    this->install_source_ = FlashSource::BACKUP;
+  } else if (selected_action == FirmwareAction::FLASH_EXTERNAL) {
+    this->install_source_ = FlashSource::EXTERNAL;
+  } else {
+    this->install_source_ = FlashSource::BUNDLED;
+  }
   if (selected_action == FirmwareAction::RESTORE_STOCK) {
     this->install_backup_header_ = backup_header;
   }
@@ -1846,6 +1893,10 @@ uint32_t EmporiaVueComponent::bundled_firmware_version_() const { return BUNDLED
 
 uint32_t EmporiaVueComponent::bundled_firmware_size_() const { return BUNDLED_SAMD_FIRMWARE_SIZE; }
 
+bool EmporiaVueComponent::external_firmware_available_() const { return EXTERNAL_SAMD_FIRMWARE_SIZE > 0; }
+
+uint32_t EmporiaVueComponent::external_firmware_size_() const { return EXTERNAL_SAMD_FIRMWARE_SIZE; }
+
 uint16_t EmporiaVueComponent::expected_firmware_mode_id_() const {
   return this->runtime_mode_ == RuntimeMode::SPI ? MANAGED_MODE_SPI : MANAGED_MODE_I2C;
 }
@@ -1953,6 +2004,20 @@ bool EmporiaVueComponent::read_install_source_(uint32_t offset, uint32_t length,
     return true;
   }
 
+  if (this->install_source_ == FlashSource::EXTERNAL) {
+    const uint32_t external_size = this->external_firmware_size_();
+    if (external_size > this->install_flash_size_) {
+      this->set_error_("external firmware read out of range");
+      return false;
+    }
+    std::memset(buffer, 0xFF, length);
+    if (offset < external_size) {
+      const uint32_t copy_len = std::min<uint32_t>(length, external_size - offset);
+      std::memcpy(buffer, EXTERNAL_SAMD_FIRMWARE + offset, copy_len);
+    }
+    return true;
+  }
+
   this->set_error_("install source is not configured");
   return false;
 }
@@ -2010,9 +2075,11 @@ bool EmporiaVueComponent::verify_flash_page_(uint32_t address, uint32_t offset, 
 const char *EmporiaVueComponent::install_action_name_() const {
   switch (this->install_action_) {
     case FirmwareAction::UPDATE_MANAGED:
-      return "update";
+      return "bundled flash";
     case FirmwareAction::RESTORE_STOCK:
-      return "restore";
+      return "backup flash";
+    case FirmwareAction::FLASH_EXTERNAL:
+      return "external flash";
     case FirmwareAction::NONE:
       return "none";
     case FirmwareAction::UNKNOWN:
@@ -2098,7 +2165,8 @@ void EmporiaVueComponent::finish_install_success_() {
   const FirmwareAction completed_action = this->install_action_;
   const std::string action_name = this->install_action_name_();
   FirmwareInfo info{};
-  const bool info_ok = this->read_current_firmware_info_(&info);
+  const bool info_ok =
+      completed_action == FirmwareAction::FLASH_EXTERNAL ? false : this->read_current_firmware_info_(&info);
   if (info_ok) {
     this->detected_firmware_info_ = info;
     this->detected_firmware_info_valid_ = true;
@@ -2117,6 +2185,9 @@ void EmporiaVueComponent::finish_install_success_() {
       this->fail_install_("final backup firmware verification failed");
       return;
     }
+  } else if (completed_action == FirmwareAction::FLASH_EXTERNAL) {
+    // The external image is intentionally treated as raw firmware. Page-level
+    // readback already verified the bytes; no footer or version marker is required.
   } else {
     this->fail_install_("internal firmware action state error");
     return;
@@ -2174,6 +2245,16 @@ void EmporiaVueComponent::finish_install_success_() {
     this->publish_firmware_status_("restore complete: backup firmware");
     this->start_i2c_diagnostics_();
     ESP_LOGI(TAG, "SAMD09 backup firmware restore complete: size=%" PRIu32, this->install_flash_size_);
+  } else if (completed_action == FirmwareAction::FLASH_EXTERNAL) {
+    FirmwareInfo external_info{};
+    external_info.kind = FirmwareKind::UNKNOWN;
+    external_info.source = FirmwareDetectionSource::SWD;
+    this->publish_firmware_version_(external_info);
+    this->publish_status_("external flash complete");
+    this->publish_firmware_status_("external flash complete");
+    this->start_i2c_diagnostics_();
+    ESP_LOGI(TAG, "SAMD09 external firmware flash complete: source_size=%" PRIu32 ", flash_size=%" PRIu32,
+             this->external_firmware_size_(), this->install_flash_size_);
   }
 }
 
