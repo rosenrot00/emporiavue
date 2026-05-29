@@ -21,7 +21,6 @@ i2c:
   scan: false
   frequency: 400kHz
   timeout: 1ms
-  id: i2c_a
 
 emporiavue:
   id: samd_reader
