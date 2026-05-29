@@ -8,6 +8,7 @@ from esphome.const import (
     CONF_RESET_PIN,
     ENTITY_CATEGORY_CONFIG,
     ENTITY_CATEGORY_DIAGNOSTIC,
+    STATE_CLASS_MEASUREMENT,
 )
 
 DEPENDENCIES = ["esp32", "i2c"]
@@ -184,6 +185,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             default={CONF_NAME: "SAMD Sample Blocks"},
         ): sensor.sensor_schema(
             icon="mdi:counter",
+            state_class=STATE_CLASS_MEASUREMENT,
             accuracy_decimals=0,
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
@@ -192,6 +194,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             default={CONF_NAME: "SAMD Packets Built"},
         ): sensor.sensor_schema(
             icon="mdi:counter",
+            state_class=STATE_CLASS_MEASUREMENT,
             accuracy_decimals=0,
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
@@ -200,6 +203,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             default={CONF_NAME: "SAMD Packets Read"},
         ): sensor.sensor_schema(
             icon="mdi:counter",
+            state_class=STATE_CLASS_MEASUREMENT,
             accuracy_decimals=0,
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
@@ -208,6 +212,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             default={CONF_NAME: "SAMD DMA Transfer Errors"},
         ): sensor.sensor_schema(
             icon="mdi:alert-circle-outline",
+            state_class=STATE_CLASS_MEASUREMENT,
             accuracy_decimals=0,
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
@@ -216,6 +221,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             default={CONF_NAME: "SAMD Packet Overruns"},
         ): sensor.sensor_schema(
             icon="mdi:alert-circle-outline",
+            state_class=STATE_CLASS_MEASUREMENT,
             accuracy_decimals=0,
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
@@ -224,6 +230,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             default={CONF_NAME: "SAMD I2C Partial Reads"},
         ): sensor.sensor_schema(
             icon="mdi:alert-circle-outline",
+            state_class=STATE_CLASS_MEASUREMENT,
             accuracy_decimals=0,
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
@@ -232,6 +239,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             default={CONF_NAME: "SAMD I2C Oversize Reads"},
         ): sensor.sensor_schema(
             icon="mdi:alert-circle-outline",
+            state_class=STATE_CLASS_MEASUREMENT,
             accuracy_decimals=0,
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
@@ -240,6 +248,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             default={CONF_NAME: "SAMD Last Sample Count"},
         ): sensor.sensor_schema(
             icon="mdi:counter",
+            state_class=STATE_CLASS_MEASUREMENT,
             accuracy_decimals=0,
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
@@ -248,6 +257,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             default={CONF_NAME: "SAMD Last I2C Read Length"},
         ): sensor.sensor_schema(
             icon="mdi:counter",
+            state_class=STATE_CLASS_MEASUREMENT,
             accuracy_decimals=0,
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
