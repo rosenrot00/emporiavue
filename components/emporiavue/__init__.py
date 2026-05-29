@@ -264,7 +264,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         ): button.button_schema(
             EmporiaVueBackupFirmwareButton,
             icon="mdi:content-save",
-            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+            entity_category=ENTITY_CATEGORY_CONFIG,
         ),
         cv.Optional(
             CONF_INSTALL_FIRMWARE_BUTTON,
