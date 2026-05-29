@@ -1,6 +1,5 @@
 #pragma once
 
-#include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/button/button.h"
 #include "esphome/components/i2c/i2c.h"
 #include "esphome/components/sensor/sensor.h"
@@ -62,9 +61,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void set_firmware_status_sensor(text_sensor::TextSensor *sensor) { this->firmware_status_sensor_ = sensor; }
   void set_firmware_action_sensor(text_sensor::TextSensor *sensor) { this->firmware_action_sensor_ = sensor; }
   void set_firmware_version_sensor(text_sensor::TextSensor *sensor) { this->firmware_version_sensor_ = sensor; }
-  void set_firmware_update_available_sensor(binary_sensor::BinarySensor *sensor) {
-    this->firmware_update_available_sensor_ = sensor;
-  }
   void set_diagnostics_status_sensor(text_sensor::TextSensor *sensor) { this->diagnostics_status_sensor_ = sensor; }
   void set_diag_sample_blocks_sensor(sensor::Sensor *sensor) { this->diag_sample_blocks_sensor_ = sensor; }
   void set_diag_packets_built_sensor(sensor::Sensor *sensor) { this->diag_packets_built_sensor_ = sensor; }
@@ -313,7 +309,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void publish_firmware_status_(const std::string &status);
   void publish_firmware_action_(const std::string &action);
   void publish_firmware_version_(const FirmwareInfo &info);
-  void publish_firmware_update_available_(bool available);
   static std::string hex32_(uint32_t value);
   static std::string hex16_(uint16_t value);
   static std::string hex8_(uint8_t value);
@@ -418,7 +413,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   text_sensor::TextSensor *firmware_action_sensor_{nullptr};
   text_sensor::TextSensor *firmware_version_sensor_{nullptr};
   text_sensor::TextSensor *diagnostics_status_sensor_{nullptr};
-  binary_sensor::BinarySensor *firmware_update_available_sensor_{nullptr};
   sensor::Sensor *diag_sample_blocks_sensor_{nullptr};
   sensor::Sensor *diag_packets_built_sensor_{nullptr};
   sensor::Sensor *diag_packets_read_sensor_{nullptr};

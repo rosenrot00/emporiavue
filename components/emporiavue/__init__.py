@@ -1,7 +1,7 @@
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import pins
-from esphome.components import binary_sensor, button, i2c, sensor, text_sensor
+from esphome.components import button, i2c, sensor, text_sensor
 from esphome.const import (
     CONF_ID,
     CONF_NAME,
@@ -13,7 +13,7 @@ from esphome.const import (
 )
 
 DEPENDENCIES = ["esp32", "i2c"]
-AUTO_LOAD = ["binary_sensor", "button", "sensor", "text_sensor"]
+AUTO_LOAD = ["button", "sensor", "text_sensor"]
 
 emporiavue_ns = cg.esphome_ns.namespace("emporiavue")
 EmporiaVueComponent = emporiavue_ns.class_(
@@ -71,7 +71,6 @@ CONF_DIAG_LAST_I2C_READ_LEN = "diag_last_i2c_read_len"
 CONF_FIRMWARE_STATUS = "firmware_status"
 CONF_FIRMWARE_ACTION = "firmware_action"
 CONF_FIRMWARE_VERSION = "firmware_version"
-CONF_FIRMWARE_UPDATE_AVAILABLE = "firmware_update_available"
 CONF_BACKUP_PARTITION = "backup_partition"
 CONF_HARDWARE = "hardware"
 CONF_DUMP_START_ADDRESS = "dump_start_address"
@@ -171,13 +170,6 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             default={CONF_NAME: "SAMD Firmware Version"},
         ): text_sensor.text_sensor_schema(
             icon="mdi:chip",
-            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
-        ),
-        cv.Optional(
-            CONF_FIRMWARE_UPDATE_AVAILABLE,
-            default={CONF_NAME: "SAMD Firmware Update Available"},
-        ): binary_sensor.binary_sensor_schema(
-            icon="mdi:update",
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
         cv.Optional(
@@ -377,9 +369,6 @@ async def to_code(config):
     if firmware_version_config := config.get(CONF_FIRMWARE_VERSION):
         sens = await text_sensor.new_text_sensor(firmware_version_config)
         cg.add(var.set_firmware_version_sensor(sens))
-    if firmware_update_available_config := config.get(CONF_FIRMWARE_UPDATE_AVAILABLE):
-        sens = await binary_sensor.new_binary_sensor(firmware_update_available_config)
-        cg.add(var.set_firmware_update_available_sensor(sens))
     if diagnostics_status_config := config.get(CONF_DIAGNOSTICS_STATUS):
         sens = await text_sensor.new_text_sensor(diagnostics_status_config)
         cg.add(var.set_diagnostics_status_sensor(sens))
