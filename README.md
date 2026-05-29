@@ -1,307 +1,451 @@
-# EmporiaVue SAMD09 firmware manager
+# Emporia Vue ESPHome
 
-ESPHome external component for backing up and updating the SAMD09 firmware in Emporia Vue devices. It bit-bangs SWD on the pins from the Emporia Vue local discussion:
+Local Emporia Vue metering for ESPHome, with a YAML structure that is meant to stay usable as your panel setup grows.
 
-- SWDIO: GPIO13
-- SWCLK: GPIO14
+This repository provides an ESPHome external component and ready-to-use packages for Emporia Vue devices. It keeps the
+common setup simple, while still giving you clean places for calibration, circuit names, grouped loads, grid
+import/export, and more accurate handling of real-world wiring such as line-to-line circuits.
 
-The SAMD reset line is intentionally not configured by default because public notes and board-level testing do not fully agree on the ESP32 GPIO. Configure it explicitly only when you want a reset pulse. GPIO26 is mentioned in the original discussion; GPIO4 is another candidate to test on some boards.
+> [!TIP]
+> Input and development help are very welcome:
+> - Vue 2 accuracy: I am looking for someone who can run accuracy measurements with the adjusted SAMD09 firmware.
+> - Vue 2 SAMD09 firmware: ideas, review, and testing around firmware improvements are welcome, including a possible
+>   SPI transport.
+> - Vue 3: support is not available yet; if you have a Vue 3 and want to help test or map the YAML settings, please get
+>   in touch.
 
-## Features
+## Version History
 
-- SAMD09 firmware backup, bundled firmware flashing, backup restore, and optional external firmware flashing.
-- Managed firmware identification through a small SWD footer plus runtime I2C diagnostic counters.
-- Vue 2 I2C packages for base firmware management and a separate three-phase metering topology preset.
-- Transport-independent metering frame so future SPI transport can feed the same sensor, group, and energy setup.
-- Home Assistant number entities for runtime line calibration values with ESPHome preference restore.
-- Main line, branch circuit, grid import/export, and custom group power sensors.
-- Internal measurement filters for mains, circuits, CT clamps, and groups. These feed energy and group calculations, while filters under `power` affect only the visible Home Assistant display sensor.
-- Stable internal circuit IDs such as `cir1`, `cir2`, and `cir3` for `total_daily_energy` and group calculations, even when the circuit is not exposed as a visible HA power sensor.
-- Signed group sources such as `circuits: [total_power, -cir1, -cir2]` for balance/remainder calculations.
-- Per-circuit line-to-neutral and line-to-line power: use `line: 2` for a normal line reference, or `line: [2, 3]` for a load connected between two lines.
+| Version | Changes |
+|---|---|
+| 2026.05.1 | Initial public release with [Vue 2 I2C packages](#vue-2-i2c-packages), [runtime voltage calibration](#runtime-calibration), [internal metering filters](#internal-metering-filters), [stable circuit IDs and energy](#stable-circuit-ids-and-energy), [groups](#groups), [line-to-line circuit power](#line-to-line-circuits), [grid import/export](#grid-importexport), and [SAMD09 firmware management](#samd09-firmware-management). |
 
-## Acknowledgements
+## Example YAML
 
-This project is built on ideas and prior work from the Emporia Vue local community.
-
-- Thanks to [`emporia-vue-local/esphome`](https://github.com/emporia-vue-local/esphome) for the original ESPHome
-  component and the community discussions around local Vue metering.
-- Thanks to [`gekkehenkie11/emporia-SAMD09`](https://github.com/gekkehenkie11/emporia-SAMD09) for publishing the
-  stock-compatible SAMD09 firmware replacement that made this direction practical.
-
-## Use
-
-Add this repository directory as a local external component source:
+A compact Vue 2 3phase setup can look like this. The packages provide the hardware defaults; the node YAML only
+names the circuits, applies display filters, defines groups, and adds the energy sensors you want in Home Assistant.
 
 ```yaml
-external_components:
-  - source:
-      type: local
-      path: ./components
-    components: [emporiavue]
+esphome:
+  name: emporiavue2
+  friendly_name: vue2
 
-emporiavue:
-  id: samd_reader
-```
-
-Or use the private GitHub repository from a machine that has access to it:
-
-```yaml
-external_components:
-  - source: github://rosenrot00/emporiavue@main
-    components: [emporiavue]
-
-emporiavue:
-  id: samd_reader
-```
-
-If ESPHome runs somewhere that is not authenticated to your private GitHub account, use a GitHub token in `secrets.yaml`:
-
-```yaml
 external_components:
   - source:
       type: git
       url: https://github.com/rosenrot00/emporiavue.git
       ref: main
-      username: !secret github_username
-      password: !secret github_token
-    components: [emporiavue]
-```
+    components:
+      - emporiavue
+    refresh: always
 
-The default config creates only the SAMD firmware controls that are needed during normal use:
+packages:
+  emporiavue:
+    url: https://github.com/rosenrot00/emporiavue.git
+    ref: main
+    files:
+      - packages/vue2-i2c.yaml
+      # Pick exactly one topology package:
+      # - packages/vue2-i2c-1phase.yaml
+      # - packages/vue2-i2c-2phase.yaml
+      - packages/vue2-i2c-3phase.yaml
+    refresh: always
 
-- `Read SAMD Firmware`: backs up detected legacy SAMD09 firmware into the `samd_bak` ESP32 data partition. It refuses to back up firmware marked as managed by this project.
-- `Flash SAMD Bundled Firmware`: flashes the bundled managed SAMD09 image.
-- `Flash SAMD Backup Firmware`: restores the verified firmware image from the `samd_bak` partition.
-- `Flash SAMD External Firmware`: appears when `external_samd_firmware` is configured. ESPHome downloads raw images during code generation, embeds them in the ESP32 build, and flashes them without requiring a managed footer or SHA metadata. Images shorter than the detected SAMD flash are padded with `0xFF`; images larger than the detected flash are rejected.
+esp32:
+  board: esp32dev
+  cpu_frequency: 160MHz
+  framework:
+    type: esp-idf
+    version: recommended
 
-Example single external image configuration:
+api:
+  encryption:
+    key: !secret ha_enc_key
 
-```yaml
+ota:
+  - platform: esphome
+    password: !secret ota_password
+    allow_partition_access: true
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  fast_connect: true
+
+logger:
+  logs:
+    sensor: INFO
+
+time:
+  - platform: sntp
+    id: my_time
+    timezone: "Europe/Vienna"
+
+.defaultfilters:
+  - &throttle_avg
+    throttle_average: 5s
+  - &throttle_time
+    throttle: 60s
+  - &pos
+    lambda: 'return max(x, 0.0f);'
+
 emporiavue:
-  external_samd_firmware:
-    url: "https://example.com/samd09.bin"
+  metering_interval: 220ms
+
+  mains:
+    line_1:
+      voltage:
+        filters: [*throttle_avg, *pos]
+      frequency:
+        filters: [*throttle_avg, *pos]
+      power:
+        filters: *throttle_avg
+
+    line_2:
+      voltage:
+        filters: [*throttle_avg, *pos]
+      phase_angle:
+        filters: [*throttle_avg, *pos]
+      power:
+        filters: *throttle_avg
+
+    line_3:
+      voltage:
+        filters: [*throttle_avg, *pos]
+      phase_angle:
+        filters: [*throttle_avg, *pos]
+      power:
+        filters: *throttle_avg
+
+  total_power:
+    filters: *throttle_avg
+
+  grid_import_power:
+    filters: *throttle_avg
+
+  grid_export_power:
+    filters: *throttle_avg
+
+  circuits:
+    cir1:
+      line: 2
+      power:
+        name: "Livingroom Power"
+        filters: [*pos, *throttle_avg]
+    cir2:
+      line: 3
+      power:
+        filters: *throttle_avg
+    cir3:
+      line: 1
+      power:
+        filters: *throttle_avg
+    cir4:
+      line: 2
+      power:
+        filters: *throttle_avg
+    cir5:
+      line: 3
+      power:
+        name: "Fridge, Steamer Power"
+        filters: *throttle_avg
+    cir6:
+      line: 3
+      power:
+        name: "HVAC, Dishwasher Power"
+        filters: *throttle_avg
+
+  groups:
+    total_heat_pump_power:
+      circuits: [cir2, cir3, cir4]
+      power:
+        name: "Heat Pump Power"
+        filters: *throttle_avg
+
+sensor:
+  - platform: total_daily_energy
+    name: "Today’s Total Energy"
+    power_id: total_power
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total
+    accuracy_decimals: 2
+    restore: true
+    filters:
+      - multiply: 0.001
+      - *throttle_time
+
+  - platform: total_daily_energy
+    name: "Today’s Grid Import Energy"
+    power_id: grid_import_w
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    restore: true
+    method: left
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.001
+      - *throttle_time
+
+  - platform: total_daily_energy
+    name: "Today’s Grid Export Energy"
+    power_id: grid_export_w
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    restore: true
+    method: left
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.001
+      - *throttle_time
+
+  - platform: total_daily_energy
+    name: "Today’s Heat Pump Energy"
+    power_id: total_heat_pump_power
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    restore: true
+    method: left
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.001
+      - *throttle_time
+
+  - platform: total_daily_energy
+    name: "Today’s Livingroom Energy"
+    power_id: cir1
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    restore: true
+    method: left
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.001
+      - *throttle_time
+
+  - platform: total_daily_energy
+    name: "Today’s Fridge, Steamer Energy"
+    power_id: cir5
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    restore: true
+    method: left
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.001
+      - *throttle_time
+
+  - platform: total_daily_energy
+    name: "Today’s HVAC, Dishwasher Energy"
+    power_id: cir6
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    restore: true
+    method: left
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.001
+      - *throttle_time
 ```
 
-Multiple external images use one entry per firmware. The `id` is used to build the default button name; `button.name`
-is optional. Button entities are automatically in the `config` category.
+## Feature Details
 
-```yaml
-emporiavue:
-  external_samd_firmware:
-    - id: stock
-      url: "https://example.com/samd09-stock.bin"
-    - id: test
-      url: "https://example.com/samd09-test.bin"
-      button:
-        name: "Flash SAMD Test Firmware"
-```
+### Vue 2 I2C Packages
 
-Private GitHub raw URLs can use a token without putting credentials into the URL. The token is sent as an
-`Authorization` header during ESPHome code generation:
-
-```yaml
-emporiavue:
-  external_samd_firmware:
-    - id: stock
-      url: "https://raw.githubusercontent.com/rosenrot00/emporiavue/main/firmware/samd09/images/i2c/vue2-stock-dump.bin"
-      token: !secret github_token
-```
-
-You need the normal ESPHome `api:` setup in your node config for Home Assistant to see those buttons. The results appear in the ESPHome log/console at `INFO` level.
-Default entity names intentionally do not include the device name; ESPHome/Home Assistant use `esphome.friendly_name`
-for that prefix when needed. Set `entity_prefix` only when you need this component to write an explicit legacy prefix
-into its generated entity names. Set an individual entity `name:` if you need an exact custom name.
-If the `samd_bak` partition is not present, pressing the read or backup-flash buttons logs the partition error and
-exits without writing. ESPHome does not currently provide a safe runtime API to dynamically disable or hide a button
-entity based on partition-table state.
-
-The install check identifies managed firmware through a footer at the end of SAMD flash. Firmware without that footer is
-treated as stock/legacy and therefore as `hardware_id=0`, `mode_id=0`, `firmware_version=0`. Managed firmware uses
-`hardware_id`, `mode_id`, and `firmware_version` as compatibility keys; the bundled Vue 2 I2C image is
-`hardware_id=2`, `mode_id=1`. Internally the version is a monotonic integer in tenths, so `16` is shown as `v1.6`
-and `100` as `v10.0`; comparisons and update decisions compare the detected raw integer against the bundled image's raw
-integer. The current upstream `emporia_vue` I2C frame is 284 bytes. Managed firmware also returns `hardware_id`,
-`firmware_version`, and frame length through the same I2C diagnostic command that reports runtime counters. The SWD flash
-footer remains separate on purpose, so the ESP32 can still identify managed firmware when I2C is unavailable.
-By default the component only reads this SWD footer at boot and updates the firmware version entities. Set
-`auto_update_samd: true` to let the component automatically install the bundled managed image when the SAMD is still on
-stock firmware, when a matching managed firmware is older than the bundled image, or when the detected `mode_id` differs
-from the configured `mode:`. The selected bundled image must match both the configured hardware and the configured
-`mode:`; the automatic path does not overwrite a managed image with a different hardware id.
-Because Home Assistant buttons cannot be disabled dynamically by an external component, the flash buttons exit without
-writing if their action is not applicable, no bundled/external image is compiled in, or no valid backup is present.
-
-The bundled SAMD09 image is built from `firmware/samd09`, which is based on
-`gekkehenkie11/emporia-SAMD09` at commit `0baafe6d8812639d14f8f66b03844567f913ddc0` with small local build fixes for
-a freestanding ARM GCC toolchain. The generated image is padded to the detected 16 KiB SAMD09 flash size and ends with a
-managed firmware footer so future runs can detect its target hardware, mode, and firmware version. The update path
-refuses to flash an image whose `hardware_id` or `mode_id` does not match the configured `hardware:` and `mode:`
-values. To rebuild the embedded header after changing the SAMD source, run:
-
-```bash
-python3 tools/package_samd09_firmware.py
-```
-
-Flashing is intentionally opt-in. The component erases one SAMD NVM row at a time, writes one page per ESPHome loop
-cycle, verifies each page immediately, and leaves the SAMD core halted if a write has started and a later step fails.
-That keeps the ESP32 and ESPHome reachable while avoiding a reset into a partially written SAMD image.
-
-### Managed SAMD09 changes from stock
-
-- The managed firmware keeps the stock-compatible 284-byte I2C measurement frame, but exposes one diagnostic I2C command
-  for runtime identity (`hardware_id`, `firmware_version`, frame length) and health counters before returning to the
-  normal frame stream. The SWD footer additionally carries `mode_id`, so the ESP32 can select I2C or SPI-targeted
-  SAMD firmware based on the component `mode:`.
-- Raw ADC offset correction is intentionally changed from the stock-like direct per-window average replacement to a
-  smoothed per-channel DC offset tracker. The tracker runs on all 22 raw ADC channels before RMS, power, phase, and
-  frequency are calculated, so it reduces baseline jitter without clamping or filtering finished watt values.
-- RMS scaling is calculated with exact integer comparisons instead of the earlier float `sqrtf` path. This removes the
-  software floating-point runtime from the SAMD image while preserving the mathematical `floor(sqrt(sum * scale / n))`
-  result used for the published frame values.
-- Divisions by the fixed sampling windows (`12987` and `1623`) use small exact constant-divisor routines instead of the
-  generic 32/64-bit division runtime. Variable divisions, such as cycle-count averaging, are left unchanged.
-- Lookup tables for mux ordering, mux output pins, and packet checksum are stored in flash as constants instead of being
-  copied into SAMD RAM at startup.
-
-By default the SWD pins are not initialized at boot. `init_pins_on_boot` defaults to `false`, so SWDIO/SWCLK are only touched while a SAMD09 button action is running. The optional reset pin is only touched when `reset_before_read: true` or `connect_under_reset: true` is set. After the check, the component releases the touched pins back to input/pullup.
-
-To test a reset-assisted update or backup, set the reset pin explicitly:
-
-```yaml
-emporiavue:
-  id: samd_reader
-  reset_pin: GPIO26
-  reset_before_read: true
-  reset_hold_time: 300ms
-  reset_release_time: 1ms
-```
-
-If you want the ESP32 to recover the SAMD09 after a reboot, enable `reset_on_boot`. This only touches the configured
-reset pin during ESPHome setup, holds reset for `reset_hold_time`, releases it for `reset_release_time`, then returns
-the reset pin to input/pullup:
-
-```yaml
-emporiavue:
-  id: samd_reader
-  reset_pin: GPIO26
-  reset_on_boot: true
-  reset_hold_time: 200ms
-  reset_release_time: 1ms
-```
-
-If the SAMD firmware appears to take over the SWD pins before the probe can connect, try connect-under-reset. This keeps reset asserted while the SWD Debug Port IDCODE is probed, then releases reset again:
-
-```yaml
-emporiavue:
-  id: samd_reader
-  reset_pin: GPIO26
-  connect_under_reset: true
-```
-
-## Vue 2 I2C Packages
-
-The repository currently includes `packages/vue2-i2c.yaml` and the explicit
-`packages/vue2-i2c-3phase.yaml` preset. They set `hardware: vue2` and `mode: i2c`, add a 64 KiB `samd_bak`
-data partition, and enable the firmware version entities plus the backup, update, and restore buttons. They also
-use the component's default `metering_interval: 200ms` I2C read path that decodes the stock-compatible frame into the
-component's internal metering frame. The transport is explicit in the filename
-so a future SPI transport can live next to it as `packages/vue2-spi.yaml`.
-
-The three-phase preset creates Home Assistant configuration numbers for the main voltage calibration values. The initial
-value is `0.022`, matching the old `emporia_vue` component's documented starting point. If a number was changed before,
-the restored ESPHome preference wins over the package value on boot.
-
-Keep your private `external_components` block in the main node YAML, then include the package:
+The base package sets up the Vue 2 I2C transport and firmware controls. Add exactly one topology package for your
+installation: single-phase, two-phase, or three-phase. The topology package adds the usual line and circuit defaults, so
+your node YAML only has to override the parts that are different in your panel.
 
 ```yaml
 packages:
   emporiavue:
     url: https://github.com/rosenrot00/emporiavue
     ref: main
-    username: !secret github_username
-    password: !secret github_token
     files:
       - packages/vue2-i2c.yaml
+      # Pick exactly one topology package:
+      # - packages/vue2-i2c-1phase.yaml
+      # - packages/vue2-i2c-2phase.yaml
       - packages/vue2-i2c-3phase.yaml
 ```
 
-When adding `samd_bak` to a device that is already flashed, update the ESP32 partition table once. ESPHome documents
-custom partition lists under `esp32.partitions`, and partition-table OTA needs `allow_partition_access: true` on the
-ESPHome OTA platform before running `esphome upload --partition-table`.
+### Runtime Calibration
 
-SAMD writes are enabled by default, and updating the managed SAMD firmware does not require a legacy backup.
-
-Optional metering sensors can be attached to the new transport-independent frame. Keep the interval slow while the
-legacy sensor component is still polling the same I2C device:
+Each main line gets a Home Assistant number entity for calibration. The YAML value is the initial value; once you adjust
+it in Home Assistant, ESPHome restores the saved value after reboot.
 
 ```yaml
 emporiavue:
-  metering_interval: 10s
   mains:
     line_1:
-      voltage_input: BLACK
-      main_clamp: A
       calibration: 0.022
-      voltage:
-        name: "Line 1 Voltage"
-      frequency:
-        name: "Line 1 Frequency"
-      power:
-        name: "Line 1 Power"
     line_2:
-      voltage_input: RED
-      main_clamp: B
       calibration: 0.022
-      voltage:
-        name: "Line 2 Voltage"
-      phase_angle:
-        name: "Line 2 Phase Angle"
-      power:
-        name: "Line 2 Power"
     line_3:
-      voltage_input: BLUE
-      main_clamp: C
       calibration: 0.022
-      voltage:
-        name: "Line 3 Voltage"
-      phase_angle:
-        name: "Line 3 Phase Angle"
-      power:
-        name: "Line 3 Power"
+```
+
+### Internal Metering Filters
+
+Filters directly under a main, circuit, CT clamp, or group are metering corrections. They feed energy sensors and group
+calculations. Filters under `power` only shape the visible Home Assistant power sensor.
+
+```yaml
+emporiavue:
   circuits:
     cir1:
-      input: "1"
       line: 2
       filters:
         - multiply: -1
       power:
-        name: "Vue2 Metering Circuit 1 Power"
+        name: "Livingroom Power"
         filters:
           - throttle_average: 5s
+```
+
+### Stable Circuit IDs and Energy
+
+Every configured circuit gets a stable internal power ID such as `cir1` or `cir5`, even if you do not expose that circuit
+as a visible power sensor. That keeps ESPHome energy sensors simple and avoids duplicate display sensors.
+
+```yaml
+sensor:
+  - platform: total_daily_energy
+    name: "Today’s Livingroom Energy"
+    power_id: cir1
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    restore: true
+    method: left
+    filters:
+      - multiply: 0.001
+```
+
+### Groups
+
+Groups create a new power sensor from existing circuit IDs without adding ESPHome template sensors. Use them for
+combined loads such as a heat pump across multiple breakers.
+
+```yaml
+emporiavue:
+  groups:
+    total_heat_pump_power:
+      circuits: [cir2, cir3, cir4]
+      power:
+        name: "Heat Pump Power"
+        filters:
+          - throttle_average: 5s
+```
+
+### Line-to-Line Circuits
+
+Normal circuits use one line reference, for example `line: 2`. For a load connected between two lines, use a two-item
+line list. The component calculates the CT power against the voltage difference between those two lines.
+
+```yaml
+emporiavue:
+  circuits:
     cir2:
-      input: "2"
       line: [2, 3]
       power:
         name: "Line 2-3 Load Power"
         filters:
           - throttle_average: 5s
-  groups:
-    balance_power:
-      circuits: [total_power, -cir1, -cir2, -cir3]
-      filters:
-        - lambda: |-
-            return x > 0.0f ? x : 0.0f;
-      power:
-        name: "Balance Power"
 ```
 
-Groups can sum and subtract sources. `circuits: [total_power, -cir1, -cir2]` publishes the unmonitored remainder as
-`max(0, total_power - cir1 - cir2)`.
-Filters directly under `mains`, `circuits`, `ct_clamps`, or `groups` are internal measurement corrections and feed
-energy, groups, and balance calculations. Filters under `power` only affect the Home Assistant display sensor.
-Configured branch circuits automatically get stable internal power IDs such as `cir1`; add `circuits.<id>.power` in the
-node YAML only for circuits that should be visible in Home Assistant. If `power` has filters but no `name`, the
-component uses a default name such as `Circuit 2 Power`.
-For line-to-line circuits, `line: [2, 3]` calculates the CT's power against `Line 2 - Line 3`. If the CT direction or
-line order gives the opposite sign, add an internal circuit filter such as `filters: [{ multiply: -1 }]`.
+If the CT direction or line order gives the opposite sign, add an internal circuit filter:
+
+```yaml
+emporiavue:
+  circuits:
+    cir2:
+      line: [2, 3]
+      filters:
+        - multiply: -1
+```
+
+### Grid Import/Export
+
+The three-phase package exposes total power plus positive-only grid import and export sensors. You can keep their
+default names and only add display filters if you want averaged Home Assistant values.
+
+```yaml
+emporiavue:
+  total_power:
+    filters:
+      - throttle_average: 5s
+  grid_import_power:
+    filters:
+      - throttle_average: 5s
+  grid_export_power:
+    filters:
+      - throttle_average: 5s
+```
+
+### SAMD09 Firmware Management
+
+Firmware management is optional. It is available for reading, flashing, restoring, or testing SAMD09 images when you
+explicitly need it.
+
+The Vue 2 I2C package adds a 64 KiB `samd_bak` data partition for SAMD firmware backups. When adding `samd_bak` to a
+device that is already flashed, update the ESP32 partition table once. ESPHome documents custom partition lists under
+`esp32.partitions`, and partition-table OTA needs `allow_partition_access: true` on the ESPHome OTA platform before
+running `esphome upload --partition-table`.
+
+SAMD writes are enabled by default, and updating the managed SAMD firmware does not require a legacy backup. The
+firmware buttons are configuration entities: `Read SAMD Firmware` stores the current SAMD image in `samd_bak`,
+`Flash SAMD Bundled Firmware` installs the bundled managed image, and `Flash SAMD Backup Firmware` restores the saved
+backup image. If external firmware is configured, an additional external flash button is generated for that image.
+
+```yaml
+emporiavue:
+  auto_update_samd: false
+  external_samd_firmware:
+    - id: test
+      url: "https://raw.githubusercontent.com/OWNER/PRIVATE_REPO/REF/firmware/samd09/images/i2c/test.bin"
+      token: !secret github_token
+```
+
+## Vue 2 I2C Packages
+
+The repository currently includes the base `packages/vue2-i2c.yaml` package and three topology presets:
+`packages/vue2-i2c-1phase.yaml`, `packages/vue2-i2c-2phase.yaml`, and `packages/vue2-i2c-3phase.yaml`. The base package
+sets `hardware: vue2` and `mode: i2c`, adds a 64 KiB `samd_bak` data partition, and enables the firmware version
+entities plus the backup, update, and restore buttons. It also uses the component's default `metering_interval: 200ms`
+I2C read path that decodes the stock-compatible frame into the component's internal metering frame. The transport is
+explicit in the filename so a future SPI transport can live next to it as `packages/vue2-spi.yaml`.
+
+The topology presets create Home Assistant configuration numbers for the main voltage calibration values. The initial
+value is `0.022`, matching the old `emporia_vue` component's documented starting point. If a number was changed before,
+the restored ESPHome preference wins over the package value on boot.
+
+Keep your `external_components` block in the main node YAML, then include the package:
+
+```yaml
+packages:
+  emporiavue:
+    url: https://github.com/rosenrot00/emporiavue
+    ref: main
+    files:
+      - packages/vue2-i2c.yaml
+      # Pick exactly one topology package:
+      # - packages/vue2-i2c-1phase.yaml
+      # - packages/vue2-i2c-2phase.yaml
+      - packages/vue2-i2c-3phase.yaml
+```
+
+## Acknowledgements
+
+This project builds on work from the Emporia Vue local community.
+
+- Thanks to [`emporia-vue-local/esphome`](https://github.com/emporia-vue-local/esphome) for the original ESPHome
+  component and local Vue metering work.
+- Thanks to [`gekkehenkie11/emporia-SAMD09`](https://github.com/gekkehenkie11/emporia-SAMD09) for publishing a
+  stock-compatible SAMD09 firmware reference.
