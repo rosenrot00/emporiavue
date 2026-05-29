@@ -1291,17 +1291,17 @@ EmporiaVueComponent::ManagedI2CDiagnosticResult EmporiaVueComponent::query_manag
   const i2c::ErrorCode error =
       this->write_read(&command, 1, reinterpret_cast<uint8_t *>(&candidate), sizeof(candidate));
   if (error != i2c::ERROR_OK) {
-    ESP_LOGD(TAG, "SAMD09 managed I2C diagnostic query failed: i2c error %u", static_cast<unsigned>(error));
+    ESP_LOGD(TAG, "SAMD09 I2C diagnostic query failed: i2c error %u", static_cast<unsigned>(error));
     return ManagedI2CDiagnosticResult::I2C_ERROR;
   }
   if (!this->validate_managed_i2c_diagnostic_(candidate)) {
-    ESP_LOGD(TAG, "SAMD09 managed I2C diagnostic query returned no valid managed firmware response");
+    ESP_LOGD(TAG, "SAMD09 I2C diagnostic query returned no valid response");
     return ManagedI2CDiagnosticResult::INVALID_RESPONSE;
   }
 
   *diagnostic = candidate;
   ESP_LOGD(TAG,
-           "SAMD09 managed I2C diagnostic: seq=%" PRIu32 ", samples=%" PRIu32 ", built=%" PRIu32
+           "SAMD09 I2C diagnostic: seq=%" PRIu32 ", samples=%" PRIu32 ", built=%" PRIu32
            ", read=%" PRIu32 ", dma_errors=%" PRIu32 ", overruns=%" PRIu32,
            candidate.diagnostic_sequence, candidate.sample_blocks, candidate.packets_built, candidate.packets_read,
            candidate.dma_transfer_errors, candidate.packet_overruns);
@@ -1444,9 +1444,9 @@ void EmporiaVueComponent::probe_runtime_i2c_after_firmware_update_() {
   if (info_result == ManagedI2CDiagnosticResult::VALID_RESPONSE) {
     this->publish_firmware_info_from_diagnostic_(diagnostic);
     this->publish_i2c_diagnostics_(diagnostic);
-    ESP_LOGI(TAG, "SAMD09 runtime managed I2C diagnostic OK after update");
+    ESP_LOGI(TAG, "SAMD09 runtime I2C diagnostic OK after update");
   } else {
-    ESP_LOGW(TAG, "SAMD09 runtime managed I2C diagnostic failed after update: result=%u",
+    ESP_LOGW(TAG, "SAMD09 runtime I2C diagnostic failed after update: result=%u",
              static_cast<unsigned>(info_result));
   }
   this->start_i2c_diagnostics_();
