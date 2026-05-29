@@ -19,18 +19,14 @@ void EmporiaVueComponent::setup() {
     this->release_pins_();
   }
   this->inspect_backup_partition_();
-  FirmwareInfo unknown_info{};
-  this->publish_firmware_version_(unknown_info);
   this->publish_bundled_firmware_version_();
   if (this->diagnostics_status_sensor_ != nullptr) {
-    this->diagnostics_status_sensor_->publish_state("unknown");
+    this->diagnostics_status_sensor_->publish_state("checking firmware");
   }
-  this->set_timeout("initial_firmware_detection", 5000, [this]() { this->publish_initial_firmware_detection_(); });
-  if (this->runtime_mode_ == RuntimeMode::I2C) {
-    this->set_timeout("initial_samd_i2c_diagnostics", 10000, [this]() { this->refresh_i2c_diagnostics_(); });
-    this->set_interval("samd_i2c_diagnostics", DIAGNOSTICS_INTERVAL_MS, [this]() { this->refresh_i2c_diagnostics_(); });
-  } else if (this->diagnostics_status_sensor_ != nullptr) {
-    this->diagnostics_status_sensor_->publish_state("spi mode: i2c diagnostics disabled");
+  this->publish_firmware_status_("checking firmware");
+  this->publish_initial_firmware_detection_();
+  if (!this->install_active_) {
+    this->start_i2c_diagnostics_();
   }
 }
 
@@ -1395,6 +1391,23 @@ void EmporiaVueComponent::publish_i2c_diagnostics_(const ManagedI2CDiagnostic &d
   }
 }
 
+void EmporiaVueComponent::start_i2c_diagnostics_() {
+  if (this->diagnostics_started_) {
+    return;
+  }
+  this->diagnostics_started_ = true;
+
+  if (this->runtime_mode_ != RuntimeMode::I2C) {
+    if (this->diagnostics_status_sensor_ != nullptr) {
+      this->diagnostics_status_sensor_->publish_state("unavailable: spi mode");
+    }
+    return;
+  }
+
+  this->set_timeout("initial_samd_i2c_diagnostics", 1000, [this]() { this->refresh_i2c_diagnostics_(); });
+  this->set_interval("samd_i2c_diagnostics", DIAGNOSTICS_INTERVAL_MS, [this]() { this->refresh_i2c_diagnostics_(); });
+}
+
 i2c::ErrorCode EmporiaVueComponent::read_normal_i2c_frame_(const char *context) {
   std::array<uint8_t, STOCK_I2C_FRAME_SIZE> frame{};
   const i2c::ErrorCode error = this->read(frame.data(), frame.size());
@@ -1455,6 +1468,7 @@ void EmporiaVueComponent::probe_runtime_i2c_after_firmware_update_() {
     this->publish_firmware_status_(str_sprintf("update complete; normal i2c frame failed: i2c error %u",
                                                static_cast<unsigned>(frame_error)));
   }
+  this->start_i2c_diagnostics_();
 }
 
 void EmporiaVueComponent::publish_initial_firmware_detection_() {
@@ -2078,9 +2092,10 @@ void EmporiaVueComponent::process_install_() {
 
 void EmporiaVueComponent::fail_install_(const std::string &error) {
   const std::string action_name = this->install_action_name_();
+  const bool flash_may_be_partial = this->install_started_writing_;
   ESP_LOGW(TAG, "SAMD09 firmware %s failed: %s", action_name.c_str(), error.c_str());
   if (this->install_core_halted_) {
-    if (this->install_started_writing_) {
+    if (flash_may_be_partial) {
       ESP_LOGW(TAG, "SAMD09 flash may be partially written; leaving core halted for recovery");
     } else if (!this->resume_core_()) {
       ESP_LOGW(TAG, "Failed to resume SAMD09 core after firmware %s failure: %s", action_name.c_str(),
@@ -2098,6 +2113,9 @@ void EmporiaVueComponent::fail_install_(const std::string &error) {
   this->release_pins_();
   this->publish_status_(action_name + " failed: " + error);
   this->publish_firmware_status_(action_name + " failed: " + error);
+  if (!flash_may_be_partial) {
+    this->start_i2c_diagnostics_();
+  }
 }
 
 void EmporiaVueComponent::finish_install_success_() {
@@ -2172,10 +2190,12 @@ void EmporiaVueComponent::finish_install_success_() {
       this->set_timeout("post_update_i2c_probe", 1000, [this]() { this->probe_runtime_i2c_after_firmware_update_(); });
     } else {
       this->publish_firmware_status_("update complete: spi mode active");
+      this->start_i2c_diagnostics_();
     }
   } else if (completed_action == FirmwareAction::RESTORE_STOCK) {
     this->publish_status_("restore complete");
     this->publish_firmware_status_("restore complete: backup firmware");
+    this->start_i2c_diagnostics_();
     ESP_LOGI(TAG, "SAMD09 backup firmware restore complete: size=%" PRIu32, this->install_flash_size_);
   }
 }

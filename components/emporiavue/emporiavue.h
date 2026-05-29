@@ -29,7 +29,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void setup() override;
   void loop() override;
   void dump_config() override;
-  float get_setup_priority() const override { return setup_priority::DATA; }
+  float get_setup_priority() const override { return setup_priority::DATA + 10.0f; }
 
   void set_swdio_pin(InternalGPIOPin *pin) { this->swdio_pin_ = pin; }
   void set_swclk_pin(InternalGPIOPin *pin) { this->swclk_pin_ = pin; }
@@ -369,6 +369,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void refresh_i2c_diagnostics_();
   void publish_firmware_info_from_diagnostic_(const ManagedI2CDiagnostic &diagnostic);
   void publish_i2c_diagnostics_(const ManagedI2CDiagnostic &diagnostic);
+  void start_i2c_diagnostics_();
   i2c::ErrorCode read_normal_i2c_frame_(const char *context);
   void probe_runtime_i2c_after_firmware_update_();
   void publish_initial_firmware_detection_();
@@ -432,6 +433,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   RuntimeMode runtime_mode_{RuntimeMode::I2C};
   std::string entity_prefix_{};
   bool auto_update_samd_{false};
+  bool diagnostics_started_{false};
   std::string backup_partition_name_{"samd_bak"};
   const esp_partition_t *backup_partition_{nullptr};
   bool backup_active_{false};
