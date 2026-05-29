@@ -1373,14 +1373,8 @@ void EmporiaVueComponent::publish_i2c_diagnostics_(const ManagedI2CDiagnostic &d
   if (this->diag_i2c_partial_reads_sensor_ != nullptr) {
     this->diag_i2c_partial_reads_sensor_->publish_state(static_cast<float>(diagnostic.i2c_partial_reads));
   }
-  if (this->diag_i2c_oversize_reads_sensor_ != nullptr) {
-    this->diag_i2c_oversize_reads_sensor_->publish_state(static_cast<float>(diagnostic.i2c_oversize_reads));
-  }
   if (this->diag_last_sample_count_sensor_ != nullptr) {
     this->diag_last_sample_count_sensor_->publish_state(static_cast<float>(diagnostic.last_sample_count));
-  }
-  if (this->diag_last_i2c_read_len_sensor_ != nullptr) {
-    this->diag_last_i2c_read_len_sensor_->publish_state(static_cast<float>(diagnostic.last_i2c_read_len));
   }
 }
 

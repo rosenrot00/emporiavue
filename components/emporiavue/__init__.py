@@ -39,9 +39,7 @@ CONF_DIAG_PACKETS_READ = "diag_packets_read"
 CONF_DIAG_DMA_TRANSFER_ERRORS = "diag_dma_transfer_errors"
 CONF_DIAG_PACKET_OVERRUNS = "diag_packet_overruns"
 CONF_DIAG_I2C_PARTIAL_READS = "diag_i2c_partial_reads"
-CONF_DIAG_I2C_OVERSIZE_READS = "diag_i2c_oversize_reads"
 CONF_DIAG_LAST_SAMPLE_COUNT = "diag_last_sample_count"
-CONF_DIAG_LAST_I2C_READ_LEN = "diag_last_i2c_read_len"
 CONF_FIRMWARE_VERSION = "firmware_version"
 CONF_BUNDLED_FIRMWARE_VERSION = "bundled_firmware_version"
 CONF_BACKUP_PARTITION = "backup_partition"
@@ -91,9 +89,7 @@ DIAGNOSTIC_ENTITY_NAMES = {
     CONF_DIAG_DMA_TRANSFER_ERRORS: "SAMD DMA Transfer Errors",
     CONF_DIAG_PACKET_OVERRUNS: "SAMD Packet Overruns",
     CONF_DIAG_I2C_PARTIAL_READS: "SAMD I2C Partial Reads",
-    CONF_DIAG_I2C_OVERSIZE_READS: "SAMD I2C Oversize Reads",
     CONF_DIAG_LAST_SAMPLE_COUNT: "SAMD Last Sample Count",
-    CONF_DIAG_LAST_I2C_READ_LEN: "SAMD Last I2C Read Length",
 }
 
 def _prefixed_entity_name(prefix, name):
@@ -263,23 +259,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
         cv.Optional(
-            CONF_DIAG_I2C_OVERSIZE_READS,
-        ): sensor.sensor_schema(
-            icon="mdi:alert-circle-outline",
-            state_class=STATE_CLASS_MEASUREMENT,
-            accuracy_decimals=0,
-            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
-        ),
-        cv.Optional(
             CONF_DIAG_LAST_SAMPLE_COUNT,
-        ): sensor.sensor_schema(
-            icon="mdi:counter",
-            state_class=STATE_CLASS_MEASUREMENT,
-            accuracy_decimals=0,
-            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
-        ),
-        cv.Optional(
-            CONF_DIAG_LAST_I2C_READ_LEN,
         ): sensor.sensor_schema(
             icon="mdi:counter",
             state_class=STATE_CLASS_MEASUREMENT,
@@ -368,15 +348,9 @@ async def to_code(config):
     if diag_i2c_partial_reads_config := config.get(CONF_DIAG_I2C_PARTIAL_READS):
         sens = await sensor.new_sensor(diag_i2c_partial_reads_config)
         cg.add(var.set_diag_i2c_partial_reads_sensor(sens))
-    if diag_i2c_oversize_reads_config := config.get(CONF_DIAG_I2C_OVERSIZE_READS):
-        sens = await sensor.new_sensor(diag_i2c_oversize_reads_config)
-        cg.add(var.set_diag_i2c_oversize_reads_sensor(sens))
     if diag_last_sample_count_config := config.get(CONF_DIAG_LAST_SAMPLE_COUNT):
         sens = await sensor.new_sensor(diag_last_sample_count_config)
         cg.add(var.set_diag_last_sample_count_sensor(sens))
-    if diag_last_i2c_read_len_config := config.get(CONF_DIAG_LAST_I2C_READ_LEN):
-        sens = await sensor.new_sensor(diag_last_i2c_read_len_config)
-        cg.add(var.set_diag_last_i2c_read_len_sensor(sens))
     if backup_firmware_button_config := config.get(CONF_BACKUP_FIRMWARE_BUTTON):
         btn = await button.new_button(backup_firmware_button_config)
         await cg.register_parented(btn, var)

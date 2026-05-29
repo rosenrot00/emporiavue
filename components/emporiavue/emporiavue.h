@@ -68,11 +68,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void set_diag_i2c_partial_reads_sensor(sensor::Sensor *sensor) {
     this->diag_i2c_partial_reads_sensor_ = sensor;
   }
-  void set_diag_i2c_oversize_reads_sensor(sensor::Sensor *sensor) {
-    this->diag_i2c_oversize_reads_sensor_ = sensor;
-  }
   void set_diag_last_sample_count_sensor(sensor::Sensor *sensor) { this->diag_last_sample_count_sensor_ = sensor; }
-  void set_diag_last_i2c_read_len_sensor(sensor::Sensor *sensor) { this->diag_last_i2c_read_len_sensor_ = sensor; }
 
   void backup_firmware();
   void install_firmware();
@@ -417,9 +413,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   sensor::Sensor *diag_dma_transfer_errors_sensor_{nullptr};
   sensor::Sensor *diag_packet_overruns_sensor_{nullptr};
   sensor::Sensor *diag_i2c_partial_reads_sensor_{nullptr};
-  sensor::Sensor *diag_i2c_oversize_reads_sensor_{nullptr};
   sensor::Sensor *diag_last_sample_count_sensor_{nullptr};
-  sensor::Sensor *diag_last_i2c_read_len_sensor_{nullptr};
 
   uint16_t hardware_id_{0};
   bool reset_before_read_{false};
