@@ -7,6 +7,7 @@
 emporiavue:
   mains:
     line_1:
+      id: new_line_1
       voltage_input: BLACK
       main_clamp: A
       calibration: 0.022
@@ -20,6 +21,7 @@ emporiavue:
         id: new_phase_a_power
         name: "NEW_Phase A Power"
     line_2:
+      id: new_line_2
       voltage_input: RED
       main_clamp: B
       calibration: 0.022
@@ -33,6 +35,7 @@ emporiavue:
         id: new_phase_b_power
         name: "NEW_Phase B Power"
     line_3:
+      id: new_line_3
       voltage_input: BLUE
       main_clamp: C
       calibration: 0.022
@@ -45,3 +48,34 @@ emporiavue:
       power:
         id: new_phase_c_power
         name: "NEW_Phase C Power"
+  ct_clamps:
+    - phase_id: new_line_2
+      input: "1"
+      power:
+        id: new_cir1
+        name: "NEW_cir1"
+    - phase_id: new_line_3
+      input: "2"
+      power:
+        id: new_cir2
+        name: "NEW_cir2"
+    - phase_id: new_line_1
+      input: "3"
+      power:
+        id: new_cir3
+        name: "NEW_cir3"
+    - phase_id: new_line_2
+      input: "4"
+      power:
+        id: new_cir4
+        name: "NEW_cir4"
+    - phase_id: new_line_3
+      input: "5"
+      power:
+        id: new_cir5
+        name: "NEW_cir5"
+    - phase_id: new_line_3
+      input: "6"
+      power:
+        id: new_cir6
+        name: "NEW_cir6"
