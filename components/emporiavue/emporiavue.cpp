@@ -536,11 +536,19 @@ void EmporiaVueComponent::reset_target_() {
   this->deassert_reset_();
 }
 
-void EmporiaVueComponent::assert_reset_() {
+void EmporiaVueComponent::assert_reset_(bool wait_for_hold_time) {
   this->reset_pin_->pin_mode(gpio::FLAG_OUTPUT);
   this->reset_pin_->digital_write(false);
   this->target_reset_asserted_ = true;
-  delay(this->reset_hold_time_ms_);
+  if (wait_for_hold_time) {
+    delay(this->reset_hold_time_ms_);
+  }
+}
+
+void EmporiaVueComponent::assert_reset_for_swd_attach_() {
+  this->assert_reset_(false);
+  // Keep the SWD cold-plug reset pulse short; reset_hold_time_ms_ is for normal reset pulses.
+  delayMicroseconds(100);
 }
 
 void EmporiaVueComponent::deassert_reset_() {
@@ -563,7 +571,7 @@ void EmporiaVueComponent::cold_plug_swd_() {
   this->swclk_pin_->pin_mode(gpio::FLAG_OUTPUT);
   this->swclk_pin_->digital_write(false);
   if (!this->target_reset_asserted_) {
-    this->assert_reset_();
+    this->assert_reset_for_swd_attach_();
   }
   ESP_LOGV(TAG, "Releasing SAMD09 reset with SWCLK low for cold-plug");
   this->deassert_reset_for_swd_attach_();
@@ -575,7 +583,7 @@ void EmporiaVueComponent::begin_swd_session_() {
     ESP_LOGV(TAG, "Holding SAMD09 SWCLK low and asserting reset for connect-under-reset");
     this->swclk_pin_->pin_mode(gpio::FLAG_OUTPUT);
     this->swclk_pin_->digital_write(false);
-    this->assert_reset_();
+    this->assert_reset_for_swd_attach_();
     return;
   }
   if (this->connect_under_reset_ && this->reset_pin_ == nullptr) {

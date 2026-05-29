@@ -380,7 +380,8 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   };
 
   void reset_target_();
-  void assert_reset_();
+  void assert_reset_(bool wait_for_hold_time = true);
+  void assert_reset_for_swd_attach_();
   void deassert_reset_();
   void deassert_reset_for_swd_attach_();
   bool connect_under_reset_active_() const;
