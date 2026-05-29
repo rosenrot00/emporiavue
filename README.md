@@ -141,10 +141,10 @@ emporiavue:
 
 ## Vue I2C Packages
 
-The repository includes `packages/vue2-i2c.yaml` and `packages/vue3-i2c.yaml`. The Vue 2 I2C package configures the
-Vue 2 internal SWD pins through `hardware: vue2`, adds a 64 KiB `samd_bak` data partition, and enables the firmware
-status/version entities plus the backup, update, and restore buttons. The transport is explicit in the filename so a
-future SPI transport can live next to it as `packages/vue2-spi.yaml`.
+The repository includes `packages/vue2-i2c.yaml` and `packages/vue3-i2c.yaml`. Each package sets the matching
+`hardware:` and `mode: i2c` values, adds a 64 KiB `samd_bak` data partition, and enables the firmware status/version
+entities plus the backup, update, and restore buttons. The transport is explicit in the filename so a future SPI
+transport can live next to it as `packages/vue2-spi.yaml`.
 
 Keep your private `external_components` block in the main node YAML, then include the package:
 

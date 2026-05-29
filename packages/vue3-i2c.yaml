@@ -21,6 +21,7 @@ esp32:
 emporiavue:
   id: samd_reader
   hardware: vue3
+  mode: i2c
   backup_partition: samd_bak
 
   firmware_status:
