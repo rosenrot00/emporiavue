@@ -139,11 +139,12 @@ emporiavue:
   connect_under_reset: true
 ```
 
-## Vue 2 managed package
+## Vue I2C Packages
 
-The repository includes `packages/vue2-managed.yaml`. It configures the Vue 2 internal SWD pins through
-`hardware: vue2`, adds a 64 KiB `samd_bak` data partition, and enables the firmware status/version entities plus the
-backup, update, and restore buttons.
+The repository includes `packages/vue2-i2c.yaml` and `packages/vue3-i2c.yaml`. The Vue 2 I2C package configures the
+Vue 2 internal SWD pins through `hardware: vue2`, adds a 64 KiB `samd_bak` data partition, and enables the firmware
+status/version entities plus the backup, update, and restore buttons. The transport is explicit in the filename so a
+future SPI transport can live next to it as `packages/vue2-spi.yaml`.
 
 Keep your private `external_components` block in the main node YAML, then include the package:
 
@@ -155,7 +156,7 @@ packages:
     username: !secret github_username
     password: !secret github_token
     files:
-      - packages/vue2-managed.yaml
+      - packages/vue2-i2c.yaml
 ```
 
 When adding `samd_bak` to a device that is already flashed, update the ESP32 partition table once. ESPHome documents

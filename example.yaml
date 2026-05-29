@@ -17,4 +17,4 @@ external_components:
     components: [emporiavue]
 
 packages:
-  emporiavue_vue2: !include packages/vue2-managed.yaml
+  emporiavue_vue2_i2c: !include packages/vue2-i2c.yaml
