@@ -271,8 +271,8 @@ Groups can sum and subtract sources. `circuits: [total_power, -cir1, -cir2]` pub
 `max(0, total_power - cir1 - cir2)`.
 Filters directly under `mains`, `circuits`, `ct_clamps`, or `groups` are internal measurement corrections and feed
 energy, groups, and balance calculations. Filters under `power` only affect the Home Assistant display sensor.
-The Vue 2 three-phase package keeps branch circuits internal by default with stable IDs such as `cir1`; add
-`circuits.<id>.power` in the node YAML only for circuits that should be visible in Home Assistant.
+Configured branch circuits automatically get stable internal power IDs such as `cir1`; add `circuits.<id>.power` in the
+node YAML only for circuits that should be visible in Home Assistant.
 
 ## Future SAMD09 firmware improvements
 

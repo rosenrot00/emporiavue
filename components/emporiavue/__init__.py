@@ -302,31 +302,32 @@ def _apply_mains_defaults(config):
     return config
 
 
-def _split_power_sensor_config(parent_config, raw_id):
+def _split_power_sensor_config(parent_config, raw_id, always_create_raw=False):
     power_config = parent_config.get(CONF_POWER)
-    if power_config is None:
+    raw_config = parent_config.get(CONF_RAW_POWER)
+    if power_config is None and raw_config is None and not always_create_raw:
         return parent_config
-    if not isinstance(power_config, dict):
+    if power_config is not None and not isinstance(power_config, dict):
         raise cv.Invalid("power must be a mapping")
+    if raw_config is not None and not isinstance(raw_config, dict):
+        raise cv.Invalid("raw_power must be a mapping")
 
     parent_config = dict(parent_config)
-    power_config = dict(power_config)
-    raw_config = parent_config.get(CONF_RAW_POWER)
-    if raw_config is None:
-        raw_config = {}
-    elif not isinstance(raw_config, dict):
-        raise cv.Invalid("raw_power must be a mapping")
-    else:
-        raw_config = dict(raw_config)
+    power_config = dict(power_config) if power_config is not None else None
+    raw_config = dict(raw_config) if raw_config is not None else {}
 
-    raw_config.setdefault(CONF_ID, power_config.pop(CONF_ID, raw_id))
+    if power_config is not None:
+        raw_config.setdefault(CONF_ID, power_config.pop(CONF_ID, raw_id))
+    else:
+        raw_config.setdefault(CONF_ID, raw_id)
     raw_config.setdefault(CONF_INTERNAL, True)
     parent_config[CONF_RAW_POWER] = raw_config
 
-    if power_config:
-        parent_config[CONF_POWER] = power_config
-    else:
-        parent_config.pop(CONF_POWER, None)
+    if power_config is not None:
+        if power_config:
+            parent_config[CONF_POWER] = power_config
+        else:
+            parent_config.pop(CONF_POWER, None)
     return parent_config
 
 
@@ -400,7 +401,7 @@ def _apply_raw_power_defaults(config):
         circuits = dict(config[CONF_CIRCUITS])
         for circuit_key, circuit_config in list(circuits.items()):
             if isinstance(circuit_config, dict):
-                circuits[circuit_key] = _split_power_sensor_config(circuit_config, circuit_key)
+                circuits[circuit_key] = _split_power_sensor_config(circuit_config, circuit_key, always_create_raw=True)
         config[CONF_CIRCUITS] = circuits
 
     if CONF_GROUPS in config and isinstance(config[CONF_GROUPS], dict):
