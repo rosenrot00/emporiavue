@@ -41,6 +41,8 @@ CONF_INSTALL_FIRMWARE_BUTTON = "install_firmware_button"
 CONF_RESTORE_FIRMWARE_BUTTON = "restore_firmware_button"
 CONF_FLASH_EXTERNAL_FIRMWARE_BUTTON = "flash_external_firmware_button"
 CONF_EXTERNAL_SAMD_FIRMWARE = "external_samd_firmware"
+CONF_BUTTON = "button"
+CONF_EXTERNAL_FIRMWARE_ID = "id"
 CONF_URL = "url"
 CONF_DIAG_SAMPLE_BLOCKS = "diag_sample_blocks"
 CONF_DIAG_PACKETS_BUILT = "diag_packets_built"
@@ -91,7 +93,6 @@ CORE_ENTITY_NAMES = {
     CONF_BACKUP_FIRMWARE_BUTTON: "Read SAMD Firmware",
     CONF_INSTALL_FIRMWARE_BUTTON: "Flash SAMD Bundled Firmware",
     CONF_RESTORE_FIRMWARE_BUTTON: "Flash SAMD Backup Firmware",
-    CONF_FLASH_EXTERNAL_FIRMWARE_BUTTON: "Flash SAMD External Firmware",
 }
 
 DIAGNOSTIC_ENTITY_NAMES = {
@@ -120,12 +121,6 @@ def _apply_entity_name_defaults(config):
         return config
 
     for key, default_name in CORE_ENTITY_NAMES.items():
-        if (
-            key == CONF_FLASH_EXTERNAL_FIRMWARE_BUTTON
-            and CONF_EXTERNAL_SAMD_FIRMWARE not in config
-            and key not in config
-        ):
-            continue
         entity_config = config.get(key)
         if entity_config is None:
             entity_config = {}
@@ -176,11 +171,61 @@ def _apply_external_firmware_defaults(config):
     if CONF_EXTERNAL_SAMD_FIRMWARE not in config:
         return config
 
-    entity_config = config.get(CONF_FLASH_EXTERNAL_FIRMWARE_BUTTON)
-    if entity_config is None:
-        config[CONF_FLASH_EXTERNAL_FIRMWARE_BUTTON] = {
-            CONF_NAME: CORE_ENTITY_NAMES[CONF_FLASH_EXTERNAL_FIRMWARE_BUTTON]
-        }
+    prefix = config.get(CONF_ENTITY_PREFIX, "")
+    raw_entries = config[CONF_EXTERNAL_SAMD_FIRMWARE]
+    legacy_button_config = config.pop(CONF_FLASH_EXTERNAL_FIRMWARE_BUTTON, None)
+    if isinstance(raw_entries, dict):
+        entries = [dict(raw_entries)]
+    elif isinstance(raw_entries, list):
+        entries = [dict(entry) for entry in raw_entries]
+    else:
+        return config
+
+    if legacy_button_config is not None and len(entries) != 1:
+        raise cv.Invalid("flash_external_firmware_button can only be used with a single external_samd_firmware entry")
+
+    seen_ids = set()
+    normalized_entries = []
+    for index, entry in enumerate(entries):
+        firmware_id = entry.get(CONF_EXTERNAL_FIRMWARE_ID)
+        if firmware_id is None:
+            if len(entries) == 1:
+                firmware_id = "external"
+            else:
+                raise cv.Invalid("external_samd_firmware entries need an id when multiple firmwares are configured")
+        firmware_id = str(firmware_id)
+        if firmware_id in seen_ids:
+            raise cv.Invalid(f"duplicate external_samd_firmware id: {firmware_id}")
+        seen_ids.add(firmware_id)
+        entry[CONF_EXTERNAL_FIRMWARE_ID] = firmware_id
+
+        button_config = entry.get(CONF_BUTTON)
+        if legacy_button_config is not None and index == 0:
+            button_config = legacy_button_config
+        if firmware_id == "external":
+            firmware_name = "External"
+        else:
+            firmware_name = firmware_id.replace("_", " ").replace("-", " ").title()
+        default_name = f"Flash SAMD {firmware_name} Firmware"
+
+        if button_config is None:
+            button_config = {CONF_NAME: default_name}
+            name_is_default = True
+        elif not isinstance(button_config, dict):
+            raise cv.Invalid("external_samd_firmware button must be a mapping")
+        else:
+            button_config = dict(button_config)
+            name_is_default = button_config.get(CONF_NAME) in (None, default_name)
+
+        if button_config.get(CONF_NAME) is None:
+            button_config[CONF_NAME] = default_name
+        if prefix and name_is_default:
+            button_config[CONF_NAME] = _prefixed_entity_name(prefix, default_name)
+
+        entry[CONF_BUTTON] = button_config
+        normalized_entries.append(entry)
+
+    config[CONF_EXTERNAL_SAMD_FIRMWARE] = normalized_entries
     return config
 
 
@@ -219,8 +264,8 @@ def _download_external_samd_firmware(url):
     return data
 
 
-def _external_samd_firmware_header(data=None):
-    if not data:
+def _external_samd_firmware_header(firmwares=None):
+    if not firmwares:
         return """#pragma once
 
 #include <cstdint>
@@ -228,18 +273,35 @@ def _external_samd_firmware_header(data=None):
 namespace esphome {
 namespace emporiavue {
 
-static constexpr uint32_t EXTERNAL_SAMD_FIRMWARE_SIZE = 0UL;
-static constexpr uint8_t EXTERNAL_SAMD_FIRMWARE[1] = {0x00};
+static constexpr uint8_t EXTERNAL_SAMD_FIRMWARE_COUNT = 0;
+static constexpr uint8_t EXTERNAL_SAMD_FIRMWARE_0[1] = {0x00};
+static constexpr uint32_t EXTERNAL_SAMD_FIRMWARE_SIZES[1] = {0UL};
+static constexpr const uint8_t *EXTERNAL_SAMD_FIRMWARE_IMAGES[1] = {EXTERNAL_SAMD_FIRMWARE_0};
 
 }  // namespace emporiavue
 }  // namespace esphome
 """
 
-    rows = []
-    for offset in range(0, len(data), 12):
-        chunk = data[offset : offset + 12]
-        rows.append("    " + ", ".join(f"0x{byte:02x}" for byte in chunk) + ",")
-    body = "\n".join(rows)
+    arrays = []
+    sizes = []
+    images = []
+    for index, firmware in enumerate(firmwares):
+        data = firmware["data"]
+        rows = []
+        for offset in range(0, len(data), 12):
+            chunk = data[offset : offset + 12]
+            rows.append("    " + ", ".join(f"0x{byte:02x}" for byte in chunk) + ",")
+        body = "\n".join(rows)
+        arrays.append(
+            f"""static constexpr uint8_t EXTERNAL_SAMD_FIRMWARE_{index}[{len(data)}] = {{
+{body}
+}};"""
+        )
+        sizes.append(f"{len(data)}UL")
+        images.append(f"EXTERNAL_SAMD_FIRMWARE_{index}")
+    array_body = "\n\n".join(arrays)
+    size_body = ", ".join(sizes)
+    image_body = ", ".join(images)
     return f"""#pragma once
 
 #include <cstdint>
@@ -247,20 +309,21 @@ static constexpr uint8_t EXTERNAL_SAMD_FIRMWARE[1] = {0x00};
 namespace esphome {{
 namespace emporiavue {{
 
-static constexpr uint32_t EXTERNAL_SAMD_FIRMWARE_SIZE = {len(data)}UL;
-static constexpr uint8_t EXTERNAL_SAMD_FIRMWARE[EXTERNAL_SAMD_FIRMWARE_SIZE] = {{
-{body}
-}};
+static constexpr uint8_t EXTERNAL_SAMD_FIRMWARE_COUNT = {len(firmwares)};
+{array_body}
+
+static constexpr uint32_t EXTERNAL_SAMD_FIRMWARE_SIZES[EXTERNAL_SAMD_FIRMWARE_COUNT] = {{{size_body}}};
+static constexpr const uint8_t *EXTERNAL_SAMD_FIRMWARE_IMAGES[EXTERNAL_SAMD_FIRMWARE_COUNT] = {{{image_body}}};
 
 }}  // namespace emporiavue
 }}  // namespace esphome
 """
 
 
-def _write_external_samd_firmware_header(data=None):
+def _write_external_samd_firmware_header(firmwares=None):
     try:
         EXTERNAL_SAMD_FIRMWARE_HEADER.write_text(
-            _external_samd_firmware_header(data), encoding="utf-8"
+            _external_samd_firmware_header(firmwares), encoding="utf-8"
         )
     except OSError as err:
         raise cv.Invalid(f"external_samd_firmware header generation failed: {err}") from err
@@ -288,10 +351,18 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_AUTO_UPDATE_SAMD, default=False): cv.boolean,
         cv.Optional(CONF_DIAGNOSTICS_INTERVAL): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_BACKUP_PARTITION, default="samd_bak"): cv.string_strict,
-        cv.Optional(CONF_EXTERNAL_SAMD_FIRMWARE): cv.Schema(
-            {
-                cv.Required(CONF_URL): cv.string_strict,
-            }
+        cv.Optional(CONF_EXTERNAL_SAMD_FIRMWARE): cv.ensure_list(
+            cv.Schema(
+                {
+                    cv.Required(CONF_EXTERNAL_FIRMWARE_ID): cv.string_strict,
+                    cv.Required(CONF_URL): cv.string_strict,
+                    cv.Required(CONF_BUTTON): button.button_schema(
+                        EmporiaVueFlashExternalFirmwareButton,
+                        icon="mdi:web",
+                        entity_category=ENTITY_CATEGORY_CONFIG,
+                    ),
+                }
+            )
         ),
         cv.Optional(
             CONF_FIRMWARE_VERSION,
@@ -387,11 +458,6 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             icon="mdi:backup-restore",
             entity_category=ENTITY_CATEGORY_CONFIG,
         ),
-        cv.Optional(CONF_FLASH_EXTERNAL_FIRMWARE_BUTTON): button.button_schema(
-            EmporiaVueFlashExternalFirmwareButton,
-            icon="mdi:web",
-            entity_category=ENTITY_CATEGORY_CONFIG,
-        ),
     }
 ).extend(cv.COMPONENT_SCHEMA).extend(i2c.i2c_device_schema(0x64))
 
@@ -399,10 +465,15 @@ CONFIG_SCHEMA = cv.All(_apply_defaults, EMPORIAVUE_SCHEMA)
 
 
 async def to_code(config):
-    external_firmware = None
-    if external_firmware_config := config.get(CONF_EXTERNAL_SAMD_FIRMWARE):
-        external_firmware = _download_external_samd_firmware(external_firmware_config[CONF_URL])
-    _write_external_samd_firmware_header(external_firmware)
+    external_firmwares = []
+    for external_firmware_config in config.get(CONF_EXTERNAL_SAMD_FIRMWARE, []):
+        external_firmwares.append(
+            {
+                CONF_EXTERNAL_FIRMWARE_ID: external_firmware_config[CONF_EXTERNAL_FIRMWARE_ID],
+                "data": _download_external_samd_firmware(external_firmware_config[CONF_URL]),
+            }
+        )
+    _write_external_samd_firmware_header(external_firmwares)
 
     var = cg.new_Pvariable(config[CONF_ID])
     await cg.register_component(var, config)
@@ -467,6 +538,7 @@ async def to_code(config):
     if restore_firmware_button_config := config.get(CONF_RESTORE_FIRMWARE_BUTTON):
         btn = await button.new_button(restore_firmware_button_config)
         await cg.register_parented(btn, var)
-    if flash_external_firmware_button_config := config.get(CONF_FLASH_EXTERNAL_FIRMWARE_BUTTON):
-        btn = await button.new_button(flash_external_firmware_button_config)
+    for index, external_firmware_config in enumerate(config.get(CONF_EXTERNAL_SAMD_FIRMWARE, [])):
+        btn = await button.new_button(external_firmware_config[CONF_BUTTON])
+        cg.add(btn.set_firmware_index(index))
         await cg.register_parented(btn, var)

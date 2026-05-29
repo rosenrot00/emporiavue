@@ -73,7 +73,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void backup_firmware();
   void install_firmware();
   void restore_firmware();
-  void flash_external_firmware();
+  void flash_external_firmware(uint8_t index = 0);
 
  protected:
   static constexpr uint8_t DP_ABORT = 0x00;
@@ -381,15 +381,16 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   bool read_current_firmware_info_(FirmwareInfo *info);
   bool read_valid_backup_(BackupHeader *header, std::string *error);
   FirmwareAction determine_firmware_action_(const FirmwareInfo &current, std::string *reason) const;
-  void start_firmware_action_(FirmwareAction requested_action, bool force_update);
+  void start_firmware_action_(FirmwareAction requested_action, bool force_update, uint8_t external_firmware_index = 0);
   bool bundled_firmware_available_() const;
   bool bundled_firmware_matches_target_() const;
   uint32_t bundled_firmware_hardware_id_() const;
   uint32_t bundled_firmware_mode_id_() const;
   uint32_t bundled_firmware_version_() const;
   uint32_t bundled_firmware_size_() const;
-  bool external_firmware_available_() const;
-  uint32_t external_firmware_size_() const;
+  bool external_firmware_available_(uint8_t index) const;
+  uint32_t external_firmware_size_(uint8_t index) const;
+  const uint8_t *external_firmware_data_(uint8_t index) const;
   uint16_t expected_firmware_mode_id_() const;
   bool nvm_wait_ready_();
   bool nvm_clear_errors_();
@@ -464,6 +465,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   uint32_t install_flash_size_{0};
   uint32_t install_page_size_{0};
   uint32_t install_row_size_{0};
+  uint8_t install_external_firmware_index_{0};
   bool init_pins_on_boot_{false};
   bool pins_setup_{false};
   bool direction_write_{true};
@@ -490,8 +492,13 @@ class EmporiaVueRestoreFirmwareButton : public button::Button, public Parented<E
 };
 
 class EmporiaVueFlashExternalFirmwareButton : public button::Button, public Parented<EmporiaVueComponent> {
+ public:
+  void set_firmware_index(uint8_t index) { this->firmware_index_ = index; }
+
  protected:
-  void press_action() override { this->parent_->flash_external_firmware(); }
+  void press_action() override { this->parent_->flash_external_firmware(this->firmware_index_); }
+
+  uint8_t firmware_index_{0};
 };
 
 }  // namespace emporiavue

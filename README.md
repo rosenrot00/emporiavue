@@ -51,14 +51,28 @@ The default config creates only the SAMD firmware controls that are needed durin
 - `Read SAMD Firmware`: backs up detected legacy SAMD09 firmware into the `samd_bak` ESP32 data partition. It refuses to back up firmware marked as managed by this project.
 - `Flash SAMD Bundled Firmware`: flashes the bundled managed SAMD09 image.
 - `Flash SAMD Backup Firmware`: restores the verified firmware image from the `samd_bak` partition.
-- `Flash SAMD External Firmware`: appears when `external_samd_firmware.url` is configured. ESPHome downloads that raw image during code generation, embeds it in the ESP32 build, and flashes it without requiring a managed footer or SHA metadata. Images shorter than the detected SAMD flash are padded with `0xFF`; images larger than the detected flash are rejected.
+- `Flash SAMD External Firmware`: appears when `external_samd_firmware` is configured. ESPHome downloads raw images during code generation, embeds them in the ESP32 build, and flashes them without requiring a managed footer or SHA metadata. Images shorter than the detected SAMD flash are padded with `0xFF`; images larger than the detected flash are rejected.
 
-Example external image configuration:
+Example single external image configuration:
 
 ```yaml
 emporiavue:
   external_samd_firmware:
     url: "https://example.com/samd09.bin"
+```
+
+Multiple external images use one entry per firmware. The `id` is used to build the default button name; `button.name`
+is optional. Button entities are automatically in the `config` category.
+
+```yaml
+emporiavue:
+  external_samd_firmware:
+    - id: stock
+      url: "https://example.com/samd09-stock.bin"
+    - id: test
+      url: "https://example.com/samd09-test.bin"
+      button:
+        name: "Flash SAMD Test Firmware"
 ```
 
 You need the normal ESPHome `api:` setup in your node config for Home Assistant to see those buttons. The results appear in the ESPHome log/console at `INFO` level.
