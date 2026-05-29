@@ -107,6 +107,18 @@ void EmporiaVueComponent::dump_config() {
   for (auto *ct_clamp : this->metering_ct_clamps_) {
     ESP_LOGCONFIG(TAG, "  Metering CT clamp");
     ESP_LOGCONFIG(TAG, "    Input port: %u", static_cast<unsigned>(ct_clamp->get_input_port()));
+    if (ct_clamp->is_line_pair()) {
+      const auto *phase_a = ct_clamp->get_phase();
+      const auto *phase_b = ct_clamp->get_line_pair_phase_b();
+      if (phase_a != nullptr && phase_b != nullptr) {
+        ESP_LOGCONFIG(TAG, "    Voltage reference: input %u - input %u",
+                      static_cast<unsigned>(phase_a->get_input_wire()),
+                      static_cast<unsigned>(phase_b->get_input_wire()));
+      }
+    } else if (ct_clamp->get_phase() != nullptr) {
+      ESP_LOGCONFIG(TAG, "    Voltage reference: input %u",
+                    static_cast<unsigned>(ct_clamp->get_phase()->get_input_wire()));
+    }
     ESP_LOGCONFIG(TAG, "    Internal power filters: %u", static_cast<unsigned>(ct_clamp->get_power_filter_count()));
     LOG_SENSOR("    ", "Raw power", ct_clamp->get_raw_power_sensor());
     LOG_SENSOR("    ", "Power", ct_clamp->get_power_sensor());
@@ -1559,8 +1571,22 @@ bool EmporiaVueComponent::calculate_ct_power_(const MeteringFrame &frame, const 
     return false;
   }
 
-  const int32_t raw_power = frame.clamps[port].power_raw_by_phase[phase->get_input_wire()];
   const float correction_factor = port < 3 ? 5.5f : 22.0f;
+  if (ct_clamp->is_line_pair()) {
+    const MeteringPhaseConfig *phase_b = ct_clamp->get_line_pair_phase_b();
+    if (phase_b == nullptr || phase_b->get_input_wire() >= 3) {
+      return false;
+    }
+
+    const int32_t raw_power_a = frame.clamps[port].power_raw_by_phase[phase->get_input_wire()];
+    const int32_t raw_power_b = frame.clamps[port].power_raw_by_phase[phase_b->get_input_wire()];
+    const float power_a = raw_power_a * phase->get_calibration() / correction_factor;
+    const float power_b = raw_power_b * phase_b->get_calibration() / correction_factor;
+    *power = ct_clamp->apply_power_filters(power_a - power_b);
+    return true;
+  }
+
+  const int32_t raw_power = frame.clamps[port].power_raw_by_phase[phase->get_input_wire()];
   *power = ct_clamp->apply_power_filters(raw_power * phase->get_calibration() / correction_factor);
   return true;
 }

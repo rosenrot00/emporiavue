@@ -55,7 +55,8 @@ emporiavue:
     id: grid_export_w
     name: "Grid Export Power"
   # Override circuits.<id>.line in the main node YAML when a branch CT is
-  # installed on a different line. Add circuits.<id>.power there only for
+  # installed on a different line. Use line: [1, 2] for a line-to-line load
+  # measured by that physical CT port. Add circuits.<id>.power there only for
   # circuits that should be visible in Home Assistant. The component
   # automatically keeps every configured circuit available as a stable internal
   # power ID for energy and group calculations.

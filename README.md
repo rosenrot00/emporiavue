@@ -7,6 +7,19 @@ ESPHome external component for backing up and updating the SAMD09 firmware in Em
 
 The SAMD reset line is intentionally not configured by default because public notes and board-level testing do not fully agree on the ESP32 GPIO. Configure it explicitly only when you want a reset pulse. GPIO26 is mentioned in the original discussion; GPIO4 is another candidate to test on some boards.
 
+## Features
+
+- SAMD09 firmware backup, bundled firmware flashing, backup restore, and optional external firmware flashing.
+- Managed firmware identification through a small SWD footer plus runtime I2C diagnostic counters.
+- Vue 2 I2C packages for base firmware management and a separate three-phase metering topology preset.
+- Transport-independent metering frame so future SPI transport can feed the same sensor, group, and energy setup.
+- Home Assistant number entities for runtime line calibration values with ESPHome preference restore.
+- Main line, branch circuit, grid import/export, and custom group power sensors.
+- Internal measurement filters for mains, circuits, CT clamps, and groups. These feed energy and group calculations, while filters under `power` affect only the visible Home Assistant display sensor.
+- Stable internal circuit IDs such as `cir1`, `cir2`, and `cir3` for `total_daily_energy` and group calculations, even when the circuit is not exposed as a visible HA power sensor.
+- Signed group sources such as `circuits: [total_power, -cir1, -cir2]` for balance/remainder calculations.
+- Per-circuit line-to-neutral and line-to-line power: use `line: 2` for a normal line reference, or `line: [2, 3]` for a load connected between two lines.
+
 ## Use
 
 Add this repository directory as a local external component source:
@@ -257,6 +270,13 @@ emporiavue:
         name: "Vue2 Metering Circuit 1 Power"
         filters:
           - throttle_average: 5s
+    cir2:
+      input: "2"
+      line: [2, 3]
+      power:
+        name: "Line 2-3 Load Power"
+        filters:
+          - throttle_average: 5s
   groups:
     balance_power:
       circuits: [total_power, -cir1, -cir2, -cir3]
@@ -274,10 +294,5 @@ energy, groups, and balance calculations. Filters under `power` only affect the 
 Configured branch circuits automatically get stable internal power IDs such as `cir1`; add `circuits.<id>.power` in the
 node YAML only for circuits that should be visible in Home Assistant. If `power` has filters but no `name`, the
 component uses a default name such as `Circuit 2 Power`.
-
-## Future SAMD09 firmware improvements
-
-- Add a generic per-CT power calculation mode for line-to-line loads. The `gekkehenkie11/Emporia-VUE-fix`
-  firmware changes selected CT ports to compute power against `L1-L2`, `L1-L3`, and `L2-L3` instead of
-  only single phase-to-neutral voltage references. That is useful for two-phase/line-to-line consumers,
-  but it should be implemented as a configurable mode per CT port rather than as a hardcoded mux range.
+For line-to-line circuits, `line: [2, 3]` calculates the CT's power against `Line 2 - Line 3`. If the CT direction or
+line order gives the opposite sign, add an internal circuit filter such as `filters: [{ multiply: -1 }]`.

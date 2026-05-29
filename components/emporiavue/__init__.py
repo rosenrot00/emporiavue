@@ -729,6 +729,24 @@ METERING_MAIN_SCHEMA = cv.Schema(
 )
 
 
+def _validate_metering_line(value):
+    if not isinstance(value, list):
+        return cv.int_range(min=1, max=3)(value)
+
+    lines = [cv.int_range(min=1, max=3)(line) for line in value]
+    if len(lines) != 2:
+        raise cv.Invalid("Line-to-line circuits need exactly two line numbers")
+    if lines[0] == lines[1]:
+        raise cv.Invalid("Line-to-line circuits need two different line numbers")
+    return lines
+
+
+def _metering_line_numbers(value):
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
 def _validate_mains(value):
     mains = cv.Schema(
         {
@@ -766,7 +784,7 @@ METERING_CIRCUIT_SCHEMA = cv.Schema(
     {
         cv.GenerateID(CONF_CT_ID): cv.declare_id(MeteringCTClampConfig),
         cv.Required(CONF_INPUT): cv.one_of(*BRANCH_CT_INPUTS.keys(), upper=True),
-        cv.Required(CONF_LINE): cv.int_range(min=1, max=3),
+        cv.Required(CONF_LINE): _validate_metering_line,
         cv.Optional(CONF_NAME): cv.string_strict,
         cv.Optional(CONF_FILTERS): INTERNAL_POWER_FILTER_SCHEMA,
         cv.Optional(CONF_POWER): POWER_SENSOR_SCHEMA,
@@ -816,11 +834,12 @@ def _validate_metering_topology(config):
     mains = config.get(CONF_MAINS, {})
 
     for circuit_key, circuit_config in circuits.items():
-        line_key = f"line_{circuit_config[CONF_LINE]}"
-        if line_key not in mains:
-            raise cv.Invalid(
-                f"circuits.{circuit_key}.line references {line_key}, but mains.{line_key} is not configured"
-            )
+        for line_number in _metering_line_numbers(circuit_config[CONF_LINE]):
+            line_key = f"line_{line_number}"
+            if line_key not in mains:
+                raise cv.Invalid(
+                    f"circuits.{circuit_key}.line references {line_key}, but mains.{line_key} is not configured"
+                )
 
     for group_key, group_config in config.get(CONF_GROUPS, {}).items():
         for source in group_config[CONF_CIRCUITS]:
@@ -1151,8 +1170,14 @@ async def to_code(config):
 
     for circuit_key, circuit_config in config.get(CONF_CIRCUITS, {}).items():
         ct_clamp_var = cg.new_Pvariable(circuit_config[CONF_CT_ID], MeteringCTClampConfig())
-        phase_var = main_phase_vars_by_line[circuit_config[CONF_LINE]]
-        cg.add(ct_clamp_var.set_phase(phase_var))
+        line_config = circuit_config[CONF_LINE]
+        if isinstance(line_config, list):
+            phase_a_var = main_phase_vars_by_line[line_config[0]]
+            phase_b_var = main_phase_vars_by_line[line_config[1]]
+            cg.add(ct_clamp_var.set_line_pair(phase_a_var, phase_b_var))
+        else:
+            phase_var = main_phase_vars_by_line[line_config]
+            cg.add(ct_clamp_var.set_phase(phase_var))
         cg.add(ct_clamp_var.set_input_port(BRANCH_CT_INPUTS[circuit_config[CONF_INPUT]]))
         await _add_internal_power_filters(ct_clamp_var, circuit_config.get(CONF_FILTERS))
 

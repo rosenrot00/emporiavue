@@ -621,8 +621,19 @@ class MeteringCalibrationNumber : public number::Number, public Parented<Meterin
 
 class MeteringCTClampConfig {
  public:
-  void set_phase(MeteringPhaseConfig *phase) { this->phase_ = phase; }
+  void set_phase(MeteringPhaseConfig *phase) {
+    this->phase_ = phase;
+    this->line_pair_ = false;
+    this->line_pair_phase_b_ = nullptr;
+  }
+  void set_line_pair(MeteringPhaseConfig *phase_a, MeteringPhaseConfig *phase_b) {
+    this->phase_ = phase_a;
+    this->line_pair_phase_b_ = phase_b;
+    this->line_pair_ = true;
+  }
   const MeteringPhaseConfig *get_phase() const { return this->phase_; }
+  const MeteringPhaseConfig *get_line_pair_phase_b() const { return this->line_pair_phase_b_; }
+  bool is_line_pair() const { return this->line_pair_; }
   void set_input_port(uint8_t input_port) { this->input_port_ = input_port; }
   uint8_t get_input_port() const { return this->input_port_; }
   void set_raw_power_sensor(sensor::Sensor *sensor) { this->raw_power_sensor_ = sensor; }
@@ -640,6 +651,8 @@ class MeteringCTClampConfig {
 
  protected:
   MeteringPhaseConfig *phase_{nullptr};
+  MeteringPhaseConfig *line_pair_phase_b_{nullptr};
+  bool line_pair_{false};
   uint8_t input_port_{0};
   sensor::Sensor *raw_power_sensor_{nullptr};
   sensor::Sensor *power_sensor_{nullptr};
