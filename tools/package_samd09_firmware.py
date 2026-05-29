@@ -15,9 +15,8 @@ BUILD_BIN = FW_DIR / "build" / "EmporiaSamd09.bin"
 OUT = ROOT / "components" / "emporiavue" / "samd09_firmware.h"
 
 FLASH_SIZE = 16 * 1024
-MAGIC = 0x4556534D
 MARKER = b"EMPORIAVUE-SAMD"
-FOOTER_FORMAT = "<IIH32s15s7s"
+FOOTER_FORMAT = "<HHI32s15s9s"
 FOOTER_SIZE = struct.calcsize(FOOTER_FORMAT)
 
 
@@ -38,6 +37,7 @@ def bytes_to_c_array(data: bytes, indent: str = "    ") -> str:
 
 def main() -> None:
     hardware_id = read_numeric_define("EMPORIAVUE_HARDWARE_ID")
+    protocol_id = read_numeric_define("EMPORIAVUE_PROTOCOL_ID")
     firmware_version = read_numeric_define("EMPORIAVUE_FIRMWARE_VERSION")
 
     subprocess.run(["make", "clean"], cwd=FW_DIR, check=True)
@@ -51,12 +51,12 @@ def main() -> None:
     payload_sha = hashlib.sha256(payload).digest()
     footer = struct.pack(
         FOOTER_FORMAT,
-        MAGIC,
-        firmware_version,
         hardware_id,
+        protocol_id,
+        firmware_version,
         payload_sha,
         MARKER,
-        b"\xff" * 7,
+        b"\xff" * 9,
     )
     image = payload + footer
     image_sha = hashlib.sha256(image).digest()
@@ -69,6 +69,7 @@ namespace esphome {{
 namespace emporiavue {{
 
 static constexpr uint32_t BUNDLED_SAMD_FIRMWARE_HARDWARE_ID = {hardware_id}UL;
+static constexpr uint32_t BUNDLED_SAMD_FIRMWARE_PROTOCOL_ID = {protocol_id}UL;
 static constexpr uint32_t BUNDLED_SAMD_FIRMWARE_VERSION = {firmware_version}UL;
 static constexpr uint32_t BUNDLED_SAMD_FIRMWARE_SIZE = {len(image)}UL;
 static constexpr uint32_t BUNDLED_SAMD_FIRMWARE_SOURCE_SIZE = {len(raw)}UL;
@@ -89,7 +90,7 @@ static constexpr uint8_t BUNDLED_SAMD_FIRMWARE[BUNDLED_SAMD_FIRMWARE_SIZE] = {{
     OUT.write_text(header)
     print(f"wrote {OUT}")
     print(
-        f"hardware_id={hardware_id} firmware_version={firmware_version} "
+        f"hardware_id={hardware_id} protocol_id={protocol_id} firmware_version={firmware_version} "
         f"display=v{firmware_version // 10}.{firmware_version % 10}"
     )
     print(f"source_size={len(raw)} image_size={len(image)}")

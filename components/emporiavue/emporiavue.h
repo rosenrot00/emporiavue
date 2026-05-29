@@ -154,8 +154,10 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   static constexpr uint16_t BACKUP_IO_BLOCK_SIZE = 64;
   static constexpr const char *MANAGED_MARKER = "EMPORIAVUE-SAMD";
   static constexpr uint8_t MANAGED_MARKER_LENGTH = 15;
-  static constexpr uint32_t MANAGED_INFO_MAGIC = 0x4556534DUL;  // "EVSM"
+  static constexpr uint32_t LEGACY_MANAGED_INFO_MAGIC = 0x4556534DUL;  // "EVSM"
   static constexpr uint16_t MANAGED_INFO_FORMAT_VERSION = 1;
+  static constexpr uint16_t MANAGED_PROTOCOL_I2C = 1;
+  static constexpr uint16_t MANAGED_PROTOCOL_SPI = 2;
   static constexpr uint16_t STOCK_I2C_FRAME_SIZE = 284;
   static constexpr uint8_t MANAGED_I2C_DIAGNOSTIC_COMMAND = 0xF1;
   static constexpr uint32_t DIAGNOSTICS_INTERVAL_MS = 60000;
@@ -183,6 +185,15 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   } __attribute__((packed));
 
   struct ManagedFirmwareInfo {
+    uint16_t hardware_id;
+    uint16_t protocol_id;
+    uint32_t firmware_version;
+    uint8_t image_sha256[32];
+    char marker[MANAGED_MARKER_LENGTH];
+    uint8_t reserved[9];
+  } __attribute__((packed));
+
+  struct LegacyMagicManagedFirmwareInfo {
     uint32_t magic;
     uint32_t firmware_version;
     uint16_t hardware_id;
@@ -270,6 +281,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   struct FirmwareInfo {
     FirmwareKind kind{FirmwareKind::UNKNOWN};
     uint16_t hardware_id{0};
+    uint16_t protocol_id{0};
     uint32_t version{0};
     uint32_t flash_size{0};
     uint32_t image_size{0};
@@ -303,6 +315,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   static void append_hex_byte_(std::string *output, uint8_t value);
   static std::string sha256_hex_(const uint8_t hash[32]);
   static std::string format_firmware_version_(uint32_t version);
+  static const char *firmware_protocol_name_(uint16_t protocol_id);
   static uint32_t crc32_(const uint8_t *data, size_t length);
 
   void clock_half_period_();
@@ -364,10 +377,12 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   FirmwareAction determine_firmware_action_(const FirmwareInfo &current, std::string *reason) const;
   void start_firmware_action_(FirmwareAction requested_action);
   bool bundled_firmware_available_() const;
-  bool bundled_firmware_matches_hardware_() const;
+  bool bundled_firmware_matches_target_() const;
   uint32_t bundled_firmware_hardware_id_() const;
+  uint32_t bundled_firmware_protocol_id_() const;
   uint32_t bundled_firmware_version_() const;
   uint32_t bundled_firmware_size_() const;
+  uint16_t expected_firmware_protocol_id_() const;
   bool nvm_wait_ready_();
   bool nvm_clear_errors_();
   bool nvm_check_errors_();

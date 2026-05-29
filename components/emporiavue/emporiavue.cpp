@@ -58,11 +58,14 @@ void EmporiaVueComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Backup partition: %s", this->backup_partition_name_.c_str());
   ESP_LOGCONFIG(TAG, "  Configured hardware id: %u", static_cast<unsigned>(this->hardware_id_));
   ESP_LOGCONFIG(TAG, "  Bundled managed firmware hardware id: %" PRIu32, this->bundled_firmware_hardware_id_());
+  ESP_LOGCONFIG(TAG, "  Bundled managed firmware protocol: %s (%" PRIu32 ")",
+                firmware_protocol_name_(static_cast<uint16_t>(this->bundled_firmware_protocol_id_())),
+                this->bundled_firmware_protocol_id_());
   ESP_LOGCONFIG(TAG, "  Bundled managed firmware version: v%s (raw %" PRIu32 ")",
                 format_firmware_version_(this->bundled_firmware_version_()).c_str(), this->bundled_firmware_version_());
   ESP_LOGCONFIG(TAG, "  Bundled managed firmware size: %" PRIu32 " bytes", this->bundled_firmware_size_());
   ESP_LOGCONFIG(TAG, "  Bundled managed firmware compatible: %s",
-                YESNO(this->bundled_firmware_matches_hardware_()));
+                YESNO(this->bundled_firmware_matches_target_()));
   ESP_LOGCONFIG(TAG, "  Init pins on boot: %s", YESNO(this->init_pins_on_boot_));
   ESP_LOGCONFIG(TAG, "  Runtime mode: %s", this->runtime_mode_ == RuntimeMode::SPI ? "spi" : "i2c");
   ESP_LOGCONFIG(TAG, "  Auto-update SAMD: %s", YESNO(this->auto_update_samd_));
@@ -339,13 +342,16 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
       return;
     }
 
-    if (!this->bundled_firmware_matches_hardware_()) {
+    if (!this->bundled_firmware_matches_target_()) {
       release_after_check();
-      this->publish_firmware_status_(str_sprintf("update blocked: bundled image hardware id %" PRIu32
-                                                 " != configured hardware id %u",
+      this->publish_firmware_status_(str_sprintf("update blocked: bundled image hw=%" PRIu32
+                                                 " %s != configured hw=%u %s",
                                                  this->bundled_firmware_hardware_id_(),
-                                                 static_cast<unsigned>(this->hardware_id_)));
-      ESP_LOGW(TAG, "SAMD09 firmware update blocked by bundled image hardware mismatch");
+                                                 firmware_protocol_name_(
+                                                     static_cast<uint16_t>(this->bundled_firmware_protocol_id_())),
+                                                 static_cast<unsigned>(this->hardware_id_),
+                                                 firmware_protocol_name_(this->expected_firmware_protocol_id_())));
+      ESP_LOGW(TAG, "SAMD09 firmware update blocked by bundled image target mismatch");
       return;
     }
   }
@@ -618,17 +624,17 @@ void EmporiaVueComponent::publish_firmware_version_(const FirmwareInfo &info) {
     case FirmwareKind::MANAGED:
       if (info.source == FirmwareDetectionSource::I2C && info.i2c_frame_length != 0) {
         this->firmware_version_sensor_->publish_state(
-            str_sprintf("managed hw=%u v%s (i2c %u bytes)", static_cast<unsigned>(info.hardware_id),
-                        format_firmware_version_(info.version).c_str(),
+            str_sprintf("managed hw=%u %s v%s (%u bytes)", static_cast<unsigned>(info.hardware_id),
+                        firmware_protocol_name_(info.protocol_id), format_firmware_version_(info.version).c_str(),
                         static_cast<unsigned>(info.i2c_frame_length)));
       } else if (info.source == FirmwareDetectionSource::SWD) {
         this->firmware_version_sensor_->publish_state(
-            str_sprintf("managed hw=%u v%s (swd)", static_cast<unsigned>(info.hardware_id),
-                        format_firmware_version_(info.version).c_str()));
+            str_sprintf("managed hw=%u %s v%s (swd)", static_cast<unsigned>(info.hardware_id),
+                        firmware_protocol_name_(info.protocol_id), format_firmware_version_(info.version).c_str()));
       } else {
         this->firmware_version_sensor_->publish_state(
-            str_sprintf("managed hw=%u v%s", static_cast<unsigned>(info.hardware_id),
-                        format_firmware_version_(info.version).c_str()));
+            str_sprintf("managed hw=%u %s v%s", static_cast<unsigned>(info.hardware_id),
+                        firmware_protocol_name_(info.protocol_id), format_firmware_version_(info.version).c_str()));
       }
       break;
     case FirmwareKind::STOCK:
@@ -664,6 +670,17 @@ std::string EmporiaVueComponent::sha256_hex_(const uint8_t hash[32]) {
 
 std::string EmporiaVueComponent::format_firmware_version_(uint32_t version) {
   return str_sprintf("%" PRIu32 ".%" PRIu32, version / 10U, version % 10U);
+}
+
+const char *EmporiaVueComponent::firmware_protocol_name_(uint16_t protocol_id) {
+  switch (protocol_id) {
+    case MANAGED_PROTOCOL_I2C:
+      return "i2c";
+    case MANAGED_PROTOCOL_SPI:
+      return "spi";
+    default:
+      return "unknown";
+  }
 }
 
 uint32_t EmporiaVueComponent::crc32_(const uint8_t *data, size_t length) {
@@ -1302,6 +1319,7 @@ void EmporiaVueComponent::publish_firmware_info_from_diagnostic_(const ManagedI2
   FirmwareInfo info{};
   info.kind = FirmwareKind::MANAGED;
   info.hardware_id = diagnostic.hardware_id;
+  info.protocol_id = MANAGED_PROTOCOL_I2C;
   info.version = diagnostic.firmware_version;
   info.i2c_frame_length = diagnostic.i2c_frame_length;
   info.source = FirmwareDetectionSource::I2C;
@@ -1541,14 +1559,18 @@ bool EmporiaVueComponent::should_auto_update_samd_(const FirmwareInfo &info, std
     set_reason("no bundled firmware image");
     return false;
   }
-  if (!this->bundled_firmware_matches_hardware_()) {
-    set_reason(str_sprintf("bundled firmware hw=%" PRIu32 " does not match configured hw=%u",
-                           this->bundled_firmware_hardware_id_(), static_cast<unsigned>(this->hardware_id_)));
+  if (!this->bundled_firmware_matches_target_()) {
+    set_reason(str_sprintf("bundled firmware hw=%" PRIu32 " %s does not match configured hw=%u %s",
+                           this->bundled_firmware_hardware_id_(),
+                           firmware_protocol_name_(static_cast<uint16_t>(this->bundled_firmware_protocol_id_())),
+                           static_cast<unsigned>(this->hardware_id_),
+                           firmware_protocol_name_(this->expected_firmware_protocol_id_())));
     return false;
   }
 
   if (info.kind == FirmwareKind::STOCK) {
-    set_reason(str_sprintf("stock -> managed hw=%" PRIu32 " v%s", this->bundled_firmware_hardware_id_(),
+    set_reason(str_sprintf("stock -> managed hw=%" PRIu32 " %s v%s", this->bundled_firmware_hardware_id_(),
+                           firmware_protocol_name_(static_cast<uint16_t>(this->bundled_firmware_protocol_id_())),
                            format_firmware_version_(this->bundled_firmware_version_()).c_str()));
     return true;
   }
@@ -1564,14 +1586,21 @@ bool EmporiaVueComponent::should_auto_update_samd_(const FirmwareInfo &info, std
     return false;
   }
 
+  if (info.protocol_id != this->expected_firmware_protocol_id_()) {
+    set_reason(str_sprintf("managed %s -> %s", firmware_protocol_name_(info.protocol_id),
+                           firmware_protocol_name_(this->expected_firmware_protocol_id_())));
+    return this->bundled_firmware_matches_target_();
+  }
+
   if (info.version < this->bundled_firmware_version_()) {
     set_reason(str_sprintf("managed v%s -> v%s", format_firmware_version_(info.version).c_str(),
                            format_firmware_version_(this->bundled_firmware_version_()).c_str()));
     return true;
   }
 
-  set_reason(str_sprintf("managed hw=%u v%s is not older than bundled v%s",
-                         static_cast<unsigned>(info.hardware_id), format_firmware_version_(info.version).c_str(),
+  set_reason(str_sprintf("managed hw=%u %s v%s is not older than bundled v%s",
+                         static_cast<unsigned>(info.hardware_id), firmware_protocol_name_(info.protocol_id),
+                         format_firmware_version_(info.version).c_str(),
                          format_firmware_version_(this->bundled_firmware_version_()).c_str()));
   return false;
 }
@@ -1601,20 +1630,35 @@ bool EmporiaVueComponent::read_managed_firmware_info_(uint32_t flash_size, Manag
 
   ManagedFirmwareInfo candidate{};
   std::memcpy(&candidate, raw_info, sizeof(candidate));
-  if (candidate.magic == MANAGED_INFO_MAGIC &&
-      std::memcmp(candidate.marker, MANAGED_MARKER, MANAGED_MARKER_LENGTH) == 0) {
+  if (std::memcmp(candidate.marker, MANAGED_MARKER, MANAGED_MARKER_LENGTH) == 0 &&
+      candidate.firmware_version != 0 &&
+      (candidate.protocol_id == MANAGED_PROTOCOL_I2C || candidate.protocol_id == MANAGED_PROTOCOL_SPI)) {
     *managed_info = candidate;
+    *found = true;
+    return true;
+  }
+
+  LegacyMagicManagedFirmwareInfo legacy_magic{};
+  std::memcpy(&legacy_magic, raw_info, sizeof(legacy_magic));
+  if (legacy_magic.magic == LEGACY_MANAGED_INFO_MAGIC &&
+      std::memcmp(legacy_magic.marker, MANAGED_MARKER, MANAGED_MARKER_LENGTH) == 0) {
+    managed_info->hardware_id = legacy_magic.hardware_id;
+    managed_info->protocol_id = MANAGED_PROTOCOL_I2C;
+    managed_info->firmware_version = legacy_magic.firmware_version;
+    std::memcpy(managed_info->image_sha256, legacy_magic.image_sha256, sizeof(managed_info->image_sha256));
+    std::memcpy(managed_info->marker, legacy_magic.marker, sizeof(managed_info->marker));
+    std::memset(managed_info->reserved, 0xFF, sizeof(managed_info->reserved));
     *found = true;
     return true;
   }
 
   LegacyManagedFirmwareInfo legacy{};
   std::memcpy(&legacy, raw_info, sizeof(legacy));
-  if (legacy.magic == MANAGED_INFO_MAGIC && legacy.format_version == MANAGED_INFO_FORMAT_VERSION &&
+  if (legacy.magic == LEGACY_MANAGED_INFO_MAGIC && legacy.format_version == MANAGED_INFO_FORMAT_VERSION &&
       std::memcmp(legacy.marker, MANAGED_MARKER, MANAGED_MARKER_LENGTH) == 0) {
-    managed_info->magic = legacy.magic;
-    managed_info->firmware_version = legacy.firmware_version;
     managed_info->hardware_id = legacy.hardware_id;
+    managed_info->protocol_id = MANAGED_PROTOCOL_I2C;
+    managed_info->firmware_version = legacy.firmware_version;
     std::memcpy(managed_info->image_sha256, legacy.image_sha256, sizeof(managed_info->image_sha256));
     std::memcpy(managed_info->marker, legacy.marker, sizeof(managed_info->marker));
     std::memset(managed_info->reserved, 0xFF, sizeof(managed_info->reserved));
@@ -1654,6 +1698,7 @@ bool EmporiaVueComponent::read_current_firmware_info_(FirmwareInfo *info) {
   if (managed_found) {
     info->kind = FirmwareKind::MANAGED;
     info->hardware_id = managed_info.hardware_id;
+    info->protocol_id = managed_info.protocol_id;
     info->version = managed_info.firmware_version;
     std::memcpy(info->image_sha256, managed_info.image_sha256, sizeof(info->image_sha256));
   }
@@ -1731,16 +1776,18 @@ EmporiaVueComponent::FirmwareAction EmporiaVueComponent::determine_firmware_acti
       }
       return FirmwareAction::NONE;
     }
-    if (!this->bundled_firmware_matches_hardware_()) {
+    if (!this->bundled_firmware_matches_target_()) {
       if (reason != nullptr) {
-        *reason = str_sprintf("stock firmware detected; no bundled managed firmware for configured hardware id %u",
-                              static_cast<unsigned>(this->hardware_id_));
+        *reason = str_sprintf("stock firmware detected; no bundled managed firmware for configured hw=%u %s",
+                              static_cast<unsigned>(this->hardware_id_),
+                              firmware_protocol_name_(this->expected_firmware_protocol_id_()));
       }
       return FirmwareAction::NONE;
     }
     if (reason != nullptr) {
-      *reason = str_sprintf("stock firmware detected; update to managed hw=%" PRIu32 " v%s",
+      *reason = str_sprintf("stock firmware detected; update to managed hw=%" PRIu32 " %s v%s",
                             this->bundled_firmware_hardware_id_(),
+                            firmware_protocol_name_(static_cast<uint16_t>(this->bundled_firmware_protocol_id_())),
                             format_firmware_version_(this->bundled_firmware_version_()).c_str());
     }
     return FirmwareAction::UPDATE_MANAGED;
@@ -1749,7 +1796,7 @@ EmporiaVueComponent::FirmwareAction EmporiaVueComponent::determine_firmware_acti
   if (current.kind == FirmwareKind::MANAGED && this->hardware_id_ != 0 &&
       current.hardware_id != this->hardware_id_) {
     if (reason != nullptr) {
-      if (this->bundled_firmware_matches_hardware_()) {
+      if (this->bundled_firmware_matches_target_()) {
         *reason = str_sprintf("managed hardware id %u does not match configured hardware id %u",
                               static_cast<unsigned>(current.hardware_id), static_cast<unsigned>(this->hardware_id_));
       } else {
@@ -1758,14 +1805,24 @@ EmporiaVueComponent::FirmwareAction EmporiaVueComponent::determine_firmware_acti
                               static_cast<unsigned>(current.hardware_id), static_cast<unsigned>(this->hardware_id_));
       }
     }
-    return this->bundled_firmware_matches_hardware_() ? FirmwareAction::UPDATE_MANAGED : FirmwareAction::NONE;
+    return this->bundled_firmware_matches_target_() ? FirmwareAction::UPDATE_MANAGED : FirmwareAction::NONE;
   }
 
-  if (current.kind == FirmwareKind::MANAGED && this->bundled_firmware_matches_hardware_() &&
+  if (current.kind == FirmwareKind::MANAGED &&
+      current.protocol_id != this->expected_firmware_protocol_id_()) {
+    if (reason != nullptr) {
+      *reason = str_sprintf("managed protocol %s does not match configured protocol %s",
+                            firmware_protocol_name_(current.protocol_id),
+                            firmware_protocol_name_(this->expected_firmware_protocol_id_()));
+    }
+    return this->bundled_firmware_matches_target_() ? FirmwareAction::UPDATE_MANAGED : FirmwareAction::NONE;
+  }
+
+  if (current.kind == FirmwareKind::MANAGED && this->bundled_firmware_matches_target_() &&
       current.version < this->bundled_firmware_version_()) {
     if (reason != nullptr) {
-      *reason = str_sprintf("managed hw=%u v%s is older than bundled v%s",
-                            static_cast<unsigned>(current.hardware_id),
+      *reason = str_sprintf("managed hw=%u %s v%s is older than bundled v%s",
+                            static_cast<unsigned>(current.hardware_id), firmware_protocol_name_(current.protocol_id),
                             format_firmware_version_(current.version).c_str(),
                             format_firmware_version_(this->bundled_firmware_version_()).c_str());
     }
@@ -1774,7 +1831,8 @@ EmporiaVueComponent::FirmwareAction EmporiaVueComponent::determine_firmware_acti
 
   if (current.kind == FirmwareKind::MANAGED) {
     if (reason != nullptr) {
-      *reason = str_sprintf("up to date: managed hw=%u v%s", static_cast<unsigned>(current.hardware_id),
+      *reason = str_sprintf("up to date: managed hw=%u %s v%s", static_cast<unsigned>(current.hardware_id),
+                            firmware_protocol_name_(current.protocol_id),
                             format_firmware_version_(current.version).c_str());
     }
     return FirmwareAction::NONE;
@@ -1788,16 +1846,23 @@ EmporiaVueComponent::FirmwareAction EmporiaVueComponent::determine_firmware_acti
 
 bool EmporiaVueComponent::bundled_firmware_available_() const { return BUNDLED_SAMD_FIRMWARE_SIZE > 0; }
 
-bool EmporiaVueComponent::bundled_firmware_matches_hardware_() const {
+bool EmporiaVueComponent::bundled_firmware_matches_target_() const {
   return this->bundled_firmware_available_() &&
-         (this->hardware_id_ == 0 || this->bundled_firmware_hardware_id_() == this->hardware_id_);
+         (this->hardware_id_ == 0 || this->bundled_firmware_hardware_id_() == this->hardware_id_) &&
+         this->bundled_firmware_protocol_id_() == this->expected_firmware_protocol_id_();
 }
 
 uint32_t EmporiaVueComponent::bundled_firmware_hardware_id_() const { return BUNDLED_SAMD_FIRMWARE_HARDWARE_ID; }
 
+uint32_t EmporiaVueComponent::bundled_firmware_protocol_id_() const { return BUNDLED_SAMD_FIRMWARE_PROTOCOL_ID; }
+
 uint32_t EmporiaVueComponent::bundled_firmware_version_() const { return BUNDLED_SAMD_FIRMWARE_VERSION; }
 
 uint32_t EmporiaVueComponent::bundled_firmware_size_() const { return BUNDLED_SAMD_FIRMWARE_SIZE; }
+
+uint16_t EmporiaVueComponent::expected_firmware_protocol_id_() const {
+  return this->runtime_mode_ == RuntimeMode::SPI ? MANAGED_PROTOCOL_SPI : MANAGED_PROTOCOL_I2C;
+}
 
 bool EmporiaVueComponent::nvm_wait_ready_() {
   for (uint16_t attempt = 0; attempt < 5000; attempt++) {
@@ -2045,6 +2110,7 @@ void EmporiaVueComponent::finish_install_success_() {
 
   if (completed_action == FirmwareAction::UPDATE_MANAGED) {
     if (!info_ok || info.kind != FirmwareKind::MANAGED || info.hardware_id != this->bundled_firmware_hardware_id_() ||
+        info.protocol_id != this->bundled_firmware_protocol_id_() ||
         info.version != this->bundled_firmware_version_()) {
       this->fail_install_("final managed firmware marker verification failed");
       return;
@@ -2089,13 +2155,16 @@ void EmporiaVueComponent::finish_install_success_() {
   if (completed_action == FirmwareAction::UPDATE_MANAGED) {
     this->publish_status_("update complete");
     this->publish_firmware_status_(
-        str_sprintf("update complete: managed hw=%" PRIu32 " v%s",
+        str_sprintf("update complete: managed hw=%" PRIu32 " %s v%s",
                     this->bundled_firmware_hardware_id_(),
+                    firmware_protocol_name_(static_cast<uint16_t>(this->bundled_firmware_protocol_id_())),
                     format_firmware_version_(this->bundled_firmware_version_()).c_str()));
     ESP_LOGI(TAG, "SAMD09 managed firmware update complete: hardware_id=%" PRIu32 ", version=%" PRIu32
-                  " (v%s), size=%" PRIu32,
+                  " (v%s), protocol=%s, size=%" PRIu32,
              this->bundled_firmware_hardware_id_(), this->bundled_firmware_version_(),
-             format_firmware_version_(this->bundled_firmware_version_()).c_str(), this->bundled_firmware_size_());
+             format_firmware_version_(this->bundled_firmware_version_()).c_str(),
+             firmware_protocol_name_(static_cast<uint16_t>(this->bundled_firmware_protocol_id_())),
+             this->bundled_firmware_size_());
     if (this->runtime_mode_ == RuntimeMode::I2C) {
       this->set_timeout("post_update_i2c_probe", 1000, [this]() { this->probe_runtime_i2c_after_firmware_update_(); });
     } else {
