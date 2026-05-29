@@ -20,6 +20,15 @@ The SAMD reset line is intentionally not configured by default because public no
 - Signed group sources such as `circuits: [total_power, -cir1, -cir2]` for balance/remainder calculations.
 - Per-circuit line-to-neutral and line-to-line power: use `line: 2` for a normal line reference, or `line: [2, 3]` for a load connected between two lines.
 
+## Acknowledgements
+
+This project is built on ideas and prior work from the Emporia Vue local community.
+
+- Thanks to [`emporia-vue-local/esphome`](https://github.com/emporia-vue-local/esphome) for the original ESPHome
+  component and the community discussions around local Vue metering.
+- Thanks to [`gekkehenkie11/emporia-SAMD09`](https://github.com/gekkehenkie11/emporia-SAMD09) for publishing the
+  SAMD09 replacement firmware work that made this direction practical.
+
 ## Use
 
 Add this repository directory as a local external component source:
