@@ -39,7 +39,6 @@ CONF_SWDIO_PIN = "swdio_pin"
 CONF_BACKUP_FIRMWARE_BUTTON = "backup_firmware_button"
 CONF_INSTALL_FIRMWARE_BUTTON = "install_firmware_button"
 CONF_RESTORE_FIRMWARE_BUTTON = "restore_firmware_button"
-CONF_FLASH_EXTERNAL_FIRMWARE_BUTTON = "flash_external_firmware_button"
 CONF_EXTERNAL_SAMD_FIRMWARE = "external_samd_firmware"
 CONF_BUTTON = "button"
 CONF_EXTERNAL_FIRMWARE_ID = "id"
@@ -174,16 +173,12 @@ def _apply_external_firmware_defaults(config):
 
     prefix = config.get(CONF_ENTITY_PREFIX, "")
     raw_entries = config[CONF_EXTERNAL_SAMD_FIRMWARE]
-    legacy_button_config = config.pop(CONF_FLASH_EXTERNAL_FIRMWARE_BUTTON, None)
     if isinstance(raw_entries, dict):
         entries = [dict(raw_entries)]
     elif isinstance(raw_entries, list):
         entries = [dict(entry) for entry in raw_entries]
     else:
         return config
-
-    if legacy_button_config is not None and len(entries) != 1:
-        raise cv.Invalid("flash_external_firmware_button can only be used with a single external_samd_firmware entry")
 
     seen_ids = set()
     normalized_entries = []
@@ -201,8 +196,6 @@ def _apply_external_firmware_defaults(config):
         entry[CONF_EXTERNAL_FIRMWARE_ID] = firmware_id
 
         button_config = entry.get(CONF_BUTTON)
-        if legacy_button_config is not None and index == 0:
-            button_config = legacy_button_config
         if firmware_id == "external":
             firmware_name = "External"
         else:

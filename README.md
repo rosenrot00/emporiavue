@@ -102,7 +102,7 @@ and `100` as `v10.0`; comparisons and update decisions compare the detected raw 
 integer. The current upstream `emporia_vue` I2C frame is 284 bytes. Managed firmware also returns `hardware_id`,
 `firmware_version`, and frame length through the same I2C diagnostic command that reports runtime counters. The SWD flash
 footer remains separate on purpose, so the ESP32 can still identify managed firmware when I2C is unavailable.
-By default the component only reads this SWD footer at boot and updates the status/version entities. Set
+By default the component only reads this SWD footer at boot and updates the firmware version entities. Set
 `auto_update_samd: true` to let the component automatically install the bundled managed image when the SAMD is still on
 stock firmware, when a matching managed firmware is older than the bundled image, or when the detected `mode_id` differs
 from the configured `mode:`. The selected bundled image must match both the configured hardware and the configured
@@ -180,7 +180,7 @@ emporiavue:
 ## Vue 2 I2C Package
 
 The repository currently includes `packages/vue2-i2c.yaml`. It sets `hardware: vue2` and `mode: i2c`, adds a 64 KiB
-`samd_bak` data partition, and enables the firmware status/version entities plus the backup, update, and restore
+`samd_bak` data partition, and enables the firmware version entities plus the backup, update, and restore
 buttons. The transport is explicit in the filename so a future SPI transport can live next to it as
 `packages/vue2-spi.yaml`.
 

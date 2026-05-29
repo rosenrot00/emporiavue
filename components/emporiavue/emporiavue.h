@@ -309,8 +309,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void prepare_pins_();
   void release_pins_();
   void set_error_(const std::string &error);
-  void publish_status_(const std::string &status);
-  void publish_firmware_status_(const std::string &status);
   void publish_firmware_version_(const FirmwareInfo &info);
   void publish_bundled_firmware_version_();
   static std::string hex32_(uint32_t value);
@@ -370,6 +368,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void publish_firmware_info_from_diagnostic_(const ManagedI2CDiagnostic &diagnostic);
   void publish_i2c_diagnostics_(const ManagedI2CDiagnostic &diagnostic);
   void start_i2c_diagnostics_();
+  void stop_i2c_diagnostics_();
   bool firmware_mode_matches_runtime_() const;
   void publish_firmware_mode_mismatch_();
   void probe_runtime_i2c_after_firmware_update_();
