@@ -75,6 +75,17 @@ emporiavue:
         name: "Flash SAMD Test Firmware"
 ```
 
+Private GitHub raw URLs can use a token without putting credentials into the URL. The token is sent as an
+`Authorization` header during ESPHome code generation:
+
+```yaml
+emporiavue:
+  external_samd_firmware:
+    - id: stock
+      url: "https://raw.githubusercontent.com/rosenrot00/emporiavue/main/firmware/images/i2c/vue2-stock-dump.bin"
+      token: !secret github_token
+```
+
 You need the normal ESPHome `api:` setup in your node config for Home Assistant to see those buttons. The results appear in the ESPHome log/console at `INFO` level.
 Default entity names intentionally do not include the device name; ESPHome/Home Assistant use `esphome.friendly_name`
 for that prefix when needed. Set `entity_prefix` only when you need this component to write an explicit legacy prefix

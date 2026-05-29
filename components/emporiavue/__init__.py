@@ -44,6 +44,7 @@ CONF_EXTERNAL_SAMD_FIRMWARE = "external_samd_firmware"
 CONF_BUTTON = "button"
 CONF_EXTERNAL_FIRMWARE_ID = "id"
 CONF_URL = "url"
+CONF_TOKEN = "token"
 CONF_DIAG_SAMPLE_BLOCKS = "diag_sample_blocks"
 CONF_DIAG_PACKETS_BUILT = "diag_packets_built"
 CONF_DIAG_PACKETS_READ = "diag_packets_read"
@@ -252,9 +253,14 @@ def _apply_defaults(config):
     )
 
 
-def _download_external_samd_firmware(url):
+def _download_external_samd_firmware(url, token=None):
+    headers = {"User-Agent": "ESPHome emporiavue"}
+    if token:
+        token = token.strip()
+        headers["Authorization"] = token if " " in token else f"Bearer {token}"
+    request = urllib.request.Request(url, headers=headers)
     try:
-        with urllib.request.urlopen(url, timeout=30) as response:
+        with urllib.request.urlopen(request, timeout=30) as response:
             data = response.read()
     except Exception as err:
         raise cv.Invalid(f"external_samd_firmware download failed: {err}") from err
@@ -356,6 +362,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
                 {
                     cv.Required(CONF_EXTERNAL_FIRMWARE_ID): cv.string_strict,
                     cv.Required(CONF_URL): cv.string_strict,
+                    cv.Optional(CONF_TOKEN): cv.string_strict,
                     cv.Required(CONF_BUTTON): button.button_schema(
                         EmporiaVueFlashExternalFirmwareButton,
                         icon="mdi:web",
@@ -470,7 +477,10 @@ async def to_code(config):
         external_firmwares.append(
             {
                 CONF_EXTERNAL_FIRMWARE_ID: external_firmware_config[CONF_EXTERNAL_FIRMWARE_ID],
-                "data": _download_external_samd_firmware(external_firmware_config[CONF_URL]),
+                "data": _download_external_samd_firmware(
+                    external_firmware_config[CONF_URL],
+                    external_firmware_config.get(CONF_TOKEN),
+                ),
             }
         )
     _write_external_samd_firmware_header(external_firmwares)
