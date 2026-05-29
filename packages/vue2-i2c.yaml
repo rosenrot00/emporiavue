@@ -15,6 +15,14 @@ esp32:
       subtype: undefined
       size: 0x10000
 
+i2c:
+  sda: 21
+  scl: 22
+  scan: false
+  frequency: 400kHz
+  timeout: 1ms
+  id: i2c_a
+
 emporiavue:
   id: samd_reader
   hardware: vue2
