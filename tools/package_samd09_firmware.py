@@ -16,9 +16,8 @@ OUT = ROOT / "components" / "emporiavue" / "samd09_firmware.h"
 
 FLASH_SIZE = 16 * 1024
 MAGIC = 0x4556534D
-FORMAT_VERSION = 1
 MARKER = b"EMPORIAVUE-SAMD"
-FOOTER_FORMAT = "<IHHII32s15sB"
+FOOTER_FORMAT = "<IIH32s15s7s"
 FOOTER_SIZE = struct.calcsize(FOOTER_FORMAT)
 
 
@@ -53,13 +52,11 @@ def main() -> None:
     footer = struct.pack(
         FOOTER_FORMAT,
         MAGIC,
-        FORMAT_VERSION,
-        hardware_id,
         firmware_version,
-        FLASH_SIZE,
+        hardware_id,
         payload_sha,
         MARKER,
-        0xFF,
+        b"\xff" * 7,
     )
     image = payload + footer
     image_sha = hashlib.sha256(image).digest()

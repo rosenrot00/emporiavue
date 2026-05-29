@@ -183,6 +183,15 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
 
   struct ManagedFirmwareInfo {
     uint32_t magic;
+    uint32_t firmware_version;
+    uint16_t hardware_id;
+    uint8_t image_sha256[32];
+    char marker[MANAGED_MARKER_LENGTH];
+    uint8_t reserved[7];
+  } __attribute__((packed));
+
+  struct LegacyManagedFirmwareInfo {
+    uint32_t magic;
     uint16_t format_version;
     uint16_t hardware_id;
     uint32_t firmware_version;

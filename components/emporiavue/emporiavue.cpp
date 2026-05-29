@@ -1532,19 +1532,35 @@ bool EmporiaVueComponent::read_managed_firmware_info_(uint32_t flash_size, Manag
     return true;
   }
 
-  ManagedFirmwareInfo candidate{};
+  uint8_t raw_info[sizeof(ManagedFirmwareInfo)]{};
   const uint32_t info_address = FLASH_START + flash_size - sizeof(ManagedFirmwareInfo);
-  if (!this->read_flash_bytes_(info_address, sizeof(candidate), reinterpret_cast<uint8_t *>(&candidate))) {
+  if (!this->read_flash_bytes_(info_address, sizeof(raw_info), raw_info)) {
     return false;
   }
 
-  if (candidate.magic != MANAGED_INFO_MAGIC || candidate.format_version != MANAGED_INFO_FORMAT_VERSION ||
-      std::memcmp(candidate.marker, MANAGED_MARKER, MANAGED_MARKER_LENGTH) != 0) {
+  ManagedFirmwareInfo candidate{};
+  std::memcpy(&candidate, raw_info, sizeof(candidate));
+  if (candidate.magic == MANAGED_INFO_MAGIC &&
+      std::memcmp(candidate.marker, MANAGED_MARKER, MANAGED_MARKER_LENGTH) == 0) {
+    *managed_info = candidate;
+    *found = true;
     return true;
   }
 
-  *managed_info = candidate;
-  *found = true;
+  LegacyManagedFirmwareInfo legacy{};
+  std::memcpy(&legacy, raw_info, sizeof(legacy));
+  if (legacy.magic == MANAGED_INFO_MAGIC && legacy.format_version == MANAGED_INFO_FORMAT_VERSION &&
+      std::memcmp(legacy.marker, MANAGED_MARKER, MANAGED_MARKER_LENGTH) == 0) {
+    managed_info->magic = legacy.magic;
+    managed_info->firmware_version = legacy.firmware_version;
+    managed_info->hardware_id = legacy.hardware_id;
+    std::memcpy(managed_info->image_sha256, legacy.image_sha256, sizeof(managed_info->image_sha256));
+    std::memcpy(managed_info->marker, legacy.marker, sizeof(managed_info->marker));
+    std::memset(managed_info->reserved, 0xFF, sizeof(managed_info->reserved));
+    *found = true;
+    return true;
+  }
+
   return true;
 }
 
@@ -1578,7 +1594,6 @@ bool EmporiaVueComponent::read_current_firmware_info_(FirmwareInfo *info) {
     info->kind = FirmwareKind::MANAGED;
     info->hardware_id = managed_info.hardware_id;
     info->version = managed_info.firmware_version;
-    info->image_size = managed_info.image_size;
     std::memcpy(info->image_sha256, managed_info.image_sha256, sizeof(info->image_sha256));
   }
 
