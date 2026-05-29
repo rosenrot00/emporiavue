@@ -272,7 +272,8 @@ Groups can sum and subtract sources. `circuits: [total_power, -cir1, -cir2]` pub
 Filters directly under `mains`, `circuits`, `ct_clamps`, or `groups` are internal measurement corrections and feed
 energy, groups, and balance calculations. Filters under `power` only affect the Home Assistant display sensor.
 Configured branch circuits automatically get stable internal power IDs such as `cir1`; add `circuits.<id>.power` in the
-node YAML only for circuits that should be visible in Home Assistant.
+node YAML only for circuits that should be visible in Home Assistant. If `power` has filters but no `name`, the
+component uses a default name such as `Circuit 2 Power`.
 
 ## Future SAMD09 firmware improvements
 

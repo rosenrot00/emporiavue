@@ -302,7 +302,7 @@ def _apply_mains_defaults(config):
     return config
 
 
-def _split_power_sensor_config(parent_config, raw_id, always_create_raw=False):
+def _split_power_sensor_config(parent_config, raw_id, always_create_raw=False, default_power_name=None):
     power_config = parent_config.get(CONF_POWER)
     raw_config = parent_config.get(CONF_RAW_POWER)
     if power_config is None and raw_config is None and not always_create_raw:
@@ -318,6 +318,8 @@ def _split_power_sensor_config(parent_config, raw_id, always_create_raw=False):
 
     if power_config is not None:
         raw_config.setdefault(CONF_ID, power_config.pop(CONF_ID, raw_id))
+        if default_power_name and CONF_NAME not in power_config and CONF_ID not in power_config:
+            power_config[CONF_NAME] = default_power_name
     else:
         raw_config.setdefault(CONF_ID, raw_id)
     raw_config.setdefault(CONF_INTERNAL, True)
@@ -394,28 +396,47 @@ def _apply_raw_power_defaults(config):
         mains = dict(config[CONF_MAINS])
         for main_key, main_config in list(mains.items()):
             if isinstance(main_config, dict):
-                mains[main_key] = _split_power_sensor_config(main_config, f"{main_key}_power")
+                default_name = f"{main_key.replace('_', ' ').title()} Power"
+                mains[main_key] = _split_power_sensor_config(
+                    main_config, f"{main_key}_power", default_power_name=default_name
+                )
         config[CONF_MAINS] = mains
 
     if CONF_CIRCUITS in config and isinstance(config[CONF_CIRCUITS], dict):
         circuits = dict(config[CONF_CIRCUITS])
         for circuit_key, circuit_config in list(circuits.items()):
             if isinstance(circuit_config, dict):
-                circuits[circuit_key] = _split_power_sensor_config(circuit_config, circuit_key, always_create_raw=True)
+                default_name = f"Circuit {circuit_config.get(CONF_INPUT, circuit_key)} Power"
+                circuits[circuit_key] = _split_power_sensor_config(
+                    circuit_config,
+                    circuit_key,
+                    always_create_raw=True,
+                    default_power_name=default_name,
+                )
         config[CONF_CIRCUITS] = circuits
 
     if CONF_GROUPS in config and isinstance(config[CONF_GROUPS], dict):
         groups = dict(config[CONF_GROUPS])
         for group_key, group_config in list(groups.items()):
             if isinstance(group_config, dict):
-                groups[group_key] = _split_power_sensor_config(group_config, group_key)
+                default_name = f"{group_key.replace('_', ' ').title()} Power"
+                groups[group_key] = _split_power_sensor_config(
+                    group_config, group_key, default_power_name=default_name
+                )
         config[CONF_GROUPS] = groups
 
     if CONF_CT_CLAMPS in config and isinstance(config[CONF_CT_CLAMPS], list):
         ct_clamps = []
         for index, ct_config in enumerate(config[CONF_CT_CLAMPS]):
             if isinstance(ct_config, dict):
-                ct_clamps.append(_split_power_sensor_config(ct_config, f"ct_{index}_power"))
+                default_name = f"CT {ct_config.get(CONF_INPUT, index + 1)} Power"
+                ct_clamps.append(
+                    _split_power_sensor_config(
+                        ct_config,
+                        f"ct_{index}_power",
+                        default_power_name=default_name,
+                    )
+                )
             else:
                 ct_clamps.append(ct_config)
         config[CONF_CT_CLAMPS] = ct_clamps
