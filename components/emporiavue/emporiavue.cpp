@@ -2502,7 +2502,7 @@ void EmporiaVueComponent::finish_install_success_() {
   }
 
   if (completed_action == FirmwareAction::UPDATE_MANAGED) {
-    ESP_LOGI(TAG, "SAMD09 managed firmware update complete: hardware_id=%" PRIu32 ", version=%" PRIu32
+    ESP_LOGI(TAG, "SAMD09 firmware update complete: hardware_id=%" PRIu32 ", version=%" PRIu32
                   " (v%s), mode=%s, size=%" PRIu32,
              this->bundled_firmware_hardware_id_(), this->bundled_firmware_version_(),
              format_firmware_version_(this->bundled_firmware_version_()).c_str(),
