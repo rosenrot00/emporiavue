@@ -29,5 +29,7 @@ python3 tools/package_samd09_firmware.py
 
 The generated image is padded to the full 16 KiB SAMD09D14 flash size and ends with the EmporiaVue managed firmware
 footer used by the ESPHome component for SWD/offline `hardware_id`, `mode_id`, and `firmware_version` detection.
+The same generated image is also written as a versioned raw binary below `firmware/samd09/images/<mode>/`, for example
+`firmware/samd09/images/i2c/vue2-i2c-v1.0.bin`.
 Runtime identity is reported through the I2C diagnostic command together with the health counters. The current image is
 Vue 2 I2C firmware (`hardware_id=2`, `mode_id=1`, `firmware_version=10`, displayed as `v1.0`).

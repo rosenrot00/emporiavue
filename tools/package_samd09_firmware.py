@@ -18,6 +18,13 @@ FLASH_SIZE = 16 * 1024
 MARKER = b"EMPORIAVUE-SAMD"
 FOOTER_FORMAT = "<HHI32s15s9s"
 FOOTER_SIZE = struct.calcsize(FOOTER_FORMAT)
+HARDWARE_SLUGS = {
+    2: "vue2",
+}
+MODE_SLUGS = {
+    1: "i2c",
+    2: "spi",
+}
 
 
 def read_numeric_define(name: str) -> int:
@@ -33,6 +40,16 @@ def bytes_to_c_array(data: bytes, indent: str = "    ") -> str:
         chunk = data[offset : offset + 12]
         lines.append(indent + ", ".join(f"0x{byte:02x}" for byte in chunk) + ",")
     return "\n".join(lines)
+
+
+def display_version(version: int) -> str:
+    return f"v{version // 10}.{version % 10}"
+
+
+def image_output_path(hardware_id: int, mode_id: int, firmware_version: int) -> Path:
+    hardware_slug = HARDWARE_SLUGS.get(hardware_id, f"hw{hardware_id}")
+    mode_slug = MODE_SLUGS.get(mode_id, f"mode{mode_id}")
+    return FW_DIR / "images" / mode_slug / f"{hardware_slug}-{mode_slug}-{display_version(firmware_version)}.bin"
 
 
 def main() -> None:
@@ -60,6 +77,7 @@ def main() -> None:
     )
     image = payload + footer
     image_sha = hashlib.sha256(image).digest()
+    image_out = image_output_path(hardware_id, mode_id, firmware_version)
 
     header = f"""#pragma once
 
@@ -88,10 +106,13 @@ static constexpr uint8_t BUNDLED_SAMD_FIRMWARE[BUNDLED_SAMD_FIRMWARE_SIZE] = {{
 }}  // namespace esphome
 """
     OUT.write_text(header)
+    image_out.parent.mkdir(parents=True, exist_ok=True)
+    image_out.write_bytes(image)
     print(f"wrote {OUT}")
+    print(f"wrote {image_out}")
     print(
         f"hardware_id={hardware_id} mode_id={mode_id} firmware_version={firmware_version} "
-        f"display=v{firmware_version // 10}.{firmware_version % 10}"
+        f"display={display_version(firmware_version)}"
     )
     print(f"source_size={len(raw)} image_size={len(image)}")
     print(f"image_sha256={image_sha.hex()}")
