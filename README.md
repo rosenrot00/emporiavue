@@ -62,18 +62,18 @@ pressing the backup button is ignored. ESPHome does not currently provide a safe
 hide a button entity based on partition-table state.
 
 The install check identifies managed firmware through a footer at the end of SAMD flash. Firmware without that footer is
-treated as stock/legacy and therefore as `hardware_id=0`, `protocol_id=0`, `firmware_version=0`. Managed firmware uses
-`hardware_id`, `protocol_id`, and `firmware_version` as compatibility keys; the bundled Vue 2 I2C image is
-`hardware_id=2`, `protocol_id=1`. Internally the version is a monotonic integer in tenths, so `16` is shown as `v1.6`
+treated as stock/legacy and therefore as `hardware_id=0`, `mode_id=0`, `firmware_version=0`. Managed firmware uses
+`hardware_id`, `mode_id`, and `firmware_version` as compatibility keys; the bundled Vue 2 I2C image is
+`hardware_id=2`, `mode_id=1`. Internally the version is a monotonic integer in tenths, so `16` is shown as `v1.6`
 and `100` as `v10.0`; comparisons and update decisions compare the detected raw integer against the bundled image's raw
 integer. The current upstream `emporia_vue` I2C frame is 284 bytes. Managed firmware also returns `hardware_id`,
 `firmware_version`, and frame length through the same I2C diagnostic command that reports runtime counters. The SWD flash
 footer remains separate on purpose, so the ESP32 can still identify managed firmware when I2C is unavailable.
 By default the component only reads this SWD footer at boot and updates the status/version entities. Set
 `auto_update_samd: true` to let the component automatically install the bundled managed image when the SAMD is still on
-stock firmware or when a matching managed firmware is older than the bundled image. The selected bundled image must match
-both the configured hardware and the configured `mode:` protocol; the automatic path does not overwrite a managed image
-with a different hardware id.
+stock firmware, when a matching managed firmware is older than the bundled image, or when the detected `mode_id` differs
+from the configured `mode:`. The selected bundled image must match both the configured hardware and the configured
+`mode:`; the automatic path does not overwrite a managed image with a different hardware id.
 Because Home Assistant buttons cannot be disabled dynamically by an external component, use `SAMD Firmware Status` as
 the authoritative state. The update and restore buttons exit without writing if their action is not applicable, no
 bundled image is compiled in, or no valid backup is present.
@@ -81,8 +81,8 @@ bundled image is compiled in, or no valid backup is present.
 The bundled SAMD09 image is built from `firmware/samd09`, which is based on
 `gekkehenkie11/emporia-SAMD09` at commit `0baafe6d8812639d14f8f66b03844567f913ddc0` with small local build fixes for
 a freestanding ARM GCC toolchain. The generated image is padded to the detected 16 KiB SAMD09 flash size and ends with a
-managed firmware footer so future runs can detect its target hardware, protocol, and firmware version. The update path
-refuses to flash an image whose `hardware_id` or `protocol_id` does not match the configured `hardware:` and `mode:`
+managed firmware footer so future runs can detect its target hardware, mode, and firmware version. The update path
+refuses to flash an image whose `hardware_id` or `mode_id` does not match the configured `hardware:` and `mode:`
 values. To rebuild the embedded header after changing the SAMD source, run:
 
 ```bash
@@ -97,7 +97,7 @@ That keeps the ESP32 and ESPHome reachable while avoiding a reset into a partial
 
 - The managed firmware keeps the stock-compatible 284-byte I2C measurement frame, but exposes one diagnostic I2C command
   for runtime identity (`hardware_id`, `firmware_version`, frame length) and health counters before returning to the
-  normal frame stream. The SWD footer additionally carries `protocol_id`, so the ESP32 can select I2C or SPI-targeted
+  normal frame stream. The SWD footer additionally carries `mode_id`, so the ESP32 can select I2C or SPI-targeted
   SAMD firmware based on the component `mode:`.
 - Raw ADC offset correction is intentionally changed from the stock-like direct per-window average replacement to a
   smoothed per-channel DC offset tracker. The tracker runs on all 22 raw ADC channels before RMS, power, phase, and

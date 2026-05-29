@@ -6,7 +6,7 @@ namespace esphome {
 namespace emporiavue {
 
 static constexpr uint32_t BUNDLED_SAMD_FIRMWARE_HARDWARE_ID = 2UL;
-static constexpr uint32_t BUNDLED_SAMD_FIRMWARE_PROTOCOL_ID = 1UL;
+static constexpr uint32_t BUNDLED_SAMD_FIRMWARE_MODE_ID = 1UL;
 static constexpr uint32_t BUNDLED_SAMD_FIRMWARE_VERSION = 25UL;
 static constexpr uint32_t BUNDLED_SAMD_FIRMWARE_SIZE = 16384UL;
 static constexpr uint32_t BUNDLED_SAMD_FIRMWARE_SOURCE_SIZE = 6980UL;

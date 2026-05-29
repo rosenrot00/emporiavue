@@ -265,7 +265,7 @@ uint8_t SensorSequence = 0;
 
 #define ESPpacketlength       0x11C
 #define EMPORIAVUE_HARDWARE_ID       2
-#define EMPORIAVUE_PROTOCOL_ID       1
+#define EMPORIAVUE_MODE_ID       1
 #define EMPORIAVUE_FIRMWARE_VERSION  25
 #define EMPORIAVUE_I2C_DIAGNOSTIC_COMMAND 0xF1
 
