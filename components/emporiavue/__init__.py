@@ -93,7 +93,6 @@ CONF_DIAGNOSTICS_INTERVAL = "diagnostics_interval"
 CONF_METERING_INTERVAL = "metering_interval"
 CONF_MAINS = "mains"
 CONF_CALIBRATION_NUMBER = "calibration_number"
-CONF_CLAMP = "clamp"
 CONF_MAIN_CLAMP = "main_clamp"
 CONF_CT_ID = "ct_id"
 CONF_VOLTAGE_INPUT = "voltage_input"
@@ -147,26 +146,14 @@ CT_INPUTS = {
 
 MAIN_PHASE_DEFAULTS = {
     "line_1": {
-        CONF_VOLTAGE_INPUT: "BLACK",
-        CONF_MAIN_CLAMP: "A",
         "label": "Line 1",
     },
     "line_2": {
-        CONF_VOLTAGE_INPUT: "RED",
-        CONF_MAIN_CLAMP: "B",
         "label": "Line 2",
     },
     "line_3": {
-        CONF_VOLTAGE_INPUT: "BLUE",
-        CONF_MAIN_CLAMP: "C",
         "label": "Line 3",
     },
-}
-
-MAIN_PHASE_ALIASES = {
-    "phase_a": "line_1",
-    "phase_b": "line_2",
-    "phase_c": "line_3",
 }
 
 EXTERNAL_SAMD_FIRMWARE_HEADER = Path(__file__).with_name("external_samd_firmware.h")
@@ -260,13 +247,7 @@ def _apply_mains_defaults(config):
     if not isinstance(mains, dict):
         return config
 
-    normalized_mains = {}
-    for raw_key, raw_config in mains.items():
-        normalized_key = MAIN_PHASE_ALIASES.get(raw_key, raw_key)
-        if normalized_key in normalized_mains:
-            raise cv.Invalid(f"duplicate mains entry for {normalized_key}")
-        normalized_mains[normalized_key] = raw_config
-
+    normalized_mains = dict(mains)
     for phase_key, defaults in MAIN_PHASE_DEFAULTS.items():
         if phase_key not in normalized_mains:
             continue
@@ -278,12 +259,6 @@ def _apply_mains_defaults(config):
         else:
             phase_config = dict(phase_config)
 
-        if CONF_VOLTAGE_INPUT not in phase_config and CONF_INPUT in phase_config:
-            phase_config[CONF_VOLTAGE_INPUT] = phase_config[CONF_INPUT]
-        if CONF_MAIN_CLAMP not in phase_config and CONF_CLAMP in phase_config:
-            phase_config[CONF_MAIN_CLAMP] = phase_config[CONF_CLAMP]
-        phase_config.setdefault(CONF_VOLTAGE_INPUT, defaults[CONF_VOLTAGE_INPUT])
-        phase_config.setdefault(CONF_MAIN_CLAMP, defaults[CONF_MAIN_CLAMP])
         calibration_number_config = phase_config.get(CONF_CALIBRATION_NUMBER)
         default_name = f"{defaults['label']} Calibration"
         if calibration_number_config is None:
