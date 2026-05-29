@@ -93,6 +93,8 @@ void EmporiaVueComponent::dump_config() {
   LOG_SENSOR("  ", "Grid import power", this->grid_import_power_sensor_);
   LOG_SENSOR("  ", "Raw grid export power", this->raw_grid_export_power_sensor_);
   LOG_SENSOR("  ", "Grid export power", this->grid_export_power_sensor_);
+  LOG_SENSOR("  ", "Raw balance power", this->raw_balance_power_sensor_);
+  LOG_SENSOR("  ", "Balance power", this->balance_power_sensor_);
   LOG_TEXT_SENSOR("  ", "Firmware version", this->firmware_version_sensor_);
   LOG_TEXT_SENSOR("  ", "Bundled firmware version", this->bundled_firmware_version_sensor_);
   for (auto *phase : this->metering_phases_) {
@@ -107,6 +109,7 @@ void EmporiaVueComponent::dump_config() {
   for (auto *ct_clamp : this->metering_ct_clamps_) {
     ESP_LOGCONFIG(TAG, "  Metering CT clamp");
     ESP_LOGCONFIG(TAG, "    Input port: %u", static_cast<unsigned>(ct_clamp->get_input_port()));
+    ESP_LOGCONFIG(TAG, "    Internal power filters: %u", static_cast<unsigned>(ct_clamp->get_power_filter_count()));
     LOG_SENSOR("    ", "Raw power", ct_clamp->get_raw_power_sensor());
     LOG_SENSOR("    ", "Power", ct_clamp->get_power_sensor());
     LOG_SENSOR("    ", "Current", ct_clamp->get_current_sensor());
@@ -114,8 +117,12 @@ void EmporiaVueComponent::dump_config() {
   for (auto *group : this->metering_groups_) {
     ESP_LOGCONFIG(TAG, "  Metering group");
     ESP_LOGCONFIG(TAG, "    Circuit count: %u", static_cast<unsigned>(group->get_ct_clamps().size()));
+    ESP_LOGCONFIG(TAG, "    Internal power filters: %u", static_cast<unsigned>(group->get_power_filter_count()));
     LOG_SENSOR("    ", "Raw power", group->get_raw_power_sensor());
     LOG_SENSOR("    ", "Power", group->get_power_sensor());
+  }
+  if (!this->balance_ct_clamps_.empty()) {
+    ESP_LOGCONFIG(TAG, "  Balance circuit count: %u", static_cast<unsigned>(this->balance_ct_clamps_.size()));
   }
 }
 
@@ -1559,7 +1566,7 @@ bool EmporiaVueComponent::calculate_ct_power_(const MeteringFrame &frame, const 
 
   const int32_t raw_power = frame.clamps[port].power_raw_by_phase[phase->get_input_wire()];
   const float correction_factor = port < 3 ? 5.5f : 22.0f;
-  *power = raw_power * phase->get_calibration() / correction_factor;
+  *power = ct_clamp->apply_power_filters(raw_power * phase->get_calibration() / correction_factor);
   return true;
 }
 
@@ -1633,6 +1640,7 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
       }
     }
     if (has_group_power) {
+      group_power = group->apply_power_filters(group_power);
       if (group->get_raw_power_sensor() != nullptr) {
         group->get_raw_power_sensor()->publish_state(group_power);
       }
@@ -1662,6 +1670,26 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
     }
     if (this->grid_export_power_sensor_ != nullptr) {
       this->grid_export_power_sensor_->publish_state(grid_export_power);
+    }
+    if (this->raw_balance_power_sensor_ != nullptr || this->balance_power_sensor_ != nullptr) {
+      float measured_circuit_power = 0.0f;
+      bool has_measured_circuit_power = false;
+      for (auto *ct_clamp : this->balance_ct_clamps_) {
+        float power = 0.0f;
+        if (this->calculate_ct_power_(frame, ct_clamp, &power)) {
+          measured_circuit_power += power;
+          has_measured_circuit_power = true;
+        }
+      }
+      if (has_measured_circuit_power) {
+        const float balance_power = std::max(0.0f, total_power - measured_circuit_power);
+        if (this->raw_balance_power_sensor_ != nullptr) {
+          this->raw_balance_power_sensor_->publish_state(balance_power);
+        }
+        if (this->balance_power_sensor_ != nullptr) {
+          this->balance_power_sensor_->publish_state(balance_power);
+        }
+      }
     }
   }
 }

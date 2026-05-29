@@ -16,6 +16,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -27,6 +28,24 @@ class MeteringPhaseConfig;
 class MeteringCTClampConfig;
 class MeteringGroupConfig;
 class MeteringCalibrationNumber;
+
+class MeteringPowerFilters {
+ public:
+  void add_multiply_filter(float multiplier) {
+    this->filters_.push_back([multiplier](float value) -> float { return value * multiplier; });
+  }
+  void add_lambda_filter(std::function<float(float)> filter) { this->filters_.push_back(std::move(filter)); }
+  float apply(float value) const {
+    for (const auto &filter : this->filters_) {
+      value = filter(value);
+    }
+    return value;
+  }
+  size_t size() const { return this->filters_.size(); }
+
+ protected:
+  std::vector<std::function<float(float)>> filters_{};
+};
 
 class EmporiaVueComponent : public Component, public i2c::I2CDevice {
  public:
@@ -71,6 +90,9 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void set_metering_groups(std::vector<MeteringGroupConfig *> groups) {
     this->metering_groups_ = std::move(groups);
   }
+  void set_balance_ct_clamps(std::vector<MeteringCTClampConfig *> ct_clamps) {
+    this->balance_ct_clamps_ = std::move(ct_clamps);
+  }
   void set_backup_partition_name(const std::string &backup_partition_name) {
     this->backup_partition_name_ = backup_partition_name;
   }
@@ -80,6 +102,8 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void set_grid_import_power_sensor(sensor::Sensor *sensor) { this->grid_import_power_sensor_ = sensor; }
   void set_raw_grid_export_power_sensor(sensor::Sensor *sensor) { this->raw_grid_export_power_sensor_ = sensor; }
   void set_grid_export_power_sensor(sensor::Sensor *sensor) { this->grid_export_power_sensor_ = sensor; }
+  void set_raw_balance_power_sensor(sensor::Sensor *sensor) { this->raw_balance_power_sensor_ = sensor; }
+  void set_balance_power_sensor(sensor::Sensor *sensor) { this->balance_power_sensor_ = sensor; }
   void set_firmware_version_sensor(text_sensor::TextSensor *sensor) { this->firmware_version_sensor_ = sensor; }
   void set_bundled_firmware_version_sensor(text_sensor::TextSensor *sensor) {
     this->bundled_firmware_version_sensor_ = sensor;
@@ -517,9 +541,12 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   sensor::Sensor *grid_import_power_sensor_{nullptr};
   sensor::Sensor *raw_grid_export_power_sensor_{nullptr};
   sensor::Sensor *grid_export_power_sensor_{nullptr};
+  sensor::Sensor *raw_balance_power_sensor_{nullptr};
+  sensor::Sensor *balance_power_sensor_{nullptr};
   std::vector<MeteringPhaseConfig *> metering_phases_{};
   std::vector<MeteringCTClampConfig *> metering_ct_clamps_{};
   std::vector<MeteringGroupConfig *> metering_groups_{};
+  std::vector<MeteringCTClampConfig *> balance_ct_clamps_{};
   std::string backup_partition_name_{"samd_bak"};
   const esp_partition_t *backup_partition_{nullptr};
   bool backup_active_{false};
@@ -612,6 +639,12 @@ class MeteringCTClampConfig {
   sensor::Sensor *get_power_sensor() const { return this->power_sensor_; }
   void set_current_sensor(sensor::Sensor *sensor) { this->current_sensor_ = sensor; }
   sensor::Sensor *get_current_sensor() const { return this->current_sensor_; }
+  void add_power_multiply_filter(float multiplier) { this->power_filters_.add_multiply_filter(multiplier); }
+  void add_power_lambda_filter(std::function<float(float)> filter) {
+    this->power_filters_.add_lambda_filter(std::move(filter));
+  }
+  float apply_power_filters(float value) const { return this->power_filters_.apply(value); }
+  size_t get_power_filter_count() const { return this->power_filters_.size(); }
 
  protected:
   MeteringPhaseConfig *phase_{nullptr};
@@ -619,6 +652,7 @@ class MeteringCTClampConfig {
   sensor::Sensor *raw_power_sensor_{nullptr};
   sensor::Sensor *power_sensor_{nullptr};
   sensor::Sensor *current_sensor_{nullptr};
+  MeteringPowerFilters power_filters_{};
 };
 
 class MeteringGroupConfig {
@@ -631,11 +665,18 @@ class MeteringGroupConfig {
   sensor::Sensor *get_raw_power_sensor() const { return this->raw_power_sensor_; }
   void set_power_sensor(sensor::Sensor *sensor) { this->power_sensor_ = sensor; }
   sensor::Sensor *get_power_sensor() const { return this->power_sensor_; }
+  void add_power_multiply_filter(float multiplier) { this->power_filters_.add_multiply_filter(multiplier); }
+  void add_power_lambda_filter(std::function<float(float)> filter) {
+    this->power_filters_.add_lambda_filter(std::move(filter));
+  }
+  float apply_power_filters(float value) const { return this->power_filters_.apply(value); }
+  size_t get_power_filter_count() const { return this->power_filters_.size(); }
 
  protected:
   std::vector<MeteringCTClampConfig *> ct_clamps_{};
   sensor::Sensor *raw_power_sensor_{nullptr};
   sensor::Sensor *power_sensor_{nullptr};
+  MeteringPowerFilters power_filters_{};
 };
 
 class EmporiaVueBackupFirmwareButton : public button::Button, public Parented<EmporiaVueComponent> {

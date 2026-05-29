@@ -180,7 +180,7 @@ emporiavue:
 ## Vue 2 I2C Packages
 
 The repository currently includes `packages/vue2-i2c.yaml` and the explicit
-`packages/vue2-i2c-three-phase.yaml` preset. They set `hardware: vue2` and `mode: i2c`, add a 64 KiB `samd_bak`
+`packages/vue2-i2c-3phase.yaml` preset. They set `hardware: vue2` and `mode: i2c`, add a 64 KiB `samd_bak`
 data partition, and enable the firmware version entities plus the backup, update, and restore buttons. They also
 use the component's default `metering_interval: 200ms` I2C read path that decodes the stock-compatible frame into the
 component's internal metering frame. The transport is explicit in the filename
@@ -200,7 +200,8 @@ packages:
     username: !secret github_username
     password: !secret github_token
     files:
-      - packages/vue2-i2c-three-phase.yaml
+      - packages/vue2-i2c.yaml
+      - packages/vue2-i2c-3phase.yaml
 ```
 
 When adding `samd_bak` to a device that is already flashed, update the ESP32 partition table once. ESPHome documents
@@ -217,7 +218,6 @@ emporiavue:
   metering_interval: 10s
   mains:
     line_1:
-      id: vue_metering_line_1
       voltage_input: BLACK
       main_clamp: A
       calibration: 0.022
@@ -247,12 +247,24 @@ emporiavue:
         name: "Line 3 Phase Angle"
       power:
         name: "Line 3 Power"
-  ct_clamps:
-    - phase_id: vue_metering_line_1
+  circuits:
+    cir1:
       input: "1"
+      line: 2
+      filters:
+        - multiply: -1
       power:
         name: "Vue2 Metering Circuit 1 Power"
+        filters:
+          - throttle_average: 5s
+  balance_power:
+    name: "Balance Power"
 ```
+
+`balance_power` publishes the unmonitored remainder as `max(0, total_power - sum(balance_circuits))`. If
+`balance_circuits` is omitted, all configured `circuits` are used.
+Filters directly under `mains`, `circuits`, `ct_clamps`, or `groups` are internal measurement corrections and feed
+energy, groups, and balance calculations. Filters under `power` only affect the Home Assistant display sensor.
 
 ## Future SAMD09 firmware improvements
 

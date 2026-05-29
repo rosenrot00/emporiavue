@@ -48,6 +48,9 @@ emporiavue:
   total_power:
     id: total_power
     name: "Total Power"
+  balance_power:
+    id: balance_power
+    name: "Balance Power"
   grid_import_power:
     id: grid_import_w
     name: "Grid Import Power"
