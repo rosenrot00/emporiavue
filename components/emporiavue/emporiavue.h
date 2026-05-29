@@ -370,6 +370,8 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void publish_firmware_info_from_diagnostic_(const ManagedI2CDiagnostic &diagnostic);
   void publish_i2c_diagnostics_(const ManagedI2CDiagnostic &diagnostic);
   void start_i2c_diagnostics_();
+  bool firmware_mode_matches_runtime_() const;
+  void publish_firmware_mode_mismatch_();
   i2c::ErrorCode read_normal_i2c_frame_(const char *context);
   void probe_runtime_i2c_after_firmware_update_();
   void publish_initial_firmware_detection_();

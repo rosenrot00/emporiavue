@@ -1343,6 +1343,10 @@ void EmporiaVueComponent::refresh_i2c_diagnostics_() {
     }
     return;
   }
+  if (!this->firmware_mode_matches_runtime_()) {
+    this->publish_firmware_mode_mismatch_();
+    return;
+  }
 
   ManagedI2CDiagnostic diagnostic{};
   const ManagedI2CDiagnosticResult result = this->query_managed_i2c_diagnostic_(&diagnostic);
@@ -1395,17 +1399,40 @@ void EmporiaVueComponent::start_i2c_diagnostics_() {
   if (this->diagnostics_started_) {
     return;
   }
-  this->diagnostics_started_ = true;
 
   if (this->runtime_mode_ != RuntimeMode::I2C) {
+    this->diagnostics_started_ = true;
     if (this->diagnostics_status_sensor_ != nullptr) {
       this->diagnostics_status_sensor_->publish_state("unavailable: spi mode");
     }
     return;
   }
+  if (!this->firmware_mode_matches_runtime_()) {
+    this->publish_firmware_mode_mismatch_();
+    return;
+  }
 
+  this->diagnostics_started_ = true;
   this->set_timeout("initial_samd_i2c_diagnostics", 1000, [this]() { this->refresh_i2c_diagnostics_(); });
   this->set_interval("samd_i2c_diagnostics", DIAGNOSTICS_INTERVAL_MS, [this]() { this->refresh_i2c_diagnostics_(); });
+}
+
+bool EmporiaVueComponent::firmware_mode_matches_runtime_() const {
+  return !this->detected_firmware_info_valid_ || this->detected_firmware_info_.kind != FirmwareKind::MANAGED ||
+         this->detected_firmware_info_.mode_id == this->expected_firmware_mode_id_();
+}
+
+void EmporiaVueComponent::publish_firmware_mode_mismatch_() {
+  const char *detected_mode = firmware_mode_name_(this->detected_firmware_info_.mode_id);
+  const char *configured_mode = firmware_mode_name_(this->expected_firmware_mode_id_());
+  ESP_LOGD(TAG, "Skipping SAMD runtime reads: firmware mode is %s but configured mode is %s; update SAMD firmware",
+           detected_mode, configured_mode);
+  if (this->diagnostics_status_sensor_ != nullptr) {
+    this->diagnostics_status_sensor_->publish_state(
+        str_sprintf("not reading: firmware is %s, configured %s; update firmware", detected_mode, configured_mode));
+  }
+  this->publish_firmware_status_(
+      str_sprintf("not reading: firmware is %s, configured %s; update firmware", detected_mode, configured_mode));
 }
 
 i2c::ErrorCode EmporiaVueComponent::read_normal_i2c_frame_(const char *context) {
