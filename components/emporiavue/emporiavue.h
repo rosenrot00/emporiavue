@@ -245,6 +245,12 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
     MANAGED,
   };
 
+  enum class FirmwareDetectionSource : uint8_t {
+    UNKNOWN = 0,
+    SWD,
+    I2C,
+  };
+
   enum class ManagedI2CDiagnosticResult : uint8_t {
     I2C_ERROR = 0,
     INVALID_RESPONSE,
@@ -258,7 +264,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
     uint32_t flash_size{0};
     uint32_t image_size{0};
     uint16_t i2c_frame_length{0};
-    bool detected_by_i2c{false};
+    FirmwareDetectionSource source{FirmwareDetectionSource::UNKNOWN};
     uint32_t page_size{0};
     uint32_t page_count{0};
     uint32_t nvm_param{0};
@@ -339,6 +345,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   i2c::ErrorCode read_normal_i2c_frame_(const char *context);
   void probe_runtime_i2c_after_firmware_update_();
   void publish_initial_firmware_detection_();
+  bool detect_current_firmware_by_swd_(FirmwareInfo *info, std::string *error);
   bool detect_managed_firmware_(uint32_t flash_size, bool *managed);
   bool read_managed_firmware_info_(uint32_t flash_size, ManagedFirmwareInfo *managed_info, bool *found);
   bool read_current_firmware_info_(FirmwareInfo *info);

@@ -615,10 +615,20 @@ void EmporiaVueComponent::publish_firmware_version_(const FirmwareInfo &info) {
   }
   switch (info.kind) {
     case FirmwareKind::MANAGED:
-      this->firmware_version_sensor_->publish_state(
-          str_sprintf("managed hw=%u v%s (i2c %u bytes)", static_cast<unsigned>(info.hardware_id),
-                      format_firmware_version_(info.version).c_str(),
-                      static_cast<unsigned>(info.i2c_frame_length)));
+      if (info.source == FirmwareDetectionSource::I2C && info.i2c_frame_length != 0) {
+        this->firmware_version_sensor_->publish_state(
+            str_sprintf("managed hw=%u v%s (i2c %u bytes)", static_cast<unsigned>(info.hardware_id),
+                        format_firmware_version_(info.version).c_str(),
+                        static_cast<unsigned>(info.i2c_frame_length)));
+      } else if (info.source == FirmwareDetectionSource::SWD) {
+        this->firmware_version_sensor_->publish_state(
+            str_sprintf("managed hw=%u v%s (swd)", static_cast<unsigned>(info.hardware_id),
+                        format_firmware_version_(info.version).c_str()));
+      } else {
+        this->firmware_version_sensor_->publish_state(
+            str_sprintf("managed hw=%u v%s", static_cast<unsigned>(info.hardware_id),
+                        format_firmware_version_(info.version).c_str()));
+      }
       break;
     case FirmwareKind::STOCK:
       this->firmware_version_sensor_->publish_state("stock");
@@ -1293,7 +1303,7 @@ void EmporiaVueComponent::publish_firmware_info_from_diagnostic_(const ManagedI2
   info.hardware_id = diagnostic.hardware_id;
   info.version = diagnostic.firmware_version;
   info.i2c_frame_length = diagnostic.i2c_frame_length;
-  info.detected_by_i2c = true;
+  info.source = FirmwareDetectionSource::I2C;
   this->detected_firmware_info_ = info;
   this->detected_firmware_info_valid_ = true;
   this->publish_firmware_version_(info);
@@ -1429,45 +1439,80 @@ void EmporiaVueComponent::publish_initial_firmware_detection_() {
   if (this->backup_active_ || this->install_active_) {
     return;
   }
-  if (this->runtime_mode_ != RuntimeMode::I2C) {
+
+  FirmwareInfo info{};
+  std::string error;
+  if (!this->detect_current_firmware_by_swd_(&info, &error)) {
     FirmwareInfo unknown_info{};
     this->detected_firmware_info_ = unknown_info;
     this->detected_firmware_info_valid_ = false;
     this->publish_firmware_version_(unknown_info);
-    this->publish_firmware_status_("spi mode: i2c firmware detection disabled");
-    return;
-  }
-
-  ManagedI2CDiagnostic diagnostic{};
-  FirmwareInfo info{};
-  const ManagedI2CDiagnosticResult result = this->query_managed_i2c_diagnostic_(&diagnostic);
-  if (result == ManagedI2CDiagnosticResult::VALID_RESPONSE) {
-    this->publish_firmware_info_from_diagnostic_(diagnostic);
-    this->publish_i2c_diagnostics_(diagnostic);
-    const i2c::ErrorCode frame_error = this->read_normal_i2c_frame_("startup");
-    if (frame_error == i2c::ERROR_OK) {
-      this->publish_firmware_status_("managed firmware detected; normal i2c frame ok");
-    } else {
-      this->publish_firmware_status_(str_sprintf("managed firmware detected; normal i2c frame failed: i2c error %u",
-                                                 static_cast<unsigned>(frame_error)));
-    }
-    return;
-  }
-
-  if (result == ManagedI2CDiagnosticResult::INVALID_RESPONSE) {
-    info.kind = FirmwareKind::STOCK;
-    info.i2c_frame_length = STOCK_I2C_FRAME_SIZE;
-    this->detected_firmware_info_ = info;
-    this->detected_firmware_info_valid_ = true;
-    this->publish_firmware_version_(info);
-    this->publish_firmware_status_("stock firmware detected");
+    this->publish_firmware_status_("firmware detection unavailable: " + error);
     return;
   }
 
   this->detected_firmware_info_ = info;
-  this->detected_firmware_info_valid_ = false;
+  this->detected_firmware_info_valid_ = true;
   this->publish_firmware_version_(info);
-  this->publish_firmware_status_("firmware detection unavailable: I2C query failed");
+  if (info.kind == FirmwareKind::MANAGED) {
+    this->publish_firmware_status_("managed firmware detected by swd footer");
+  } else {
+    this->publish_firmware_status_("stock firmware detected by swd flash check");
+  }
+}
+
+bool EmporiaVueComponent::detect_current_firmware_by_swd_(FirmwareInfo *info, std::string *error) {
+  if (this->swdio_pin_ == nullptr || this->swclk_pin_ == nullptr) {
+    if (error != nullptr) {
+      *error = "SWD pins missing";
+    }
+    return false;
+  }
+
+  auto fail = [&](const std::string &message) {
+    if (error != nullptr) {
+      *error = message;
+    }
+    ESP_LOGW(TAG, "SAMD09 SWD firmware detection failed: %s", message.c_str());
+    return false;
+  };
+
+  this->last_error_.clear();
+  this->prepare_pins_();
+  this->begin_swd_session_();
+
+  uint32_t swd_idcode = 0;
+  if (!this->swd_initialize_(&swd_idcode)) {
+    const std::string message = this->last_error_.empty() ? "SWD initialization failed" : this->last_error_;
+    this->finish_swd_session_();
+    this->release_pins_();
+    return fail(message);
+  }
+
+  if (!this->power_up_debug_()) {
+    const std::string message = this->last_error_.empty() ? "debug power-up failed" : this->last_error_;
+    this->finish_swd_session_();
+    this->release_pins_();
+    return fail(message);
+  }
+  this->finish_swd_session_();
+
+  if (!this->verify_mem_ap_()) {
+    const std::string message = this->last_error_.empty() ? "MEM-AP verification failed" : this->last_error_;
+    this->release_pins_();
+    return fail(message);
+  }
+
+  if (!this->read_current_firmware_info_(info)) {
+    const std::string message = this->last_error_.empty() ? "firmware footer read failed" : this->last_error_;
+    this->release_pins_();
+    return fail(message);
+  }
+
+  this->release_pins_();
+  ESP_LOGI(TAG, "SAMD09 SWD firmware detection complete: %s",
+           info->kind == FirmwareKind::MANAGED ? "managed footer found" : "no managed footer");
+  return true;
 }
 
 bool EmporiaVueComponent::detect_managed_firmware_(uint32_t flash_size, bool *managed) {
@@ -1518,7 +1563,7 @@ bool EmporiaVueComponent::read_current_firmware_info_(FirmwareInfo *info) {
   info->flash_size = flash_size;
   info->image_size = flash_size;
   info->i2c_frame_length = STOCK_I2C_FRAME_SIZE;
-  info->detected_by_i2c = false;
+  info->source = FirmwareDetectionSource::SWD;
   info->page_size = page_size;
   info->page_count = page_count;
   info->nvm_param = nvm_param;
