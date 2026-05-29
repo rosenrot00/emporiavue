@@ -1692,7 +1692,7 @@ void EmporiaVueComponent::refresh_metering_() {
   this->last_metering_sequence_valid_ = true;
   this->last_metering_frame_ = frame;
 
-  ESP_LOGD(TAG, "SAMD09 metering frame: seq=%" PRIu32 ", flags=0x%02x", frame.sequence, frame.quality_flags);
+  ESP_LOGV(TAG, "SAMD09 metering frame: seq=%" PRIu32 ", flags=0x%02x", frame.sequence, frame.quality_flags);
   this->publish_metering_frame_(frame);
 }
 
