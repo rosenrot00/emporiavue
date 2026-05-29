@@ -56,7 +56,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void set_bundled_firmware_version_sensor(text_sensor::TextSensor *sensor) {
     this->bundled_firmware_version_sensor_ = sensor;
   }
-  void set_diagnostics_status_sensor(text_sensor::TextSensor *sensor) { this->diagnostics_status_sensor_ = sensor; }
   void set_diag_sample_blocks_sensor(sensor::Sensor *sensor) { this->diag_sample_blocks_sensor_ = sensor; }
   void set_diag_packets_built_sensor(sensor::Sensor *sensor) { this->diag_packets_built_sensor_ = sensor; }
   void set_diag_packets_read_sensor(sensor::Sensor *sensor) { this->diag_packets_read_sensor_ = sensor; }
@@ -411,7 +410,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   text_sensor::TextSensor *firmware_status_sensor_{nullptr};
   text_sensor::TextSensor *firmware_version_sensor_{nullptr};
   text_sensor::TextSensor *bundled_firmware_version_sensor_{nullptr};
-  text_sensor::TextSensor *diagnostics_status_sensor_{nullptr};
   sensor::Sensor *diag_sample_blocks_sensor_{nullptr};
   sensor::Sensor *diag_packets_built_sensor_{nullptr};
   sensor::Sensor *diag_packets_read_sensor_{nullptr};

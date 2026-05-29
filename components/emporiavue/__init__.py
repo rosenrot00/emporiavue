@@ -32,7 +32,6 @@ CONF_SWDIO_PIN = "swdio_pin"
 CONF_BACKUP_FIRMWARE_BUTTON = "backup_firmware_button"
 CONF_INSTALL_FIRMWARE_BUTTON = "install_firmware_button"
 CONF_RESTORE_FIRMWARE_BUTTON = "restore_firmware_button"
-CONF_DIAGNOSTICS_STATUS = "diagnostics_status"
 CONF_DIAG_SAMPLE_BLOCKS = "diag_sample_blocks"
 CONF_DIAG_PACKETS_BUILT = "diag_packets_built"
 CONF_DIAG_PACKETS_READ = "diag_packets_read"
@@ -80,7 +79,6 @@ DEFAULT_ENTITY_NAMES = {
     CONF_FIRMWARE_STATUS: "SAMD Firmware Status",
     CONF_FIRMWARE_VERSION: "SAMD Firmware Version",
     CONF_BUNDLED_FIRMWARE_VERSION: "SAMD Bundled Firmware Version",
-    CONF_DIAGNOSTICS_STATUS: "SAMD Diagnostics Status",
     CONF_DIAG_SAMPLE_BLOCKS: "SAMD Sample Blocks",
     CONF_DIAG_PACKETS_BUILT: "SAMD Packets Built",
     CONF_DIAG_PACKETS_READ: "SAMD Packets Read",
@@ -188,13 +186,6 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             default={CONF_NAME: "SAMD Bundled Firmware Version"},
         ): text_sensor.text_sensor_schema(
             icon="mdi:package-variant",
-            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
-        ),
-        cv.Optional(
-            CONF_DIAGNOSTICS_STATUS,
-            default={CONF_NAME: "SAMD Diagnostics Status"},
-        ): text_sensor.text_sensor_schema(
-            icon="mdi:stethoscope",
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
         cv.Optional(
@@ -334,9 +325,6 @@ async def to_code(config):
     if bundled_firmware_version_config := config.get(CONF_BUNDLED_FIRMWARE_VERSION):
         sens = await text_sensor.new_text_sensor(bundled_firmware_version_config)
         cg.add(var.set_bundled_firmware_version_sensor(sens))
-    if diagnostics_status_config := config.get(CONF_DIAGNOSTICS_STATUS):
-        sens = await text_sensor.new_text_sensor(diagnostics_status_config)
-        cg.add(var.set_diagnostics_status_sensor(sens))
     if diag_sample_blocks_config := config.get(CONF_DIAG_SAMPLE_BLOCKS):
         sens = await sensor.new_sensor(diag_sample_blocks_config)
         cg.add(var.set_diag_sample_blocks_sensor(sens))

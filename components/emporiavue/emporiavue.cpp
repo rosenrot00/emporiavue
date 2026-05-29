@@ -20,9 +20,6 @@ void EmporiaVueComponent::setup() {
   }
   this->inspect_backup_partition_();
   this->publish_bundled_firmware_version_();
-  if (this->diagnostics_status_sensor_ != nullptr) {
-    this->diagnostics_status_sensor_->publish_state("checking firmware");
-  }
   this->publish_firmware_status_("checking firmware");
   this->publish_initial_firmware_detection_();
   if (!this->install_active_) {
@@ -71,7 +68,6 @@ void EmporiaVueComponent::dump_config() {
   LOG_TEXT_SENSOR("  ", "Firmware status", this->firmware_status_sensor_);
   LOG_TEXT_SENSOR("  ", "Firmware version", this->firmware_version_sensor_);
   LOG_TEXT_SENSOR("  ", "Bundled firmware version", this->bundled_firmware_version_sensor_);
-  LOG_TEXT_SENSOR("  ", "Diagnostics status", this->diagnostics_status_sensor_);
 }
 
 void EmporiaVueComponent::backup_firmware() {
@@ -1337,15 +1333,9 @@ void EmporiaVueComponent::refresh_i2c_diagnostics_() {
     return;
   }
   if (this->runtime_mode_ != RuntimeMode::I2C) {
-    if (this->diagnostics_status_sensor_ != nullptr) {
-      this->diagnostics_status_sensor_->publish_state("unavailable: spi mode");
-    }
     return;
   }
   if (!this->detected_firmware_info_valid_ || this->detected_firmware_info_.kind != FirmwareKind::MANAGED) {
-    if (this->diagnostics_status_sensor_ != nullptr) {
-      this->diagnostics_status_sensor_->publish_state("unavailable: managed firmware not detected");
-    }
     return;
   }
   if (!this->firmware_mode_matches_runtime_()) {
@@ -1358,19 +1348,10 @@ void EmporiaVueComponent::refresh_i2c_diagnostics_() {
   if (result == ManagedI2CDiagnosticResult::VALID_RESPONSE) {
     this->publish_firmware_info_from_diagnostic_(diagnostic);
     this->publish_i2c_diagnostics_(diagnostic);
-  } else if (this->diagnostics_status_sensor_ != nullptr) {
-    this->diagnostics_status_sensor_->publish_state(
-        result == ManagedI2CDiagnosticResult::I2C_ERROR ? "failed: i2c error" : "failed: invalid response");
   }
 }
 
 void EmporiaVueComponent::publish_i2c_diagnostics_(const ManagedI2CDiagnostic &diagnostic) {
-  if (this->diagnostics_status_sensor_ != nullptr) {
-    this->diagnostics_status_sensor_->publish_state(str_sprintf(
-        "ok: seq=%" PRIu32 " dma_errors=%" PRIu32 " overruns=%" PRIu32 " partial_reads=%" PRIu32,
-        diagnostic.diagnostic_sequence, diagnostic.dma_transfer_errors, diagnostic.packet_overruns,
-        diagnostic.i2c_partial_reads));
-  }
   if (this->diag_sample_blocks_sensor_ != nullptr) {
     this->diag_sample_blocks_sensor_->publish_state(static_cast<float>(diagnostic.sample_blocks));
   }
@@ -1407,9 +1388,6 @@ void EmporiaVueComponent::start_i2c_diagnostics_() {
 
   if (this->runtime_mode_ != RuntimeMode::I2C) {
     this->diagnostics_started_ = true;
-    if (this->diagnostics_status_sensor_ != nullptr) {
-      this->diagnostics_status_sensor_->publish_state("unavailable: spi mode");
-    }
     return;
   }
   if (!this->firmware_mode_matches_runtime_()) {
@@ -1432,10 +1410,6 @@ void EmporiaVueComponent::publish_firmware_mode_mismatch_() {
   const char *configured_mode = firmware_mode_name_(this->expected_firmware_mode_id_());
   ESP_LOGD(TAG, "Skipping SAMD runtime reads: firmware mode is %s but configured mode is %s; update SAMD firmware",
            detected_mode, configured_mode);
-  if (this->diagnostics_status_sensor_ != nullptr) {
-    this->diagnostics_status_sensor_->publish_state(
-        str_sprintf("not reading: firmware is %s, configured %s; update firmware", detected_mode, configured_mode));
-  }
   this->publish_firmware_status_(
       str_sprintf("not reading: firmware is %s, configured %s; update firmware", detected_mode, configured_mode));
 }
