@@ -16,11 +16,6 @@ static constexpr float VUE2_FREQUENCY_CONSTANT = 25310.0f;
 static constexpr float VUE3_FREQUENCY_CONSTANT = 19610.0f;
 
 void EmporiaVueComponent::setup() {
-  this->perform_boot_reset_();
-  if (this->init_pins_on_boot_) {
-    this->prepare_pins_();
-    this->release_pins_();
-  }
   this->inspect_backup_partition_();
   this->publish_bundled_firmware_version_();
   this->publish_initial_firmware_detection_();
@@ -49,10 +44,7 @@ void EmporiaVueComponent::dump_config() {
   LOG_PIN("  SWDIO Pin: ", this->swdio_pin_);
   LOG_PIN("  SWCLK Pin: ", this->swclk_pin_);
   LOG_PIN("  Reset Pin: ", this->reset_pin_);
-  ESP_LOGCONFIG(TAG, "  Reset before read: %s", YESNO(this->reset_before_read_));
-  ESP_LOGCONFIG(TAG, "  Reset on boot: %s", YESNO(this->reset_on_boot_));
   ESP_LOGCONFIG(TAG, "  Connect under reset: %s", YESNO(this->connect_under_reset_));
-  ESP_LOGCONFIG(TAG, "  Reset hold time: %" PRIu32 " ms", this->reset_hold_time_ms_);
   ESP_LOGCONFIG(TAG, "  Reset release time: %" PRIu32 " ms", this->reset_release_time_ms_);
   ESP_LOGCONFIG(TAG, "  Clock delay: %u us", this->clock_delay_us_);
   ESP_LOGCONFIG(TAG, "  Backup partition: %s", this->backup_partition_name_.c_str());
@@ -71,7 +63,6 @@ void EmporiaVueComponent::dump_config() {
     ESP_LOGCONFIG(TAG, "    External image %u size: %" PRIu32 " bytes", static_cast<unsigned>(i),
                   this->external_firmware_size_(i));
   }
-  ESP_LOGCONFIG(TAG, "  Init pins on boot: %s", YESNO(this->init_pins_on_boot_));
   ESP_LOGCONFIG(TAG, "  Runtime mode: %s", this->runtime_mode_ == RuntimeMode::SPI ? "spi" : "i2c");
   ESP_LOGCONFIG(TAG, "  Auto-update SAMD: %s", YESNO(this->auto_update_samd_));
   if (this->diagnostics_interval_ms_ == 0) {
@@ -528,27 +519,18 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
            action_reason.c_str());
 }
 
-void EmporiaVueComponent::reset_target_() {
-  if (!this->reset_before_read_ || this->reset_pin_ == nullptr) {
-    return;
-  }
-  this->assert_reset_();
-  this->deassert_reset_();
-}
-
-void EmporiaVueComponent::assert_reset_(bool wait_for_hold_time) {
+void EmporiaVueComponent::assert_reset_() {
   this->reset_pin_->pin_mode(gpio::FLAG_OUTPUT);
   this->reset_pin_->digital_write(false);
   this->target_reset_asserted_ = true;
-  if (wait_for_hold_time) {
-    delay(this->reset_hold_time_ms_);
-  }
+  delay(RESET_PULSE_MS);
 }
 
 void EmporiaVueComponent::assert_reset_for_swd_attach_() {
-  this->assert_reset_(false);
-  // Keep the SWD cold-plug reset pulse short; reset_hold_time_ms_ is for normal reset pulses.
-  delayMicroseconds(100);
+  this->reset_pin_->pin_mode(gpio::FLAG_OUTPUT);
+  this->reset_pin_->digital_write(false);
+  this->target_reset_asserted_ = true;
+  delayMicroseconds(SWD_ATTACH_RESET_HOLD_US);
 }
 
 void EmporiaVueComponent::deassert_reset_() {
@@ -589,7 +571,6 @@ void EmporiaVueComponent::begin_swd_session_() {
   if (this->connect_under_reset_ && this->reset_pin_ == nullptr) {
     ESP_LOGW(TAG, "connect_under_reset is enabled but reset_pin is not configured");
   }
-  this->reset_target_();
 }
 
 void EmporiaVueComponent::finish_swd_session_() {
@@ -597,24 +578,6 @@ void EmporiaVueComponent::finish_swd_session_() {
     ESP_LOGV(TAG, "Releasing SAMD09 reset after connect-under-reset");
     this->deassert_reset_();
   }
-}
-
-void EmporiaVueComponent::perform_boot_reset_() {
-  if (!this->reset_on_boot_) {
-    return;
-  }
-  if (this->reset_pin_ == nullptr) {
-    ESP_LOGW(TAG, "reset_on_boot is enabled but reset_pin is not configured");
-    return;
-  }
-
-  ESP_LOGI(TAG, "Resetting SAMD09 on ESP32 boot for %" PRIu32 " ms", this->reset_hold_time_ms_);
-  this->reset_pin_->digital_write(true);
-  this->reset_pin_->setup();
-  this->assert_reset_();
-  this->deassert_reset_();
-  this->reset_pin_->digital_write(true);
-  this->reset_pin_->pin_mode(gpio::FLAG_INPUT | gpio::FLAG_PULLUP);
 }
 
 void EmporiaVueComponent::swd_enter_debug_(uint8_t swj_select_bits) {
@@ -675,7 +638,7 @@ bool EmporiaVueComponent::swd_initialize_(uint32_t *idcode) {
 }
 
 void EmporiaVueComponent::prepare_pins_() {
-  const bool use_reset_pin = (this->reset_before_read_ || this->connect_under_reset_) && this->reset_pin_ != nullptr;
+  const bool use_reset_pin = this->connect_under_reset_ && this->reset_pin_ != nullptr;
   if (use_reset_pin) {
     this->reset_pin_->digital_write(true);
   }
@@ -713,7 +676,7 @@ void EmporiaVueComponent::prepare_pins_() {
 }
 
 void EmporiaVueComponent::release_pins_() {
-  if ((this->reset_before_read_ || this->connect_under_reset_) && this->reset_pin_ != nullptr) {
+  if (this->connect_under_reset_ && this->reset_pin_ != nullptr) {
     this->reset_pin_->digital_write(true);
     this->target_reset_asserted_ = false;
     this->reset_pin_->pin_mode(gpio::FLAG_INPUT | gpio::FLAG_PULLUP);
@@ -912,7 +875,7 @@ bool EmporiaVueComponent::transfer_(bool ap, bool read, uint8_t addr, uint32_t w
 }
 
 bool EmporiaVueComponent::dp_read_(uint8_t addr, uint32_t *value) {
-  for (uint8_t attempt = 0; attempt < this->retry_count_; attempt++) {
+  for (uint8_t attempt = 0; attempt < SWD_RETRY_COUNT; attempt++) {
     uint8_t ack = 0;
     if (this->transfer_(false, true, addr, 0, value, &ack)) {
       return true;
@@ -938,7 +901,7 @@ bool EmporiaVueComponent::dp_read_(uint8_t addr, uint32_t *value) {
 }
 
 bool EmporiaVueComponent::dp_write_(uint8_t addr, uint32_t value) {
-  for (uint8_t attempt = 0; attempt < this->retry_count_; attempt++) {
+  for (uint8_t attempt = 0; attempt < SWD_RETRY_COUNT; attempt++) {
     uint8_t ack = 0;
     uint32_t unused = 0;
     if (this->transfer_(false, false, addr, value, &unused, &ack)) {
@@ -984,7 +947,7 @@ bool EmporiaVueComponent::ap_read_(uint8_t addr, uint32_t *value) {
   }
   uint32_t posted = 0;
   bool request_accepted = false;
-  for (uint8_t attempt = 0; attempt < this->retry_count_; attempt++) {
+  for (uint8_t attempt = 0; attempt < SWD_RETRY_COUNT; attempt++) {
     uint8_t ack = 0;
     if (this->transfer_(true, true, addr & 0x0C, 0, &posted, &ack)) {
       request_accepted = true;
@@ -1017,7 +980,7 @@ bool EmporiaVueComponent::ap_write_(uint8_t addr, uint32_t value) {
   if (!this->select_ap_bank_((addr >> 4) & 0x0F)) {
     return false;
   }
-  for (uint8_t attempt = 0; attempt < this->retry_count_; attempt++) {
+  for (uint8_t attempt = 0; attempt < SWD_RETRY_COUNT; attempt++) {
     uint8_t ack = 0;
     uint32_t unused = 0;
     if (this->transfer_(true, false, addr & 0x0C, value, &unused, &ack)) {
@@ -1210,7 +1173,7 @@ bool EmporiaVueComponent::power_up_debug_() {
   if (!this->dp_write_(DP_CTRL_STAT, DP_POWER_REQUEST)) {
     return false;
   }
-  for (uint8_t attempt = 0; attempt < this->retry_count_; attempt++) {
+  for (uint8_t attempt = 0; attempt < SWD_RETRY_COUNT; attempt++) {
     uint32_t status = 0;
     if (!this->dp_read_(DP_CTRL_STAT, &status)) {
       return false;
@@ -1877,8 +1840,6 @@ bool EmporiaVueComponent::detect_current_firmware_by_swd_(FirmwareInfo *info, st
     return fail(message);
   }
 
-  this->release_pins_();
-  this->reset_target_();
   this->release_pins_();
   ESP_LOGI(TAG, "SAMD09 SWD firmware detection complete: %s",
            info->kind == FirmwareKind::MANAGED ? "managed footer found" : "no managed footer");

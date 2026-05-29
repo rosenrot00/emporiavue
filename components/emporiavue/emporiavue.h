@@ -63,14 +63,9 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void set_swclk_pin(InternalGPIOPin *pin) { this->swclk_pin_ = pin; }
   void set_reset_pin(InternalGPIOPin *pin) { this->reset_pin_ = pin; }
   void set_hardware_id(uint16_t hardware_id) { this->hardware_id_ = hardware_id; }
-  void set_reset_before_read(bool reset_before_read) { this->reset_before_read_ = reset_before_read; }
-  void set_reset_on_boot(bool reset_on_boot) { this->reset_on_boot_ = reset_on_boot; }
   void set_connect_under_reset(bool connect_under_reset) { this->connect_under_reset_ = connect_under_reset; }
-  void set_reset_hold_time(uint32_t reset_hold_time) { this->reset_hold_time_ms_ = reset_hold_time; }
   void set_reset_release_time(uint32_t reset_release_time) { this->reset_release_time_ms_ = reset_release_time; }
   void set_clock_delay_us(uint8_t clock_delay_us) { this->clock_delay_us_ = clock_delay_us; }
-  void set_retry_count(uint8_t retry_count) { this->retry_count_ = retry_count; }
-  void set_init_pins_on_boot(bool init_pins_on_boot) { this->init_pins_on_boot_ = init_pins_on_boot; }
   void set_runtime_mode(uint8_t mode) {
     this->runtime_mode_ = mode == 1 ? RuntimeMode::SPI : RuntimeMode::I2C;
   }
@@ -134,6 +129,9 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   static constexpr uint8_t SWD_ACK_OK = 0b001;
   static constexpr uint8_t SWD_ACK_WAIT = 0b010;
   static constexpr uint8_t SWD_ACK_FAULT = 0b100;
+  static constexpr uint8_t SWD_RETRY_COUNT = 40;
+  static constexpr uint16_t SWD_ATTACH_RESET_HOLD_US = 100;
+  static constexpr uint16_t RESET_PULSE_MS = 1;
 
   static constexpr uint32_t MEM_AP_CSW_BASE = 0x23000040UL;
   static constexpr uint32_t DP_POWER_REQUEST = 0x50000000UL;
@@ -379,8 +377,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
     uint8_t image_sha256[32]{};
   };
 
-  void reset_target_();
-  void assert_reset_(bool wait_for_hold_time = true);
+  void assert_reset_();
   void assert_reset_for_swd_attach_();
   void deassert_reset_();
   void deassert_reset_for_swd_attach_();
@@ -436,7 +433,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   bool flash_row_erased_(uint32_t address, uint32_t row_size, bool *erased);
   bool power_up_debug_();
   bool verify_mem_ap_();
-  void perform_boot_reset_();
   void inspect_backup_partition_();
   bool find_backup_partition_();
   bool backup_partition_has_capacity_(uint32_t flash_size);
@@ -512,14 +508,10 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   sensor::Sensor *diag_last_sample_count_sensor_{nullptr};
 
   uint16_t hardware_id_{0};
-  bool reset_before_read_{false};
-  bool reset_on_boot_{false};
   bool connect_under_reset_{false};
   bool target_reset_asserted_{false};
-  uint32_t reset_hold_time_ms_{100};
   uint32_t reset_release_time_ms_{50};
   uint8_t clock_delay_us_{2};
-  uint8_t retry_count_{40};
   RuntimeMode runtime_mode_{RuntimeMode::I2C};
   std::string entity_prefix_{};
   bool auto_update_samd_{false};
@@ -571,7 +563,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   uint32_t install_page_size_{0};
   uint32_t install_row_size_{0};
   uint8_t install_external_firmware_index_{0};
-  bool init_pins_on_boot_{false};
   bool pins_setup_{false};
   bool direction_write_{true};
   bool sample_before_clock_{false};

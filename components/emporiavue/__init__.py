@@ -78,14 +78,9 @@ CONF_FIRMWARE_VERSION = "firmware_version"
 CONF_BUNDLED_FIRMWARE_VERSION = "bundled_firmware_version"
 CONF_BACKUP_PARTITION = "backup_partition"
 CONF_HARDWARE = "hardware"
-CONF_RESET_BEFORE_READ = "reset_before_read"
-CONF_RESET_ON_BOOT = "reset_on_boot"
 CONF_CONNECT_UNDER_RESET = "connect_under_reset"
-CONF_RESET_HOLD_TIME = "reset_hold_time"
 CONF_RESET_RELEASE_TIME = "reset_release_time"
 CONF_CLOCK_DELAY = "clock_delay"
-CONF_RETRY_COUNT = "retry_count"
-CONF_INIT_PINS_ON_BOOT = "init_pins_on_boot"
 CONF_MODE = "mode"
 CONF_ENTITY_PREFIX = "entity_prefix"
 CONF_AUTO_UPDATE_SAMD = "auto_update_samd"
@@ -512,14 +507,9 @@ def _apply_hardware_defaults(config):
         config.setdefault(CONF_SWDIO_PIN, "GPIO13")
         config.setdefault(CONF_SWCLK_PIN, "GPIO14")
         config.setdefault(CONF_RESET_PIN, "GPIO26")
-        config.setdefault(CONF_RESET_BEFORE_READ, True)
-        config.setdefault(CONF_RESET_ON_BOOT, True)
         config.setdefault(CONF_CONNECT_UNDER_RESET, True)
-        config.setdefault(CONF_RESET_HOLD_TIME, "200ms")
         config.setdefault(CONF_RESET_RELEASE_TIME, "1ms")
         config.setdefault(CONF_CLOCK_DELAY, 2)
-        config.setdefault(CONF_RETRY_COUNT, 40)
-        config.setdefault(CONF_INIT_PINS_ON_BOOT, False)
     return config
 
 
@@ -877,14 +867,9 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_SWDIO_PIN, default="GPIO13"): pins.internal_gpio_input_pullup_pin_schema,
         cv.Optional(CONF_SWCLK_PIN, default="GPIO14"): pins.internal_gpio_output_pin_schema,
         cv.Optional(CONF_RESET_PIN): pins.internal_gpio_output_pin_schema,
-        cv.Optional(CONF_RESET_BEFORE_READ, default=False): cv.boolean,
-        cv.Optional(CONF_RESET_ON_BOOT, default=False): cv.boolean,
         cv.Optional(CONF_CONNECT_UNDER_RESET, default=False): cv.boolean,
-        cv.Optional(CONF_RESET_HOLD_TIME, default="100ms"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_RESET_RELEASE_TIME, default="50ms"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_CLOCK_DELAY, default=2): cv.int_range(min=0, max=50),
-        cv.Optional(CONF_RETRY_COUNT, default=40): cv.int_range(min=1, max=255),
-        cv.Optional(CONF_INIT_PINS_ON_BOOT, default=False): cv.boolean,
         cv.Optional(CONF_MODE, default=MODE_I2C): cv.one_of(MODE_I2C, MODE_SPI, lower=True),
         cv.Optional(CONF_ENTITY_PREFIX): cv.string_strict,
         cv.Optional(CONF_AUTO_UPDATE_SAMD, default=False): cv.boolean,
@@ -1057,14 +1042,9 @@ async def to_code(config):
         reset_pin = await cg.gpio_pin_expression(reset_pin_config)
         cg.add(var.set_reset_pin(reset_pin))
 
-    cg.add(var.set_reset_before_read(config[CONF_RESET_BEFORE_READ]))
-    cg.add(var.set_reset_on_boot(config[CONF_RESET_ON_BOOT]))
     cg.add(var.set_connect_under_reset(config[CONF_CONNECT_UNDER_RESET]))
-    cg.add(var.set_reset_hold_time(config[CONF_RESET_HOLD_TIME]))
     cg.add(var.set_reset_release_time(config[CONF_RESET_RELEASE_TIME]))
     cg.add(var.set_clock_delay_us(config[CONF_CLOCK_DELAY]))
-    cg.add(var.set_retry_count(config[CONF_RETRY_COUNT]))
-    cg.add(var.set_init_pins_on_boot(config[CONF_INIT_PINS_ON_BOOT]))
     cg.add(var.set_runtime_mode(MODE_IDS[config[CONF_MODE]]))
     cg.add(var.set_entity_prefix(config.get(CONF_ENTITY_PREFIX, "")))
     cg.add(var.set_auto_update_samd(config[CONF_AUTO_UPDATE_SAMD]))
