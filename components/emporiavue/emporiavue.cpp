@@ -24,6 +24,9 @@ void EmporiaVueComponent::setup() {
   this->inspect_backup_partition_();
   this->publish_bundled_firmware_version_();
   this->publish_initial_firmware_detection_();
+  for (auto *phase : this->metering_phases_) {
+    phase->setup_calibration_number();
+  }
   if (!this->install_active_) {
     this->start_i2c_diagnostics_();
     this->start_metering_();
@@ -89,6 +92,7 @@ void EmporiaVueComponent::dump_config() {
     ESP_LOGCONFIG(TAG, "  Metering phase");
     ESP_LOGCONFIG(TAG, "    Input: %u", static_cast<unsigned>(phase->get_input_wire()));
     ESP_LOGCONFIG(TAG, "    Calibration: %.6f", phase->get_calibration());
+    LOG_NUMBER("    ", "Calibration", phase->get_calibration_number());
     LOG_SENSOR("    ", "Voltage", phase->get_voltage_sensor());
     LOG_SENSOR("    ", "Frequency", phase->get_frequency_sensor());
     LOG_SENSOR("    ", "Phase angle", phase->get_phase_angle_sensor());
@@ -99,6 +103,41 @@ void EmporiaVueComponent::dump_config() {
     LOG_SENSOR("    ", "Power", ct_clamp->get_power_sensor());
     LOG_SENSOR("    ", "Current", ct_clamp->get_current_sensor());
   }
+}
+
+void MeteringPhaseConfig::setup_calibration_number() {
+  if (this->calibration_number_ == nullptr) {
+    return;
+  }
+  this->calibration_number_->setup_value();
+}
+
+void MeteringCalibrationNumber::setup_value() {
+  float value = this->initial_value_;
+  this->ensure_preference_();
+  this->pref_.load(&value);
+  if (this->parent_ != nullptr) {
+    this->parent_->set_calibration(value);
+  }
+  this->publish_state(value);
+}
+
+void MeteringCalibrationNumber::control(float value) {
+  if (this->parent_ != nullptr) {
+    this->parent_->set_calibration(value);
+  }
+  this->ensure_preference_();
+  this->pref_.save(&value);
+  global_preferences->sync();
+  this->publish_state(value);
+}
+
+void MeteringCalibrationNumber::ensure_preference_() {
+  if (this->pref_initialized_) {
+    return;
+  }
+  this->pref_ = global_preferences->make_preference<float>(this->get_object_id_hash());
+  this->pref_initialized_ = true;
 }
 
 void EmporiaVueComponent::backup_firmware() {

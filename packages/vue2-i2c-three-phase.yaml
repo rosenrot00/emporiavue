@@ -1,4 +1,4 @@
-# Emporia Vue 2 internal SAMD09 preset.
+# Emporia Vue 2 internal SAMD09 preset for three-phase I2C metering.
 #
 # Keep external_components in the main node YAML so private GitHub credentials
 # can stay in secrets.yaml. This package only adds the ESP32 backup partition

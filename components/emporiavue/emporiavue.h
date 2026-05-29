@@ -2,11 +2,13 @@
 
 #include "esphome/components/button/button.h"
 #include "esphome/components/i2c/i2c.h"
+#include "esphome/components/number/number.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
+#include "esphome/core/preferences.h"
 
 #include <esp_partition.h>
 #include <mbedtls/sha256.h>
@@ -23,6 +25,7 @@ namespace emporiavue {
 
 class MeteringPhaseConfig;
 class MeteringCTClampConfig;
+class MeteringCalibrationNumber;
 
 class EmporiaVueComponent : public Component, public i2c::I2CDevice {
  public:
@@ -544,6 +547,9 @@ class MeteringPhaseConfig {
   uint8_t get_input_wire() const { return this->input_wire_; }
   void set_calibration(float calibration) { this->calibration_ = calibration; }
   float get_calibration() const { return this->calibration_; }
+  void set_calibration_number(MeteringCalibrationNumber *number) { this->calibration_number_ = number; }
+  MeteringCalibrationNumber *get_calibration_number() const { return this->calibration_number_; }
+  void setup_calibration_number();
   void set_voltage_sensor(sensor::Sensor *sensor) { this->voltage_sensor_ = sensor; }
   sensor::Sensor *get_voltage_sensor() const { return this->voltage_sensor_; }
   void set_frequency_sensor(sensor::Sensor *sensor) { this->frequency_sensor_ = sensor; }
@@ -554,9 +560,24 @@ class MeteringPhaseConfig {
  protected:
   uint8_t input_wire_{0};
   float calibration_{0.022f};
+  MeteringCalibrationNumber *calibration_number_{nullptr};
   sensor::Sensor *voltage_sensor_{nullptr};
   sensor::Sensor *frequency_sensor_{nullptr};
   sensor::Sensor *phase_angle_sensor_{nullptr};
+};
+
+class MeteringCalibrationNumber : public number::Number, public Parented<MeteringPhaseConfig> {
+ public:
+  void set_initial_value(float initial_value) { this->initial_value_ = initial_value; }
+  void setup_value();
+
+ protected:
+  void control(float value) override;
+  void ensure_preference_();
+
+  float initial_value_{0.022f};
+  ESPPreferenceObject pref_{};
+  bool pref_initialized_{false};
 };
 
 class MeteringCTClampConfig {

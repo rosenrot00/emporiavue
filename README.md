@@ -177,13 +177,18 @@ emporiavue:
   connect_under_reset: true
 ```
 
-## Vue 2 I2C Package
+## Vue 2 I2C Packages
 
-The repository currently includes `packages/vue2-i2c.yaml`. It sets `hardware: vue2` and `mode: i2c`, adds a 64 KiB
-`samd_bak` data partition, and enables the firmware version entities plus the backup, update, and restore
-buttons. It also enables a slow `metering_interval: 10s` I2C read path that decodes the stock-compatible frame into the
-component's internal metering frame without replacing the existing `emporia_vue` sensors. The transport is explicit in
-the filename so a future SPI transport can live next to it as `packages/vue2-spi.yaml`.
+The repository currently includes `packages/vue2-i2c.yaml` and the explicit
+`packages/vue2-i2c-three-phase.yaml` preset. They set `hardware: vue2` and `mode: i2c`, add a 64 KiB `samd_bak`
+data partition, and enable the firmware version entities plus the backup, update, and restore buttons. They also
+enable a slow `metering_interval: 10s` I2C read path that decodes the stock-compatible frame into the component's
+internal metering frame without replacing the existing `emporia_vue` sensors. The transport is explicit in the filename
+so a future SPI transport can live next to it as `packages/vue2-spi.yaml`.
+
+The three-phase preset creates Home Assistant configuration numbers for the main voltage calibration values. The initial
+value is `0.022`, matching the old `emporia_vue` component's documented starting point. If a number was changed before,
+the restored ESPHome preference wins over the package value on boot.
 
 Keep your private `external_components` block in the main node YAML, then include the package:
 
@@ -195,7 +200,7 @@ packages:
     username: !secret github_username
     password: !secret github_token
     files:
-      - packages/vue2-i2c.yaml
+      - packages/vue2-i2c-three-phase.yaml
 ```
 
 When adding `samd_bak` to a device that is already flashed, update the ESP32 partition table once. ESPHome documents
@@ -210,24 +215,25 @@ legacy sensor component is still polling the same I2C device:
 ```yaml
 emporiavue:
   metering_interval: 10s
-  phases:
-    - id: vue_phase_a
-      input: BLACK
-      calibration: 0.022830
+  mains:
+    phase_a:
+      id: vue_metering_phase_a
+      calibration: 0.022
       voltage:
         name: "Vue2 Metering Phase A Voltage"
       frequency:
         name: "Vue2 Metering Phase A Frequency"
-    - id: vue_phase_b
-      input: RED
-      calibration: 0.022520
+    phase_b:
+      calibration: 0.022
       phase_angle:
         name: "Vue2 Metering Phase B Angle"
+    phase_c:
+      calibration: 0.022
   ct_clamps:
-    - phase_id: vue_phase_a
-      input: A
+    - phase_id: vue_metering_phase_a
+      input: "1"
       power:
-        name: "Vue2 Metering Phase A Power"
+        name: "Vue2 Metering Circuit 1 Power"
 ```
 
 ## Future SAMD09 firmware improvements
