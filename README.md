@@ -1,17 +1,11 @@
-# EmporiaVue SAMD09 SWD reader
+# EmporiaVue SAMD09 firmware manager
 
-ESPHome external component for the Emporia Vue ESP32. It bit-bangs SWD on the pins from the Emporia Vue local discussion:
+ESPHome external component for backing up and updating the SAMD09 firmware in Emporia Vue devices. It bit-bangs SWD on the pins from the Emporia Vue local discussion:
 
 - SWDIO: GPIO13
 - SWCLK: GPIO14
 
 The SAMD reset line is intentionally not configured by default because public notes and board-level testing do not fully agree on the ESP32 GPIO. Configure it explicitly only when you want a reset pulse. GPIO26 is mentioned in the original discussion; GPIO4 is another candidate to test on some boards.
-
-The first implementation only checks whether the SAMD09 can be read. Pressing the generated Home Assistant button logs:
-
-- the ARM SWD DP IDCODE
-- the SAMD DSU DID register
-- the DSU/NVM protection flags and whether a flash probe read succeeded
 
 ## Use
 
@@ -52,17 +46,11 @@ external_components:
     components: [emporiavue]
 ```
 
-The default config creates Home Assistant buttons for probing, reading, dumping, backing up, and preparing a managed
-firmware install for the SAMD09:
+The default config creates only the SAMD firmware controls that are needed during normal use:
 
-- `Probe SAMD09 SWD`: reads only the SWD Debug Port IDCODE and logs the raw ACK value. It tries a plain SWD line-reset sequence, the standard 16-bit SWJ JTAG-to-SWD select sequence, and the 32-bit `0xe79e` variant used by odewdney's MicroPython SWD script.
-- `Read SAMD09`: runs the fuller SWD read check, including DSU/NVM status reads after the Debug Port responds.
-- `Dump SAMD09 Flash Blocks`: reads a small number of flash blocks and logs numbered hex chunks that can later be reassembled.
 - `Backup SAMD09 Firmware`: backs up detected legacy SAMD09 firmware into the `samd_bak` ESP32 data partition. It refuses to back up firmware marked as managed by this project.
 - `Update SAMD09 Firmware`: checks whether the running SAMD09 firmware is stock or older than the bundled managed
-  SAMD09 image and can flash that bundled image when writes are explicitly enabled.
-- `Restore Stock SAMD09 Firmware`: restores the verified stock backup from the `samd_bak` partition when the SAMD is
-  currently running managed firmware.
+  SAMD09 image and flashes that bundled image.
 
 You need the normal ESPHome `api:` setup in your node config for Home Assistant to see those buttons. The results appear in the ESPHome log/console at `INFO` level.
 If the `samd_bak` partition is not present at boot, the firmware status entity reports `backup partition missing` and
@@ -77,8 +65,8 @@ decisions compare the detected raw integer against the bundled image's raw integ
 `emporia_vue` I2C frame is 284 bytes; a future managed SAMD firmware can expose these values in its I2C payload too,
 but this SWD component does not depend on that yet.
 Because Home Assistant buttons cannot be disabled dynamically by an external component, use `SAMD Firmware Status` as
-the authoritative state. The update and restore buttons exit without writing if their action is not applicable, no
-bundled image is compiled in, or a required backup image is missing.
+the authoritative state. The update button exits without writing if its action is not applicable or no bundled image is
+compiled in.
 
 The bundled SAMD09 image is built from `firmware/samd09`, which is based on
 `gekkehenkie11/emporia-SAMD09` at commit `0baafe6d8812639d14f8f66b03844567f913ddc0` with small local build fixes for
@@ -112,7 +100,7 @@ That keeps the ESP32 and ESPHome reachable while avoiding a reset into a partial
 
 By default the SWD pins are not initialized at boot. `init_pins_on_boot` defaults to `false`, so SWDIO/SWCLK are only touched while a SAMD09 button action is running. The optional reset pin is only touched when `reset_before_read: true` or `connect_under_reset: true` is set. After the check, the component releases the touched pins back to input/pullup.
 
-To test a reset-assisted read, set the reset pin explicitly:
+To test a reset-assisted update or backup, set the reset pin explicitly:
 
 ```yaml
 emporiavue:
@@ -136,41 +124,6 @@ emporiavue:
   reset_release_time: 1ms
 ```
 
-The flash dump button defaults to five 64-byte blocks starting at flash address `0x00000000`. It does not reset after each block; the component attaches once over SWD, powers up the Debug Port, halts the SAMD09 core, then reads one block per ESPHome `loop()` cycle so other components get scheduler time between blocks. By default the core is resumed after the full dump. Each block is logged as one line:
-
-```text
-SAMD09_FLASH_DUMP block=0000 addr=0x00000000 len=64 data=...
-```
-
-The initial test size can be changed:
-
-```yaml
-emporiavue:
-  id: samd_reader
-  dump_start_address: 0
-  dump_block_size: 64
-  dump_block_count: 5
-  dump_halt_core: true
-  dump_resume_between_blocks: false
-```
-
-To dump the full flash in one button action, enable `dump_full_flash`. The component reads `NVMCTRL.PARAM` at
-`0x41004008`, computes `flash_size = page_size * page_count`, and derives the required block count from the
-configured block size:
-
-```yaml
-emporiavue:
-  id: samd_reader
-  dump_start_address: 0
-  dump_block_size: 64
-  dump_full_flash: true
-  dump_halt_core: true
-  dump_resume_between_blocks: false
-```
-
-The full dump still runs one block per ESPHome `loop()` cycle. That keeps the ESP32 scheduler responsive, but the
-SAMD09 core remains halted until the dump finishes unless `dump_resume_between_blocks` is enabled.
-
 If the SAMD firmware appears to take over the SWD pins before the probe can connect, try connect-under-reset. This keeps reset asserted while the SWD Debug Port IDCODE is probed, then releases reset again:
 
 ```yaml
@@ -183,8 +136,8 @@ emporiavue:
 ## Vue 2 managed package
 
 The repository includes `packages/vue2-managed.yaml`. It configures the Vue 2 internal SWD pins through
-`hardware: vue2`, adds a 64 KiB `samd_bak` data partition, and enables the firmware status/action entities plus the
-backup, update, and restore buttons.
+`hardware: vue2`, adds a 64 KiB `samd_bak` data partition, and enables the firmware status/version entities plus the
+backup and update buttons.
 
 Keep your private `external_components` block in the main node YAML, then include the package:
 

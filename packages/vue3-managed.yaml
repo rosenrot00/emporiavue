@@ -3,12 +3,12 @@
 # Vue 3 uses the same normal 284 byte SAMD I2C metering frame in the upstream
 # ESPHome component, but the bundled managed SAMD firmware in this repository is
 # currently a Vue 2 image. This package therefore enables firmware detection,
-# backup, restore-from-backup, and diagnostics, while managed firmware update is
-# blocked until a Vue 3 SAMD image is added.
+# backup, and diagnostics, while managed firmware update is blocked until a Vue 3
+# SAMD image is added.
 #
 # Keep external_components in the main node YAML so private GitHub credentials
 # can stay in secrets.yaml. When adding this package to an already-flashed ESP32,
-# update the partition table once before using backup/restore. ESPHome requires
+# update the partition table once before using backup/update. ESPHome requires
 # `allow_partition_access: true` on the esphome OTA platform for that step.
 
 esp32:
@@ -23,13 +23,6 @@ emporiavue:
   hardware: vue3
   backup_partition: samd_bak
 
-  dump_start_address: 0
-  dump_block_size: 64
-  dump_block_count: 5
-  dump_full_flash: true
-  dump_halt_core: true
-  dump_resume_between_blocks: false
-
   firmware_status:
     name: "SAMD Firmware Status"
   firmware_version:
@@ -39,13 +32,3 @@ emporiavue:
     name: "Backup SAMD09 Firmware"
   install_firmware_button:
     name: "Update SAMD09 Firmware"
-  restore_firmware_button:
-    name: "Restore Stock SAMD09 Firmware"
-  test_write_button:
-    name: "Test SAMD09 Flash Write"
-  probe_button:
-    name: "Probe SAMD09 SWD"
-  read_button:
-    name: "Read SAMD09"
-  dump_flash_button:
-    name: "Dump SAMD09 Flash"

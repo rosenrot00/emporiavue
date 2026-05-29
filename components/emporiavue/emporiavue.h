@@ -47,14 +47,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
     this->runtime_mode_ = mode == 1 ? RuntimeMode::SPI : RuntimeMode::I2C;
   }
   void set_entity_prefix(const std::string &entity_prefix) { this->entity_prefix_ = entity_prefix; }
-  void set_dump_start_address(uint32_t dump_start_address) { this->dump_start_address_ = dump_start_address; }
-  void set_dump_block_size(uint16_t dump_block_size) { this->dump_block_size_ = dump_block_size; }
-  void set_dump_block_count(uint32_t dump_block_count) { this->dump_block_count_ = dump_block_count; }
-  void set_dump_full_flash(bool dump_full_flash) { this->dump_full_flash_ = dump_full_flash; }
-  void set_dump_halt_core(bool dump_halt_core) { this->dump_halt_core_ = dump_halt_core; }
-  void set_dump_resume_between_blocks(bool dump_resume_between_blocks) {
-    this->dump_resume_between_blocks_ = dump_resume_between_blocks;
-  }
   void set_backup_partition_name(const std::string &backup_partition_name) {
     this->backup_partition_name_ = backup_partition_name;
   }
@@ -77,15 +69,8 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void set_diag_last_sample_count_sensor(sensor::Sensor *sensor) { this->diag_last_sample_count_sensor_ = sensor; }
   void set_diag_last_i2c_read_len_sensor(sensor::Sensor *sensor) { this->diag_last_i2c_read_len_sensor_ = sensor; }
 
-  void read_samd();
-  void probe_swd();
-  void dump_flash();
   void backup_firmware();
   void install_firmware();
-  void restore_firmware();
-  void flash_dump_firmware();
-  void test_flash_write();
-  void diagnose_runtime();
 
  protected:
   static constexpr uint8_t DP_ABORT = 0x00;
@@ -252,15 +237,11 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
     UNKNOWN = 0,
     NONE,
     UPDATE_MANAGED,
-    RESTORE_STOCK,
-    FLASH_STOCK_DUMP,
   };
 
   enum class FlashSource : uint8_t {
     NONE = 0,
     BUNDLED,
-    BACKUP,
-    STOCK_DUMP,
   };
 
   enum class FirmwareKind : uint8_t {
@@ -298,15 +279,12 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void begin_swd_session_();
   void finish_swd_session_();
   void swd_enter_debug_(uint8_t swj_select_bits);
-  bool probe_idcode_(const char *sequence_name, uint8_t swj_select_bits, bool sample_before_clock, uint32_t *idcode,
-                     uint8_t *ack);
   bool swd_initialize_(uint32_t *idcode);
   void prepare_pins_();
   void release_pins_();
   void set_error_(const std::string &error);
   void publish_status_(const std::string &status);
   void publish_firmware_status_(const std::string &status);
-  void publish_firmware_action_(const std::string &action);
   void publish_firmware_version_(const FirmwareInfo &info);
   static std::string hex32_(uint32_t value);
   static std::string hex16_(uint16_t value);
@@ -343,9 +321,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   bool resume_core_();
   bool system_reset_core_();
   bool read_core_register_(uint8_t reg, uint32_t *value);
-  bool collect_runtime_diagnostic_(std::string *summary);
   bool read_flash_geometry_(uint32_t *param, uint32_t *page_size, uint32_t *page_count, uint32_t *flash_size);
-  bool dump_flash_block_(uint32_t address, uint16_t length, std::string *hex_data);
   bool read_flash_bytes_(uint32_t address, uint16_t length, uint8_t *data);
   bool flash_row_erased_(uint32_t address, uint32_t row_size, bool *erased);
   bool power_up_debug_();
@@ -373,27 +349,18 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   bool detect_managed_firmware_(uint32_t flash_size, bool *managed);
   bool read_managed_firmware_info_(uint32_t flash_size, ManagedFirmwareInfo *managed_info, bool *found);
   bool read_current_firmware_info_(FirmwareInfo *info);
-  bool read_valid_backup_(BackupHeader *header, std::string *error);
-  bool backup_partition_valid_(std::string *error);
-  FirmwareAction determine_firmware_action_(const FirmwareInfo &current, const BackupHeader *backup_header,
-                                            std::string *reason) const;
-  void publish_detected_firmware_action_(FirmwareAction action, const std::string &reason);
+  FirmwareAction determine_firmware_action_(const FirmwareInfo &current, std::string *reason) const;
   void start_firmware_action_(FirmwareAction requested_action);
   bool bundled_firmware_available_() const;
   bool bundled_firmware_matches_hardware_() const;
   uint32_t bundled_firmware_hardware_id_() const;
   uint32_t bundled_firmware_version_() const;
   uint32_t bundled_firmware_size_() const;
-  bool stock_dump_firmware_available_() const;
-  bool stock_dump_firmware_matches_hardware_() const;
-  uint32_t stock_dump_firmware_size_() const;
   bool nvm_wait_ready_();
   bool nvm_clear_errors_();
   bool nvm_check_errors_();
   bool nvm_command_(uint8_t command);
   bool erase_flash_row_(uint32_t address);
-  bool write_raw_flash_page_(uint32_t address, const uint8_t *data, uint32_t length);
-  bool test_write_flash_page_(uint32_t address, uint32_t page_size);
   bool read_install_source_(uint32_t offset, uint32_t length, uint8_t *buffer);
   bool write_flash_page_(uint32_t address, uint32_t offset, uint32_t length);
   bool verify_flash_page_(uint32_t address, uint32_t offset, uint32_t length);
@@ -432,17 +399,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   uint8_t retry_count_{40};
   RuntimeMode runtime_mode_{RuntimeMode::I2C};
   std::string entity_prefix_{};
-  uint32_t dump_start_address_{FLASH_START};
-  uint16_t dump_block_size_{64};
-  uint32_t dump_block_count_{5};
-  uint32_t dump_effective_block_count_{5};
-  uint32_t dump_total_size_{320};
-  bool dump_full_flash_{false};
-  bool dump_halt_core_{true};
-  bool dump_resume_between_blocks_{false};
-  bool dump_active_{false};
-  bool dump_core_halted_{false};
-  uint32_t dump_next_block_{0};
   std::string backup_partition_name_{"samd_bak"};
   const esp_partition_t *backup_partition_{nullptr};
   bool backup_active_{false};
@@ -467,7 +423,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   FirmwareAction install_action_{FirmwareAction::UNKNOWN};
   FlashSource install_source_{FlashSource::NONE};
   InstallStage install_stage_{InstallStage::IDLE};
-  BackupHeader install_backup_header_{};
   uint32_t install_next_offset_{0};
   uint32_t install_flash_size_{0};
   uint32_t install_page_size_{0};
@@ -482,21 +437,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   std::string last_error_;
 };
 
-class EmporiaVueReadButton : public button::Button, public Parented<EmporiaVueComponent> {
- protected:
-  void press_action() override { this->parent_->read_samd(); }
-};
-
-class EmporiaVueProbeButton : public button::Button, public Parented<EmporiaVueComponent> {
- protected:
-  void press_action() override { this->parent_->probe_swd(); }
-};
-
-class EmporiaVueDumpFlashButton : public button::Button, public Parented<EmporiaVueComponent> {
- protected:
-  void press_action() override { this->parent_->dump_flash(); }
-};
-
 class EmporiaVueBackupFirmwareButton : public button::Button, public Parented<EmporiaVueComponent> {
  protected:
   void press_action() override { this->parent_->backup_firmware(); }
@@ -505,26 +445,6 @@ class EmporiaVueBackupFirmwareButton : public button::Button, public Parented<Em
 class EmporiaVueInstallFirmwareButton : public button::Button, public Parented<EmporiaVueComponent> {
  protected:
   void press_action() override { this->parent_->install_firmware(); }
-};
-
-class EmporiaVueRestoreFirmwareButton : public button::Button, public Parented<EmporiaVueComponent> {
- protected:
-  void press_action() override { this->parent_->restore_firmware(); }
-};
-
-class EmporiaVueFlashDumpFirmwareButton : public button::Button, public Parented<EmporiaVueComponent> {
- protected:
-  void press_action() override { this->parent_->flash_dump_firmware(); }
-};
-
-class EmporiaVueTestWriteButton : public button::Button, public Parented<EmporiaVueComponent> {
- protected:
-  void press_action() override { this->parent_->test_flash_write(); }
-};
-
-class EmporiaVueRuntimeDiagnosticButton : public button::Button, public Parented<EmporiaVueComponent> {
- protected:
-  void press_action() override { this->parent_->diagnose_runtime(); }
 };
 
 }  // namespace emporiavue

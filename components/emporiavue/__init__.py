@@ -8,8 +8,6 @@ from esphome.const import (
     CONF_RESET_PIN,
     ENTITY_CATEGORY_CONFIG,
     ENTITY_CATEGORY_DIAGNOSTIC,
-    ICON_CHIP,
-    ICON_DATABASE,
 )
 
 DEPENDENCIES = ["esp32", "i2c"]
@@ -19,45 +17,17 @@ emporiavue_ns = cg.esphome_ns.namespace("emporiavue")
 EmporiaVueComponent = emporiavue_ns.class_(
     "EmporiaVueComponent", cg.Component, i2c.I2CDevice
 )
-EmporiaVueReadButton = emporiavue_ns.class_(
-    "EmporiaVueReadButton", button.Button
-)
-EmporiaVueProbeButton = emporiavue_ns.class_(
-    "EmporiaVueProbeButton", button.Button
-)
-EmporiaVueDumpFlashButton = emporiavue_ns.class_(
-    "EmporiaVueDumpFlashButton", button.Button
-)
 EmporiaVueBackupFirmwareButton = emporiavue_ns.class_(
     "EmporiaVueBackupFirmwareButton", button.Button
 )
 EmporiaVueInstallFirmwareButton = emporiavue_ns.class_(
     "EmporiaVueInstallFirmwareButton", button.Button
 )
-EmporiaVueRestoreFirmwareButton = emporiavue_ns.class_(
-    "EmporiaVueRestoreFirmwareButton", button.Button
-)
-EmporiaVueFlashDumpFirmwareButton = emporiavue_ns.class_(
-    "EmporiaVueFlashDumpFirmwareButton", button.Button
-)
-EmporiaVueTestWriteButton = emporiavue_ns.class_(
-    "EmporiaVueTestWriteButton", button.Button
-)
-EmporiaVueRuntimeDiagnosticButton = emporiavue_ns.class_(
-    "EmporiaVueRuntimeDiagnosticButton", button.Button
-)
 
 CONF_SWCLK_PIN = "swclk_pin"
 CONF_SWDIO_PIN = "swdio_pin"
-CONF_READ_BUTTON = "read_button"
-CONF_PROBE_BUTTON = "probe_button"
-CONF_DUMP_FLASH_BUTTON = "dump_flash_button"
 CONF_BACKUP_FIRMWARE_BUTTON = "backup_firmware_button"
 CONF_INSTALL_FIRMWARE_BUTTON = "install_firmware_button"
-CONF_RESTORE_FIRMWARE_BUTTON = "restore_firmware_button"
-CONF_FLASH_DUMP_FIRMWARE_BUTTON = "flash_dump_firmware_button"
-CONF_TEST_WRITE_BUTTON = "test_write_button"
-CONF_RUNTIME_DIAGNOSTIC_BUTTON = "runtime_diagnostic_button"
 CONF_DIAGNOSTICS_STATUS = "diagnostics_status"
 CONF_DIAG_SAMPLE_BLOCKS = "diag_sample_blocks"
 CONF_DIAG_PACKETS_BUILT = "diag_packets_built"
@@ -72,12 +42,6 @@ CONF_FIRMWARE_STATUS = "firmware_status"
 CONF_FIRMWARE_VERSION = "firmware_version"
 CONF_BACKUP_PARTITION = "backup_partition"
 CONF_HARDWARE = "hardware"
-CONF_DUMP_START_ADDRESS = "dump_start_address"
-CONF_DUMP_BLOCK_SIZE = "dump_block_size"
-CONF_DUMP_BLOCK_COUNT = "dump_block_count"
-CONF_DUMP_FULL_FLASH = "dump_full_flash"
-CONF_DUMP_HALT_CORE = "dump_halt_core"
-CONF_DUMP_RESUME_BETWEEN_BLOCKS = "dump_resume_between_blocks"
 CONF_RESET_BEFORE_READ = "reset_before_read"
 CONF_RESET_ON_BOOT = "reset_on_boot"
 CONF_CONNECT_UNDER_RESET = "connect_under_reset"
@@ -144,12 +108,6 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_MODE, default=MODE_I2C): cv.one_of(MODE_I2C, MODE_SPI, lower=True),
         cv.Optional(CONF_ENTITY_PREFIX, default=""): cv.string_strict,
         cv.Optional(CONF_BACKUP_PARTITION, default="samd_bak"): cv.string_strict,
-        cv.Optional(CONF_DUMP_START_ADDRESS, default=0): cv.int_range(min=0, max=0xFFFFFFFF),
-        cv.Optional(CONF_DUMP_BLOCK_SIZE, default=64): cv.int_range(min=1, max=128),
-        cv.Optional(CONF_DUMP_BLOCK_COUNT, default=5): cv.int_range(min=1, max=4096),
-        cv.Optional(CONF_DUMP_FULL_FLASH, default=False): cv.boolean,
-        cv.Optional(CONF_DUMP_HALT_CORE, default=True): cv.boolean,
-        cv.Optional(CONF_DUMP_RESUME_BETWEEN_BLOCKS, default=False): cv.boolean,
         cv.Optional(
             CONF_FIRMWARE_STATUS,
             default={CONF_NAME: "SAMD Firmware Status"},
@@ -244,30 +202,6 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
         cv.Optional(
-            CONF_READ_BUTTON,
-            default={CONF_NAME: "Read SAMD09"},
-        ): button.button_schema(
-            EmporiaVueReadButton,
-            icon=ICON_DATABASE,
-            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
-        ),
-        cv.Optional(
-            CONF_PROBE_BUTTON,
-            default={CONF_NAME: "Probe SAMD09 SWD"},
-        ): button.button_schema(
-            EmporiaVueProbeButton,
-            icon=ICON_CHIP,
-            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
-        ),
-        cv.Optional(
-            CONF_DUMP_FLASH_BUTTON,
-            default={CONF_NAME: "Dump SAMD09 Flash Blocks"},
-        ): button.button_schema(
-            EmporiaVueDumpFlashButton,
-            icon=ICON_DATABASE,
-            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
-        ),
-        cv.Optional(
             CONF_BACKUP_FIRMWARE_BUTTON,
             default={CONF_NAME: "Backup SAMD09 Firmware"},
         ): button.button_schema(
@@ -282,38 +216,6 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             EmporiaVueInstallFirmwareButton,
             icon="mdi:update",
             entity_category=ENTITY_CATEGORY_CONFIG,
-        ),
-        cv.Optional(
-            CONF_RESTORE_FIRMWARE_BUTTON,
-            default={CONF_NAME: "Restore Stock SAMD09 Firmware"},
-        ): button.button_schema(
-            EmporiaVueRestoreFirmwareButton,
-            icon="mdi:backup-restore",
-            entity_category=ENTITY_CATEGORY_CONFIG,
-        ),
-        cv.Optional(
-            CONF_FLASH_DUMP_FIRMWARE_BUTTON,
-            default={CONF_NAME: "Flash Dumped SAMD09 Firmware"},
-        ): button.button_schema(
-            EmporiaVueFlashDumpFirmwareButton,
-            icon="mdi:chip",
-            entity_category=ENTITY_CATEGORY_CONFIG,
-        ),
-        cv.Optional(
-            CONF_TEST_WRITE_BUTTON,
-            default={CONF_NAME: "Test SAMD09 Flash Write"},
-        ): button.button_schema(
-            EmporiaVueTestWriteButton,
-            icon="mdi:pencil-check",
-            entity_category=ENTITY_CATEGORY_CONFIG,
-        ),
-        cv.Optional(
-            CONF_RUNTIME_DIAGNOSTIC_BUTTON,
-            default={CONF_NAME: "Diagnose SAMD09 Runtime"},
-        ): button.button_schema(
-            EmporiaVueRuntimeDiagnosticButton,
-            icon="mdi:stethoscope",
-            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
     }
 ).extend(cv.COMPONENT_SCHEMA).extend(i2c.i2c_device_schema(0x64))
@@ -345,12 +247,6 @@ async def to_code(config):
     cg.add(var.set_init_pins_on_boot(config[CONF_INIT_PINS_ON_BOOT]))
     cg.add(var.set_runtime_mode(MODE_IDS[config[CONF_MODE]]))
     cg.add(var.set_entity_prefix(config[CONF_ENTITY_PREFIX]))
-    cg.add(var.set_dump_start_address(config[CONF_DUMP_START_ADDRESS]))
-    cg.add(var.set_dump_block_size(config[CONF_DUMP_BLOCK_SIZE]))
-    cg.add(var.set_dump_block_count(config[CONF_DUMP_BLOCK_COUNT]))
-    cg.add(var.set_dump_full_flash(config[CONF_DUMP_FULL_FLASH]))
-    cg.add(var.set_dump_halt_core(config[CONF_DUMP_HALT_CORE]))
-    cg.add(var.set_dump_resume_between_blocks(config[CONF_DUMP_RESUME_BETWEEN_BLOCKS]))
     cg.add(var.set_backup_partition_name(config[CONF_BACKUP_PARTITION]))
     if firmware_status_config := config.get(CONF_FIRMWARE_STATUS):
         sens = await text_sensor.new_text_sensor(firmware_status_config)
@@ -388,30 +284,9 @@ async def to_code(config):
     if diag_last_i2c_read_len_config := config.get(CONF_DIAG_LAST_I2C_READ_LEN):
         sens = await sensor.new_sensor(diag_last_i2c_read_len_config)
         cg.add(var.set_diag_last_i2c_read_len_sensor(sens))
-    if read_button_config := config.get(CONF_READ_BUTTON):
-        btn = await button.new_button(read_button_config)
-        await cg.register_parented(btn, var)
-    if probe_button_config := config.get(CONF_PROBE_BUTTON):
-        btn = await button.new_button(probe_button_config)
-        await cg.register_parented(btn, var)
-    if dump_flash_button_config := config.get(CONF_DUMP_FLASH_BUTTON):
-        btn = await button.new_button(dump_flash_button_config)
-        await cg.register_parented(btn, var)
     if backup_firmware_button_config := config.get(CONF_BACKUP_FIRMWARE_BUTTON):
         btn = await button.new_button(backup_firmware_button_config)
         await cg.register_parented(btn, var)
     if install_firmware_button_config := config.get(CONF_INSTALL_FIRMWARE_BUTTON):
         btn = await button.new_button(install_firmware_button_config)
-        await cg.register_parented(btn, var)
-    if restore_firmware_button_config := config.get(CONF_RESTORE_FIRMWARE_BUTTON):
-        btn = await button.new_button(restore_firmware_button_config)
-        await cg.register_parented(btn, var)
-    if flash_dump_firmware_button_config := config.get(CONF_FLASH_DUMP_FIRMWARE_BUTTON):
-        btn = await button.new_button(flash_dump_firmware_button_config)
-        await cg.register_parented(btn, var)
-    if test_write_button_config := config.get(CONF_TEST_WRITE_BUTTON):
-        btn = await button.new_button(test_write_button_config)
-        await cg.register_parented(btn, var)
-    if runtime_diagnostic_button_config := config.get(CONF_RUNTIME_DIAGNOSTIC_BUTTON):
-        btn = await button.new_button(runtime_diagnostic_button_config)
         await cg.register_parented(btn, var)
