@@ -56,6 +56,7 @@ CONF_RETRY_COUNT = "retry_count"
 CONF_INIT_PINS_ON_BOOT = "init_pins_on_boot"
 CONF_MODE = "mode"
 CONF_ENTITY_PREFIX = "entity_prefix"
+CONF_AUTO_UPDATE_SAMD = "auto_update_samd"
 
 HARDWARE_CUSTOM = "custom"
 HARDWARE_VUE2 = "vue2"
@@ -164,6 +165,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_INIT_PINS_ON_BOOT, default=False): cv.boolean,
         cv.Optional(CONF_MODE, default=MODE_I2C): cv.one_of(MODE_I2C, MODE_SPI, lower=True),
         cv.Optional(CONF_ENTITY_PREFIX): cv.string_strict,
+        cv.Optional(CONF_AUTO_UPDATE_SAMD, default=False): cv.boolean,
         cv.Optional(CONF_BACKUP_PARTITION, default="samd_bak"): cv.string_strict,
         cv.Optional(
             CONF_FIRMWARE_STATUS,
@@ -312,6 +314,7 @@ async def to_code(config):
     cg.add(var.set_init_pins_on_boot(config[CONF_INIT_PINS_ON_BOOT]))
     cg.add(var.set_runtime_mode(MODE_IDS[config[CONF_MODE]]))
     cg.add(var.set_entity_prefix(config.get(CONF_ENTITY_PREFIX, "")))
+    cg.add(var.set_auto_update_samd(config[CONF_AUTO_UPDATE_SAMD]))
     cg.add(var.set_backup_partition_name(config[CONF_BACKUP_PARTITION]))
     if firmware_status_config := config.get(CONF_FIRMWARE_STATUS):
         sens = await text_sensor.new_text_sensor(firmware_status_config)

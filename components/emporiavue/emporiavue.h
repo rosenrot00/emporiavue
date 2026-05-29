@@ -47,6 +47,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
     this->runtime_mode_ = mode == 1 ? RuntimeMode::SPI : RuntimeMode::I2C;
   }
   void set_entity_prefix(const std::string &entity_prefix) { this->entity_prefix_ = entity_prefix; }
+  void set_auto_update_samd(bool auto_update_samd) { this->auto_update_samd_ = auto_update_samd; }
   void set_backup_partition_name(const std::string &backup_partition_name) {
     this->backup_partition_name_ = backup_partition_name;
   }
@@ -355,6 +356,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void probe_runtime_i2c_after_firmware_update_();
   void publish_initial_firmware_detection_();
   bool detect_current_firmware_by_swd_(FirmwareInfo *info, std::string *error);
+  bool should_auto_update_samd_(const FirmwareInfo &info, std::string *reason) const;
   bool detect_managed_firmware_(uint32_t flash_size, bool *managed);
   bool read_managed_firmware_info_(uint32_t flash_size, ManagedFirmwareInfo *managed_info, bool *found);
   bool read_current_firmware_info_(FirmwareInfo *info);
@@ -409,6 +411,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   uint8_t retry_count_{40};
   RuntimeMode runtime_mode_{RuntimeMode::I2C};
   std::string entity_prefix_{};
+  bool auto_update_samd_{false};
   std::string backup_partition_name_{"samd_bak"};
   const esp_partition_t *backup_partition_{nullptr};
   bool backup_active_{false};

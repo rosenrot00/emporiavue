@@ -69,6 +69,10 @@ decisions compare the detected raw integer against the bundled image's raw integ
 `emporia_vue` I2C frame is 284 bytes. Managed firmware also returns `hardware_id`, `firmware_version`, and frame length
 through the same I2C diagnostic command that reports runtime counters. The SWD flash footer remains separate on purpose,
 so the ESP32 can still identify managed firmware when I2C is unavailable.
+By default the component only reads this SWD footer at boot and updates the status/version entities. Set
+`auto_update_samd: true` to let the component automatically install the bundled managed image when the SAMD is still on
+stock firmware or when a matching managed firmware is older than the bundled image. The automatic path does not overwrite
+a managed image with a different hardware id.
 Because Home Assistant buttons cannot be disabled dynamically by an external component, use `SAMD Firmware Status` as
 the authoritative state. The update and restore buttons exit without writing if their action is not applicable, no
 bundled image is compiled in, or no valid backup is present.

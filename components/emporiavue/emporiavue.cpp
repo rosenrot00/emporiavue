@@ -65,6 +65,7 @@ void EmporiaVueComponent::dump_config() {
                 YESNO(this->bundled_firmware_matches_hardware_()));
   ESP_LOGCONFIG(TAG, "  Init pins on boot: %s", YESNO(this->init_pins_on_boot_));
   ESP_LOGCONFIG(TAG, "  Runtime mode: %s", this->runtime_mode_ == RuntimeMode::SPI ? "spi" : "i2c");
+  ESP_LOGCONFIG(TAG, "  Auto-update SAMD: %s", YESNO(this->auto_update_samd_));
   const char *entity_prefix = this->entity_prefix_.empty() ? "(default)" : this->entity_prefix_.c_str();
   ESP_LOGCONFIG(TAG, "  Entity prefix: %s", entity_prefix);
   LOG_TEXT_SENSOR("  ", "Firmware status", this->firmware_status_sensor_);
@@ -397,11 +398,11 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
   this->publish_status_(std::string(requested_name) + " SAMD firmware");
   this->publish_firmware_status_(str_sprintf("%s flashing 0/%" PRIu32, requested_name, this->install_flash_size_));
   ESP_LOGI(TAG,
-           "SAMD09 firmware %s job started: current_kind=%s, current_version=%" PRIu32
-           ", source_size=%" PRIu32 ", page_size=%" PRIu32 ", row_size=%" PRIu32 ", reason=%s",
+           "SAMD09 firmware %s started: current_kind=%s, current_version=%" PRIu32
+           ", source_size=%" PRIu32 ", reason=%s",
            requested_name,
            current.kind == FirmwareKind::MANAGED ? "managed" : (current.kind == FirmwareKind::STOCK ? "stock" : "unknown"),
-           current.version, source_size, this->install_page_size_, this->install_row_size_, action_reason.c_str());
+           current.version, source_size, action_reason.c_str());
 }
 
 void EmporiaVueComponent::reset_target_() {
@@ -520,7 +521,7 @@ bool EmporiaVueComponent::swd_initialize_(uint32_t *idcode) {
       {"SWJ JTAG-to-SWD 32-bit, odewdney sample", 32, true},
   };
   for (const auto &variant : variants) {
-    ESP_LOGI(TAG, "Trying SAMD09 %s initialization", variant.name);
+    ESP_LOGV(TAG, "Trying SAMD09 %s initialization", variant.name);
     this->last_error_.clear();
     this->sample_before_clock_ = variant.sample_before_clock;
     if (this->connect_under_reset_active_()) {
@@ -1459,6 +1460,20 @@ void EmporiaVueComponent::publish_initial_firmware_detection_() {
   } else {
     this->publish_firmware_status_("stock firmware detected by swd flash check");
   }
+
+  if (!this->auto_update_samd_) {
+    return;
+  }
+
+  std::string auto_update_reason;
+  if (!this->should_auto_update_samd_(info, &auto_update_reason)) {
+    ESP_LOGI(TAG, "SAMD09 auto-update not needed: %s", auto_update_reason.c_str());
+    return;
+  }
+
+  ESP_LOGI(TAG, "SAMD09 auto-update starting: %s", auto_update_reason.c_str());
+  this->publish_firmware_status_("auto update: " + auto_update_reason);
+  this->start_firmware_action_(FirmwareAction::UPDATE_MANAGED);
 }
 
 bool EmporiaVueComponent::detect_current_firmware_by_swd_(FirmwareInfo *info, std::string *error) {
@@ -1513,6 +1528,52 @@ bool EmporiaVueComponent::detect_current_firmware_by_swd_(FirmwareInfo *info, st
   ESP_LOGI(TAG, "SAMD09 SWD firmware detection complete: %s",
            info->kind == FirmwareKind::MANAGED ? "managed footer found" : "no managed footer");
   return true;
+}
+
+bool EmporiaVueComponent::should_auto_update_samd_(const FirmwareInfo &info, std::string *reason) const {
+  auto set_reason = [&](const std::string &message) {
+    if (reason != nullptr) {
+      *reason = message;
+    }
+  };
+
+  if (!this->bundled_firmware_available_()) {
+    set_reason("no bundled firmware image");
+    return false;
+  }
+  if (!this->bundled_firmware_matches_hardware_()) {
+    set_reason(str_sprintf("bundled firmware hw=%" PRIu32 " does not match configured hw=%u",
+                           this->bundled_firmware_hardware_id_(), static_cast<unsigned>(this->hardware_id_)));
+    return false;
+  }
+
+  if (info.kind == FirmwareKind::STOCK) {
+    set_reason(str_sprintf("stock -> managed hw=%" PRIu32 " v%s", this->bundled_firmware_hardware_id_(),
+                           format_firmware_version_(this->bundled_firmware_version_()).c_str()));
+    return true;
+  }
+
+  if (info.kind != FirmwareKind::MANAGED) {
+    set_reason("firmware state is unknown");
+    return false;
+  }
+
+  if (this->hardware_id_ != 0 && info.hardware_id != this->hardware_id_) {
+    set_reason(str_sprintf("managed hw=%u does not match configured hw=%u",
+                           static_cast<unsigned>(info.hardware_id), static_cast<unsigned>(this->hardware_id_)));
+    return false;
+  }
+
+  if (info.version < this->bundled_firmware_version_()) {
+    set_reason(str_sprintf("managed v%s -> v%s", format_firmware_version_(info.version).c_str(),
+                           format_firmware_version_(this->bundled_firmware_version_()).c_str()));
+    return true;
+  }
+
+  set_reason(str_sprintf("managed hw=%u v%s is not older than bundled v%s",
+                         static_cast<unsigned>(info.hardware_id), format_firmware_version_(info.version).c_str(),
+                         format_firmware_version_(this->bundled_firmware_version_()).c_str()));
+  return false;
 }
 
 bool EmporiaVueComponent::detect_managed_firmware_(uint32_t flash_size, bool *managed) {
@@ -1924,8 +1985,6 @@ void EmporiaVueComponent::process_install_() {
   const uint32_t length = std::min<uint32_t>(this->install_page_size_, this->install_flash_size_ - offset);
 
   if ((offset % this->install_row_size_) == 0) {
-    this->publish_firmware_status_(str_sprintf("%s erasing %" PRIu32 "/%" PRIu32, this->install_action_name_(),
-                                               offset, this->install_flash_size_));
     this->install_started_writing_ = true;
     if (!this->erase_flash_row_(address)) {
       this->fail_install_("row erase failed at " + hex32_(address) + ": " + this->last_error_);
@@ -1943,7 +2002,7 @@ void EmporiaVueComponent::process_install_() {
   }
 
   this->install_next_offset_ += length;
-  if ((this->install_next_offset_ % 1024U) == 0 || this->install_next_offset_ >= this->install_flash_size_) {
+  if ((this->install_next_offset_ % 4096U) == 0 || this->install_next_offset_ >= this->install_flash_size_) {
     this->publish_firmware_status_(str_sprintf("%s flashing %" PRIu32 "/%" PRIu32, this->install_action_name_(),
                                                this->install_next_offset_, this->install_flash_size_));
   }
@@ -2034,11 +2093,9 @@ void EmporiaVueComponent::finish_install_success_() {
                     this->bundled_firmware_hardware_id_(),
                     format_firmware_version_(this->bundled_firmware_version_()).c_str()));
     ESP_LOGI(TAG, "SAMD09 managed firmware update complete: hardware_id=%" PRIu32 ", version=%" PRIu32
-                  " (v%s)"
-                  ", size=%" PRIu32 ", sha256=%s",
+                  " (v%s), size=%" PRIu32,
              this->bundled_firmware_hardware_id_(), this->bundled_firmware_version_(),
-             format_firmware_version_(this->bundled_firmware_version_()).c_str(), this->bundled_firmware_size_(),
-             sha256_hex_(BUNDLED_SAMD_FIRMWARE_SHA256).c_str());
+             format_firmware_version_(this->bundled_firmware_version_()).c_str(), this->bundled_firmware_size_());
     if (this->runtime_mode_ == RuntimeMode::I2C) {
       this->set_timeout("post_update_i2c_probe", 1000, [this]() { this->probe_runtime_i2c_after_firmware_update_(); });
     } else {
