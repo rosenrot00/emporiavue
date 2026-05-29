@@ -25,14 +25,41 @@ emporiavue:
       voltage_input: BLACK
       main_clamp: A
       calibration: 0.022
+      voltage:
+        id: new_phase_a_voltage
+        name: "NEW_Phase A Voltage"
+      frequency:
+        id: new_phase_a_frequency
+        name: "NEW_Phase A Frequency"
+      power:
+        id: new_phase_a_power
+        name: "NEW_Phase A Power"
     line_2:
       voltage_input: RED
       main_clamp: B
       calibration: 0.022
+      voltage:
+        id: new_phase_b_voltage
+        name: "NEW_Phase B Voltage"
+      phase_angle:
+        id: new_phase_b_phase_angle
+        name: "NEW_Phase B Phase Angle"
+      power:
+        id: new_phase_b_power
+        name: "NEW_Phase B Power"
     line_3:
       voltage_input: BLUE
       main_clamp: C
       calibration: 0.022
+      voltage:
+        id: new_phase_c_voltage
+        name: "NEW_Phase C Voltage"
+      phase_angle:
+        id: new_phase_c_phase_angle
+        name: "NEW_Phase C Phase Angle"
+      power:
+        id: new_phase_c_power
+        name: "NEW_Phase C Power"
   backup_partition: samd_bak
   connect_under_reset: true
 
