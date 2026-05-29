@@ -182,8 +182,8 @@ emporiavue:
 The repository currently includes `packages/vue2-i2c.yaml` and the explicit
 `packages/vue2-i2c-three-phase.yaml` preset. They set `hardware: vue2` and `mode: i2c`, add a 64 KiB `samd_bak`
 data partition, and enable the firmware version entities plus the backup, update, and restore buttons. They also
-enable a slow `metering_interval: 10s` I2C read path that decodes the stock-compatible frame into the component's
-internal metering frame without replacing the existing `emporia_vue` sensors. The transport is explicit in the filename
+use the component's default `metering_interval: 200ms` I2C read path that decodes the stock-compatible frame into the
+component's internal metering frame. The transport is explicit in the filename
 so a future SPI transport can live next to it as `packages/vue2-spi.yaml`.
 
 The three-phase preset creates Home Assistant configuration numbers for the main voltage calibration values. The initial

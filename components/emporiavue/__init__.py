@@ -834,7 +834,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_ENTITY_PREFIX): cv.string_strict,
         cv.Optional(CONF_AUTO_UPDATE_SAMD, default=False): cv.boolean,
         cv.Optional(CONF_DIAGNOSTICS_INTERVAL): cv.positive_time_period_milliseconds,
-        cv.Optional(CONF_METERING_INTERVAL): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_METERING_INTERVAL, default="200ms"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_GRID_DEADBAND, default=2.0): cv.positive_float,
         cv.Optional(CONF_TOTAL_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_RAW_TOTAL_POWER): POWER_SENSOR_SCHEMA,
@@ -1002,8 +1002,7 @@ async def to_code(config):
     cg.add(var.set_auto_update_samd(config[CONF_AUTO_UPDATE_SAMD]))
     if diagnostics_interval := config.get(CONF_DIAGNOSTICS_INTERVAL):
         cg.add(var.set_diagnostics_interval(diagnostics_interval))
-    if metering_interval := config.get(CONF_METERING_INTERVAL):
-        cg.add(var.set_metering_interval(metering_interval))
+    cg.add(var.set_metering_interval(config[CONF_METERING_INTERVAL]))
     cg.add(var.set_grid_deadband(config[CONF_GRID_DEADBAND]))
     cg.add(var.set_backup_partition_name(config[CONF_BACKUP_PARTITION]))
     if raw_total_power_config := config.get(CONF_RAW_TOTAL_POWER):
