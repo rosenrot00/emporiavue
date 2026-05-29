@@ -96,6 +96,7 @@ CONF_CLOCK_DELAY = "clock_delay"
 CONF_RETRY_COUNT = "retry_count"
 CONF_INIT_PINS_ON_BOOT = "init_pins_on_boot"
 CONF_MODE = "mode"
+CONF_ENTITY_PREFIX = "entity_prefix"
 
 HARDWARE_CUSTOM = "custom"
 HARDWARE_VUE2 = "vue2"
@@ -150,6 +151,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_RETRY_COUNT, default=40): cv.int_range(min=1, max=255),
         cv.Optional(CONF_INIT_PINS_ON_BOOT, default=False): cv.boolean,
         cv.Optional(CONF_MODE, default=MODE_I2C): cv.one_of(MODE_I2C, MODE_SPI, lower=True),
+        cv.Optional(CONF_ENTITY_PREFIX, default=""): cv.string_strict,
         cv.Optional(CONF_BACKUP_PARTITION, default="samd_bak"): cv.string_strict,
         cv.Optional(CONF_ALLOW_SAMD_WRITE, default=False): cv.boolean,
         cv.Optional(CONF_REQUIRE_BACKUP_BEFORE_INSTALL, default=True): cv.boolean,
@@ -398,6 +400,7 @@ async def to_code(config):
     cg.add(var.set_retry_count(config[CONF_RETRY_COUNT]))
     cg.add(var.set_init_pins_on_boot(config[CONF_INIT_PINS_ON_BOOT]))
     cg.add(var.set_runtime_mode(MODE_IDS[config[CONF_MODE]]))
+    cg.add(var.set_entity_prefix(config[CONF_ENTITY_PREFIX]))
     cg.add(var.set_dump_start_address(config[CONF_DUMP_START_ADDRESS]))
     cg.add(var.set_dump_block_size(config[CONF_DUMP_BLOCK_SIZE]))
     cg.add(var.set_dump_block_count(config[CONF_DUMP_BLOCK_COUNT]))
