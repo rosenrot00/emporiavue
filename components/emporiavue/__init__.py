@@ -41,7 +41,6 @@ CONF_DIAG_I2C_PARTIAL_READS = "diag_i2c_partial_reads"
 CONF_DIAG_I2C_OVERSIZE_READS = "diag_i2c_oversize_reads"
 CONF_DIAG_LAST_SAMPLE_COUNT = "diag_last_sample_count"
 CONF_DIAG_LAST_I2C_READ_LEN = "diag_last_i2c_read_len"
-CONF_FIRMWARE_STATUS = "firmware_status"
 CONF_FIRMWARE_VERSION = "firmware_version"
 CONF_BUNDLED_FIRMWARE_VERSION = "bundled_firmware_version"
 CONF_BACKUP_PARTITION = "backup_partition"
@@ -76,7 +75,6 @@ MODE_IDS = {
 }
 
 DEFAULT_ENTITY_NAMES = {
-    CONF_FIRMWARE_STATUS: "SAMD Firmware Status",
     CONF_FIRMWARE_VERSION: "SAMD Firmware Version",
     CONF_BUNDLED_FIRMWARE_VERSION: "SAMD Bundled Firmware Version",
     CONF_DIAG_SAMPLE_BLOCKS: "SAMD Sample Blocks",
@@ -167,13 +165,6 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_ENTITY_PREFIX): cv.string_strict,
         cv.Optional(CONF_AUTO_UPDATE_SAMD, default=False): cv.boolean,
         cv.Optional(CONF_BACKUP_PARTITION, default="samd_bak"): cv.string_strict,
-        cv.Optional(
-            CONF_FIRMWARE_STATUS,
-            default={CONF_NAME: "SAMD Firmware Status"},
-        ): text_sensor.text_sensor_schema(
-            icon="mdi:chip",
-            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
-        ),
         cv.Optional(
             CONF_FIRMWARE_VERSION,
             default={CONF_NAME: "SAMD Firmware Version"},
@@ -316,9 +307,6 @@ async def to_code(config):
     cg.add(var.set_entity_prefix(config.get(CONF_ENTITY_PREFIX, "")))
     cg.add(var.set_auto_update_samd(config[CONF_AUTO_UPDATE_SAMD]))
     cg.add(var.set_backup_partition_name(config[CONF_BACKUP_PARTITION]))
-    if firmware_status_config := config.get(CONF_FIRMWARE_STATUS):
-        sens = await text_sensor.new_text_sensor(firmware_status_config)
-        cg.add(var.set_firmware_status_sensor(sens))
     if firmware_version_config := config.get(CONF_FIRMWARE_VERSION):
         sens = await text_sensor.new_text_sensor(firmware_version_config)
         cg.add(var.set_firmware_version_sensor(sens))

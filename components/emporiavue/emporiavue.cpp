@@ -65,7 +65,6 @@ void EmporiaVueComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Auto-update SAMD: %s", YESNO(this->auto_update_samd_));
   const char *entity_prefix = this->entity_prefix_.empty() ? "(default)" : this->entity_prefix_.c_str();
   ESP_LOGCONFIG(TAG, "  Entity prefix: %s", entity_prefix);
-  LOG_TEXT_SENSOR("  ", "Firmware status", this->firmware_status_sensor_);
   LOG_TEXT_SENSOR("  ", "Firmware version", this->firmware_version_sensor_);
   LOG_TEXT_SENSOR("  ", "Bundled firmware version", this->bundled_firmware_version_sensor_);
 }
@@ -609,11 +608,7 @@ void EmporiaVueComponent::set_error_(const std::string &error) {
 
 void EmporiaVueComponent::publish_status_(const std::string &) {}
 
-void EmporiaVueComponent::publish_firmware_status_(const std::string &status) {
-  if (this->firmware_status_sensor_ != nullptr) {
-    this->firmware_status_sensor_->publish_state(status);
-  }
-}
+void EmporiaVueComponent::publish_firmware_status_(const std::string &) {}
 
 void EmporiaVueComponent::publish_firmware_version_(const FirmwareInfo &info) {
   if (this->firmware_version_sensor_ == nullptr) {

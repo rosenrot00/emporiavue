@@ -22,8 +22,6 @@ emporiavue:
   backup_partition: samd_bak
   connect_under_reset: true
 
-  firmware_status:
-    name: "SAMD Firmware Status"
   firmware_version:
     name: "SAMD Firmware Version"
   bundled_firmware_version:
