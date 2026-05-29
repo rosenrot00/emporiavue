@@ -95,16 +95,13 @@ CONF_GRID_DEADBAND = "grid_deadband"
 CONF_TOTAL_POWER = "total_power"
 CONF_GRID_IMPORT_POWER = "grid_import_power"
 CONF_GRID_EXPORT_POWER = "grid_export_power"
-CONF_BALANCE_POWER = "balance_power"
 CONF_RAW_POWER = "raw_power"
 CONF_RAW_TOTAL_POWER = "raw_total_power"
 CONF_RAW_GRID_IMPORT_POWER = "raw_grid_import_power"
 CONF_RAW_GRID_EXPORT_POWER = "raw_grid_export_power"
-CONF_RAW_BALANCE_POWER = "raw_balance_power"
 CONF_MAINS = "mains"
 CONF_CIRCUITS = "circuits"
 CONF_GROUPS = "groups"
-CONF_BALANCE_CIRCUITS = "balance_circuits"
 CONF_LINE = "line"
 CONF_PHASE_ID = "phase_id"
 CONF_CALIBRATION_NUMBER = "calibration_number"
@@ -333,6 +330,24 @@ def _split_power_sensor_config(parent_config, raw_id):
     return parent_config
 
 
+def _parse_group_source(source):
+    if not isinstance(source, str):
+        raise cv.Invalid("Group source must be a string")
+
+    sign = 1.0
+    source = source.strip()
+    if not source:
+        raise cv.Invalid("Group source must not be empty")
+    if source[0] in "+-":
+        if source[0] == "-":
+            sign = -1.0
+        source = source[1:].strip()
+    if not source:
+        raise cv.Invalid("Group source sign needs a source name")
+
+    return sign, source
+
+
 def _split_top_power_sensor_config(config, visible_key, raw_key, raw_id):
     power_config = config.get(visible_key)
     if power_config is None:
@@ -372,9 +387,6 @@ def _apply_raw_power_defaults(config):
     )
     config = _split_top_power_sensor_config(
         config, CONF_GRID_EXPORT_POWER, CONF_RAW_GRID_EXPORT_POWER, "grid_export_w"
-    )
-    config = _split_top_power_sensor_config(
-        config, CONF_BALANCE_POWER, CONF_RAW_BALANCE_POWER, CONF_BALANCE_POWER
     )
 
     if CONF_MAINS in config and isinstance(config[CONF_MAINS], dict):
@@ -761,11 +773,12 @@ def _validate_groups(value):
     groups = cv.Schema({cv.string_strict: METERING_GROUP_SCHEMA})(value)
 
     for group_key, group_config in groups.items():
-        circuits = group_config[CONF_CIRCUITS]
-        if not circuits:
-            raise cv.Invalid("Group needs at least one circuit", path=[group_key, CONF_CIRCUITS])
-        if len(circuits) != len(set(circuits)):
-            raise cv.Invalid("Group circuit entries must be unique", path=[group_key, CONF_CIRCUITS])
+        sources = group_config[CONF_CIRCUITS]
+        if not sources:
+            raise cv.Invalid("Group needs at least one source", path=[group_key, CONF_CIRCUITS])
+        parsed_sources = [_parse_group_source(source)[1] for source in sources]
+        if len(parsed_sources) != len(set(parsed_sources)):
+            raise cv.Invalid("Group sources must be unique", path=[group_key, CONF_CIRCUITS])
 
     return groups
 
@@ -782,17 +795,14 @@ def _validate_metering_topology(config):
             )
 
     for group_key, group_config in config.get(CONF_GROUPS, {}).items():
-        for circuit_key in group_config[CONF_CIRCUITS]:
-            if circuit_key not in circuits:
+        for source in group_config[CONF_CIRCUITS]:
+            _, source_key = _parse_group_source(source)
+            if source_key == CONF_TOTAL_POWER:
+                continue
+            if source_key not in circuits:
                 raise cv.Invalid(
-                    f"groups.{group_key}.circuits references {circuit_key}, but circuits.{circuit_key} is not configured"
+                    f"groups.{group_key}.circuits references {source_key}, but circuits.{source_key} is not configured"
                 )
-
-    for circuit_key in config.get(CONF_BALANCE_CIRCUITS, []):
-        if circuit_key not in circuits:
-            raise cv.Invalid(
-                f"balance_circuits references {circuit_key}, but circuits.{circuit_key} is not configured"
-            )
 
     return config
 
@@ -839,9 +849,6 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_RAW_GRID_IMPORT_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_GRID_EXPORT_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_RAW_GRID_EXPORT_POWER): POWER_SENSOR_SCHEMA,
-        cv.Optional(CONF_BALANCE_POWER): POWER_SENSOR_SCHEMA,
-        cv.Optional(CONF_RAW_BALANCE_POWER): POWER_SENSOR_SCHEMA,
-        cv.Optional(CONF_BALANCE_CIRCUITS): cv.ensure_list(cv.string_strict),
         cv.Optional(CONF_MAINS): _validate_mains,
         cv.Optional(CONF_CIRCUITS): _validate_circuits,
         cv.Optional(CONF_GROUPS): _validate_groups,
@@ -1036,12 +1043,6 @@ async def to_code(config):
     if grid_export_power_config := config.get(CONF_GRID_EXPORT_POWER):
         sens = await sensor.new_sensor(grid_export_power_config)
         cg.add(var.set_grid_export_power_sensor(sens))
-    if raw_balance_power_config := config.get(CONF_RAW_BALANCE_POWER):
-        sens = await sensor.new_sensor(raw_balance_power_config)
-        cg.add(var.set_raw_balance_power_sensor(sens))
-    if balance_power_config := config.get(CONF_BALANCE_POWER):
-        sens = await sensor.new_sensor(balance_power_config)
-        cg.add(var.set_balance_power_sensor(sens))
     if firmware_version_config := config.get(CONF_FIRMWARE_VERSION):
         sens = await text_sensor.new_text_sensor(firmware_version_config)
         cg.add(var.set_firmware_version_sensor(sens))
@@ -1139,11 +1140,6 @@ async def to_code(config):
         ct_clamps.append(ct_clamp_var)
         circuit_ct_clamps_by_key[circuit_key] = ct_clamp_var
 
-    if config.get(CONF_RAW_BALANCE_POWER) or config.get(CONF_BALANCE_POWER):
-        balance_circuit_keys = config.get(CONF_BALANCE_CIRCUITS) or list(config.get(CONF_CIRCUITS, {}).keys())
-        balance_ct_clamps = [circuit_ct_clamps_by_key[circuit_key] for circuit_key in balance_circuit_keys]
-        cg.add(var.set_balance_ct_clamps(balance_ct_clamps))
-
     for phase_config in config.get(CONF_PHASES, []):
         phase_var = cg.new_Pvariable(phase_config[CONF_ID], MeteringPhaseConfig())
         cg.add(phase_var.set_input_wire(PHASE_INPUTS[phase_config[CONF_INPUT]]))
@@ -1198,10 +1194,12 @@ async def to_code(config):
     groups = []
     for group_config in config.get(CONF_GROUPS, {}).values():
         group_var = cg.new_Pvariable(group_config[CONF_ID], MeteringGroupConfig())
-        group_ct_clamps = [
-            circuit_ct_clamps_by_key[circuit_key] for circuit_key in group_config[CONF_CIRCUITS]
-        ]
-        cg.add(group_var.set_ct_clamps(group_ct_clamps))
+        for source in group_config[CONF_CIRCUITS]:
+            sign, source_key = _parse_group_source(source)
+            if source_key == CONF_TOTAL_POWER:
+                cg.add(group_var.add_total_power_term(sign))
+            else:
+                cg.add(group_var.add_ct_clamp_term(circuit_ct_clamps_by_key[source_key], sign))
         await _add_internal_power_filters(group_var, group_config.get(CONF_FILTERS))
         if raw_power_config := group_config.get(CONF_RAW_POWER):
             sens = await sensor.new_sensor(raw_power_config)

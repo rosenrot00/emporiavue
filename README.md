@@ -257,12 +257,18 @@ emporiavue:
         name: "Vue2 Metering Circuit 1 Power"
         filters:
           - throttle_average: 5s
-  balance_power:
-    name: "Balance Power"
+  groups:
+    balance_power:
+      circuits: [total_power, -cir1, -cir2, -cir3]
+      filters:
+        - lambda: |-
+            return x > 0.0f ? x : 0.0f;
+      power:
+        name: "Balance Power"
 ```
 
-`balance_power` publishes the unmonitored remainder as `max(0, total_power - sum(balance_circuits))`. If
-`balance_circuits` is omitted, all configured `circuits` are used.
+Groups can sum and subtract sources. `circuits: [total_power, -cir1, -cir2]` publishes the unmonitored remainder as
+`max(0, total_power - cir1 - cir2)`.
 Filters directly under `mains`, `circuits`, `ct_clamps`, or `groups` are internal measurement corrections and feed
 energy, groups, and balance calculations. Filters under `power` only affect the Home Assistant display sensor.
 
