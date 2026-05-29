@@ -15,9 +15,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace esphome {
 namespace emporiavue {
+
+class MeteringPhaseConfig;
+class MeteringCTClampConfig;
 
 class EmporiaVueComponent : public Component, public i2c::I2CDevice {
  public:
@@ -50,6 +55,13 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void set_auto_update_samd(bool auto_update_samd) { this->auto_update_samd_ = auto_update_samd; }
   void set_diagnostics_interval(uint32_t diagnostics_interval_ms) {
     this->diagnostics_interval_ms_ = diagnostics_interval_ms;
+  }
+  void set_metering_interval(uint32_t metering_interval_ms) { this->metering_interval_ms_ = metering_interval_ms; }
+  void set_metering_phases(std::vector<MeteringPhaseConfig *> phases) {
+    this->metering_phases_ = std::move(phases);
+  }
+  void set_metering_ct_clamps(std::vector<MeteringCTClampConfig *> ct_clamps) {
+    this->metering_ct_clamps_ = std::move(ct_clamps);
   }
   void set_backup_partition_name(const std::string &backup_partition_name) {
     this->backup_partition_name_ = backup_partition_name;
@@ -231,6 +243,44 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
     uint32_t crc32;
   } __attribute__((packed));
 
+  struct I2CPowerEntry {
+    int32_t phase[3];
+  } __attribute__((packed));
+
+  struct I2CMeteringPacket {
+    uint8_t is_unread;
+    uint8_t checksum;
+    uint8_t unknown;
+    uint8_t sequence_num;
+    I2CPowerEntry power[19];
+    uint16_t voltage[3];
+    uint16_t cycle_count[3];
+    uint16_t current[19];
+    uint16_t end;
+  } __attribute__((packed));
+
+  struct MeteringPhase {
+    uint16_t voltage_raw{0};
+    uint16_t cycle_count_raw{0};
+    uint8_t quality_flags{0};
+  };
+
+  struct MeteringClamp {
+    uint16_t current_raw{0};
+    int32_t power_raw_by_phase[3]{};
+    uint8_t quality_flags{0};
+  };
+
+  struct MeteringFrame {
+    uint16_t schema_version{1};
+    uint32_t sequence{0};
+    uint32_t timestamp_ms{0};
+    bool valid{false};
+    uint8_t quality_flags{0};
+    MeteringPhase phases[3]{};
+    MeteringClamp clamps[19]{};
+  };
+
   enum MemSize : uint8_t {
     MEM_SIZE_BYTE = 0,
     MEM_SIZE_HALFWORD = 1,
@@ -369,6 +419,12 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void publish_i2c_diagnostics_(const ManagedI2CDiagnostic &diagnostic);
   void start_i2c_diagnostics_();
   void stop_i2c_diagnostics_();
+  bool read_i2c_metering_frame_(MeteringFrame *frame);
+  bool decode_i2c_metering_packet_(const I2CMeteringPacket &packet, MeteringFrame *frame) const;
+  void publish_metering_frame_(const MeteringFrame &frame);
+  void refresh_metering_();
+  void start_metering_();
+  void stop_metering_();
   bool firmware_mode_matches_runtime_() const;
   void publish_firmware_mode_mismatch_();
   void probe_runtime_i2c_after_firmware_update_();
@@ -434,6 +490,13 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   bool auto_update_samd_{false};
   uint32_t diagnostics_interval_ms_{0};
   bool diagnostics_started_{false};
+  uint32_t metering_interval_ms_{0};
+  bool metering_started_{false};
+  uint8_t last_metering_sequence_{0};
+  bool last_metering_sequence_valid_{false};
+  MeteringFrame last_metering_frame_{};
+  std::vector<MeteringPhaseConfig *> metering_phases_{};
+  std::vector<MeteringCTClampConfig *> metering_ct_clamps_{};
   std::string backup_partition_name_{"samd_bak"};
   const esp_partition_t *backup_partition_{nullptr};
   bool backup_active_{false};
@@ -473,6 +536,45 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   uint8_t selected_ap_bank_{0};
   uint32_t cached_csw_{0xFFFFFFFFUL};
   std::string last_error_;
+};
+
+class MeteringPhaseConfig {
+ public:
+  void set_input_wire(uint8_t input_wire) { this->input_wire_ = input_wire; }
+  uint8_t get_input_wire() const { return this->input_wire_; }
+  void set_calibration(float calibration) { this->calibration_ = calibration; }
+  float get_calibration() const { return this->calibration_; }
+  void set_voltage_sensor(sensor::Sensor *sensor) { this->voltage_sensor_ = sensor; }
+  sensor::Sensor *get_voltage_sensor() const { return this->voltage_sensor_; }
+  void set_frequency_sensor(sensor::Sensor *sensor) { this->frequency_sensor_ = sensor; }
+  sensor::Sensor *get_frequency_sensor() const { return this->frequency_sensor_; }
+  void set_phase_angle_sensor(sensor::Sensor *sensor) { this->phase_angle_sensor_ = sensor; }
+  sensor::Sensor *get_phase_angle_sensor() const { return this->phase_angle_sensor_; }
+
+ protected:
+  uint8_t input_wire_{0};
+  float calibration_{0.022f};
+  sensor::Sensor *voltage_sensor_{nullptr};
+  sensor::Sensor *frequency_sensor_{nullptr};
+  sensor::Sensor *phase_angle_sensor_{nullptr};
+};
+
+class MeteringCTClampConfig {
+ public:
+  void set_phase(MeteringPhaseConfig *phase) { this->phase_ = phase; }
+  const MeteringPhaseConfig *get_phase() const { return this->phase_; }
+  void set_input_port(uint8_t input_port) { this->input_port_ = input_port; }
+  uint8_t get_input_port() const { return this->input_port_; }
+  void set_power_sensor(sensor::Sensor *sensor) { this->power_sensor_ = sensor; }
+  sensor::Sensor *get_power_sensor() const { return this->power_sensor_; }
+  void set_current_sensor(sensor::Sensor *sensor) { this->current_sensor_ = sensor; }
+  sensor::Sensor *get_current_sensor() const { return this->current_sensor_; }
+
+ protected:
+  MeteringPhaseConfig *phase_{nullptr};
+  uint8_t input_port_{0};
+  sensor::Sensor *power_sensor_{nullptr};
+  sensor::Sensor *current_sensor_{nullptr};
 };
 
 class EmporiaVueBackupFirmwareButton : public button::Button, public Parented<EmporiaVueComponent> {

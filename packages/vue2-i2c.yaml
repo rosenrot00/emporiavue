@@ -19,6 +19,7 @@ emporiavue:
   id: samd_reader
   hardware: vue2
   mode: i2c
+  metering_interval: 10s
   backup_partition: samd_bak
   connect_under_reset: true
 

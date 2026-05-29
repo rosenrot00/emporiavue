@@ -12,6 +12,8 @@ namespace esphome {
 namespace emporiavue {
 
 static const char *const TAG = "emporiavue";
+static constexpr float VUE2_FREQUENCY_CONSTANT = 25310.0f;
+static constexpr float VUE3_FREQUENCY_CONSTANT = 19610.0f;
 
 void EmporiaVueComponent::setup() {
   this->perform_boot_reset_();
@@ -24,6 +26,7 @@ void EmporiaVueComponent::setup() {
   this->publish_initial_firmware_detection_();
   if (!this->install_active_) {
     this->start_i2c_diagnostics_();
+    this->start_metering_();
   }
 }
 
@@ -73,10 +76,29 @@ void EmporiaVueComponent::dump_config() {
   } else {
     ESP_LOGCONFIG(TAG, "  Diagnostics interval: %" PRIu32 " ms", this->diagnostics_interval_ms_);
   }
+  if (this->metering_interval_ms_ == 0) {
+    ESP_LOGCONFIG(TAG, "  Metering interval: disabled");
+  } else {
+    ESP_LOGCONFIG(TAG, "  Metering interval: %" PRIu32 " ms", this->metering_interval_ms_);
+  }
   const char *entity_prefix = this->entity_prefix_.empty() ? "(default)" : this->entity_prefix_.c_str();
   ESP_LOGCONFIG(TAG, "  Entity prefix: %s", entity_prefix);
   LOG_TEXT_SENSOR("  ", "Firmware version", this->firmware_version_sensor_);
   LOG_TEXT_SENSOR("  ", "Bundled firmware version", this->bundled_firmware_version_sensor_);
+  for (auto *phase : this->metering_phases_) {
+    ESP_LOGCONFIG(TAG, "  Metering phase");
+    ESP_LOGCONFIG(TAG, "    Input: %u", static_cast<unsigned>(phase->get_input_wire()));
+    ESP_LOGCONFIG(TAG, "    Calibration: %.6f", phase->get_calibration());
+    LOG_SENSOR("    ", "Voltage", phase->get_voltage_sensor());
+    LOG_SENSOR("    ", "Frequency", phase->get_frequency_sensor());
+    LOG_SENSOR("    ", "Phase angle", phase->get_phase_angle_sensor());
+  }
+  for (auto *ct_clamp : this->metering_ct_clamps_) {
+    ESP_LOGCONFIG(TAG, "  Metering CT clamp");
+    ESP_LOGCONFIG(TAG, "    Input port: %u", static_cast<unsigned>(ct_clamp->get_input_port()));
+    LOG_SENSOR("    ", "Power", ct_clamp->get_power_sensor());
+    LOG_SENSOR("    ", "Current", ct_clamp->get_current_sensor());
+  }
 }
 
 void EmporiaVueComponent::backup_firmware() {
@@ -111,6 +133,7 @@ void EmporiaVueComponent::backup_firmware() {
   }
 
   this->stop_i2c_diagnostics_();
+  this->stop_metering_();
   this->prepare_pins_();
   this->begin_swd_session_();
 
@@ -119,6 +142,7 @@ void EmporiaVueComponent::backup_firmware() {
     this->finish_swd_session_();
     this->release_pins_();
     this->start_i2c_diagnostics_();
+    this->start_metering_();
     ESP_LOGW(TAG, "SAMD09 firmware backup failed: %s", this->last_error_.c_str());
     return;
   }
@@ -127,6 +151,7 @@ void EmporiaVueComponent::backup_firmware() {
     this->finish_swd_session_();
     this->release_pins_();
     this->start_i2c_diagnostics_();
+    this->start_metering_();
     ESP_LOGW(TAG, "SAMD09 firmware backup failed: %s", this->last_error_.c_str());
     return;
   }
@@ -135,6 +160,7 @@ void EmporiaVueComponent::backup_firmware() {
   if (!this->verify_mem_ap_()) {
     this->release_pins_();
     this->start_i2c_diagnostics_();
+    this->start_metering_();
     ESP_LOGW(TAG, "SAMD09 firmware backup failed: %s", this->last_error_.c_str());
     return;
   }
@@ -142,6 +168,7 @@ void EmporiaVueComponent::backup_firmware() {
   if (!this->halt_core_()) {
     this->release_pins_();
     this->start_i2c_diagnostics_();
+    this->start_metering_();
     ESP_LOGW(TAG, "SAMD09 firmware backup failed while halting core: %s", this->last_error_.c_str());
     return;
   }
@@ -251,6 +278,7 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
   }
 
   this->stop_i2c_diagnostics_();
+  this->stop_metering_();
   bool core_halted = false;
   auto release_after_check = [&]() {
     if (core_halted) {
@@ -263,6 +291,7 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
     }
     this->release_pins_();
     this->start_i2c_diagnostics_();
+    this->start_metering_();
   };
 
   this->prepare_pins_();
@@ -1422,6 +1451,151 @@ void EmporiaVueComponent::stop_i2c_diagnostics_() {
   this->diagnostics_started_ = false;
 }
 
+bool EmporiaVueComponent::read_i2c_metering_frame_(MeteringFrame *frame) {
+  static_assert(sizeof(I2CMeteringPacket) == STOCK_I2C_FRAME_SIZE, "I2C metering packet size changed");
+
+  I2CMeteringPacket packet{};
+  const i2c::ErrorCode error = this->read(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
+  if (error != i2c::ERROR_OK) {
+    ESP_LOGD(TAG, "SAMD09 metering I2C read failed: i2c error %u", static_cast<unsigned>(error));
+    return false;
+  }
+  return this->decode_i2c_metering_packet_(packet, frame);
+}
+
+bool EmporiaVueComponent::decode_i2c_metering_packet_(const I2CMeteringPacket &packet, MeteringFrame *frame) const {
+  if (packet.end != 0) {
+    ESP_LOGD(TAG, "SAMD09 metering I2C packet malformed: end=0x%04x", packet.end);
+    return false;
+  }
+  if (packet.unknown != 0x52) {
+    ESP_LOGD(TAG, "SAMD09 metering I2C packet malformed: marker=0x%02x", packet.unknown);
+    return false;
+  }
+
+  MeteringFrame candidate{};
+  candidate.schema_version = 1;
+  candidate.sequence = packet.sequence_num;
+  candidate.timestamp_ms = millis();
+  candidate.valid = true;
+  if (packet.is_unread == 0) {
+    candidate.quality_flags |= 0x01;
+  }
+
+  for (uint8_t phase = 0; phase < 3; phase++) {
+    candidate.phases[phase].voltage_raw = packet.voltage[phase];
+    candidate.phases[phase].cycle_count_raw = packet.cycle_count[phase];
+  }
+  for (uint8_t clamp = 0; clamp < 19; clamp++) {
+    candidate.clamps[clamp].current_raw = packet.current[clamp];
+    for (uint8_t phase = 0; phase < 3; phase++) {
+      candidate.clamps[clamp].power_raw_by_phase[phase] = packet.power[clamp].phase[phase];
+    }
+  }
+
+  *frame = candidate;
+  return true;
+}
+
+void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
+  if (!frame.valid) {
+    return;
+  }
+
+  const float frequency_constant = this->hardware_id_ == 3 ? VUE3_FREQUENCY_CONSTANT : VUE2_FREQUENCY_CONSTANT;
+  const uint16_t raw_frequency = frame.phases[0].cycle_count_raw;
+
+  for (auto *phase : this->metering_phases_) {
+    const uint8_t input = phase->get_input_wire();
+    if (input >= 3) {
+      continue;
+    }
+
+    if (phase->get_voltage_sensor() != nullptr) {
+      phase->get_voltage_sensor()->publish_state(frame.phases[input].voltage_raw * phase->get_calibration());
+    }
+    if (phase->get_frequency_sensor() != nullptr && raw_frequency != 0) {
+      phase->get_frequency_sensor()->publish_state(frequency_constant / static_cast<float>(raw_frequency));
+    }
+    if (phase->get_phase_angle_sensor() != nullptr && input > 0 && raw_frequency != 0) {
+      phase->get_phase_angle_sensor()->publish_state(
+          frame.phases[input].cycle_count_raw * 360.0f / static_cast<float>(raw_frequency));
+    }
+  }
+
+  for (auto *ct_clamp : this->metering_ct_clamps_) {
+    const uint8_t port = ct_clamp->get_input_port();
+    const MeteringPhaseConfig *phase = ct_clamp->get_phase();
+    if (port >= 19 || phase == nullptr || phase->get_input_wire() >= 3) {
+      continue;
+    }
+
+    if (ct_clamp->get_power_sensor() != nullptr) {
+      const int32_t raw_power = frame.clamps[port].power_raw_by_phase[phase->get_input_wire()];
+      const float correction_factor = port < 3 ? 5.5f : 22.0f;
+      ct_clamp->get_power_sensor()->publish_state(raw_power * phase->get_calibration() / correction_factor);
+    }
+    if (ct_clamp->get_current_sensor() != nullptr) {
+      const float scalar = port < 3 ? (775.0f / 42624.0f) : (775.0f / 170496.0f);
+      ct_clamp->get_current_sensor()->publish_state(frame.clamps[port].current_raw * scalar);
+    }
+  }
+}
+
+void EmporiaVueComponent::refresh_metering_() {
+  if (this->backup_active_ || this->install_active_) {
+    return;
+  }
+  if (this->runtime_mode_ != RuntimeMode::I2C) {
+    return;
+  }
+  if (!this->firmware_mode_matches_runtime_()) {
+    this->publish_firmware_mode_mismatch_();
+    return;
+  }
+
+  MeteringFrame frame{};
+  if (!this->read_i2c_metering_frame_(&frame)) {
+    return;
+  }
+
+  if (this->last_metering_sequence_valid_ &&
+      static_cast<uint8_t>(frame.sequence - this->last_metering_sequence_) > 1) {
+    ESP_LOGD(TAG, "SAMD09 metering skipped %u frame(s)",
+             static_cast<unsigned>(static_cast<uint8_t>(frame.sequence - this->last_metering_sequence_ - 1)));
+  }
+  this->last_metering_sequence_ = static_cast<uint8_t>(frame.sequence);
+  this->last_metering_sequence_valid_ = true;
+  this->last_metering_frame_ = frame;
+
+  ESP_LOGD(TAG, "SAMD09 metering frame: seq=%" PRIu32 ", flags=0x%02x", frame.sequence, frame.quality_flags);
+  this->publish_metering_frame_(frame);
+}
+
+void EmporiaVueComponent::start_metering_() {
+  if (this->metering_started_) {
+    return;
+  }
+  if (this->metering_interval_ms_ == 0 || this->runtime_mode_ != RuntimeMode::I2C) {
+    return;
+  }
+  if (!this->firmware_mode_matches_runtime_()) {
+    this->publish_firmware_mode_mismatch_();
+    return;
+  }
+
+  this->metering_started_ = true;
+  this->set_interval("samd_i2c_metering", this->metering_interval_ms_, [this]() { this->refresh_metering_(); });
+}
+
+void EmporiaVueComponent::stop_metering_() {
+  if (!this->metering_started_) {
+    return;
+  }
+  this->cancel_interval("samd_i2c_metering");
+  this->metering_started_ = false;
+}
+
 bool EmporiaVueComponent::firmware_mode_matches_runtime_() const {
   return !this->detected_firmware_info_valid_ || this->detected_firmware_info_.kind != FirmwareKind::MANAGED ||
          this->detected_firmware_info_.mode_id == this->expected_firmware_mode_id_();
@@ -1450,6 +1624,7 @@ void EmporiaVueComponent::probe_runtime_i2c_after_firmware_update_() {
              static_cast<unsigned>(info_result));
   }
   this->start_i2c_diagnostics_();
+  this->start_metering_();
 }
 
 void EmporiaVueComponent::publish_initial_firmware_detection_() {
@@ -2130,6 +2305,7 @@ void EmporiaVueComponent::fail_install_(const std::string &error) {
   this->release_pins_();
   if (!flash_may_be_partial) {
     this->start_i2c_diagnostics_();
+    this->start_metering_();
   }
 }
 
@@ -2206,9 +2382,11 @@ void EmporiaVueComponent::finish_install_success_() {
       this->set_timeout("post_update_i2c_probe", 1000, [this]() { this->probe_runtime_i2c_after_firmware_update_(); });
     } else {
       this->start_i2c_diagnostics_();
+      this->start_metering_();
     }
   } else if (completed_action == FirmwareAction::RESTORE_STOCK) {
     this->start_i2c_diagnostics_();
+    this->start_metering_();
     ESP_LOGI(TAG, "SAMD09 backup firmware restore complete: size=%" PRIu32, this->install_flash_size_);
   } else if (completed_action == FirmwareAction::FLASH_EXTERNAL) {
     FirmwareInfo external_info{};
@@ -2216,6 +2394,7 @@ void EmporiaVueComponent::finish_install_success_() {
     external_info.source = FirmwareDetectionSource::SWD;
     this->publish_firmware_version_(external_info);
     this->start_i2c_diagnostics_();
+    this->start_metering_();
     ESP_LOGI(TAG, "SAMD09 external firmware flash complete: source_size=%" PRIu32 ", flash_size=%" PRIu32,
              this->external_firmware_size_(completed_external_firmware_index), this->install_flash_size_);
   }
@@ -2302,6 +2481,7 @@ void EmporiaVueComponent::fail_backup_(const std::string &error) {
   this->backup_stage_ = BackupStage::IDLE;
   this->release_pins_();
   this->start_i2c_diagnostics_();
+  this->start_metering_();
 }
 
 void EmporiaVueComponent::finish_backup_success_() {
@@ -2322,6 +2502,7 @@ void EmporiaVueComponent::finish_backup_success_() {
   this->backup_stage_ = BackupStage::IDLE;
   this->release_pins_();
   this->start_i2c_diagnostics_();
+  this->start_metering_();
 
   const std::string hash = sha256_hex_(this->backup_stored_hash_.data());
   ESP_LOGI(TAG, "SAMD09 legacy firmware backup valid: size=%" PRIu32 ", sha256=%s", this->backup_flash_size_,

@@ -6,12 +6,29 @@ import esphome.config_validation as cv
 from esphome import pins
 from esphome.components import button, i2c, sensor, text_sensor
 from esphome.const import (
+    CONF_CALIBRATION,
+    CONF_CURRENT,
     CONF_ID,
+    CONF_INPUT,
     CONF_NAME,
+    CONF_PHASE_ANGLE,
+    CONF_PHASE_ID,
+    CONF_POWER,
     CONF_RESET_PIN,
+    CONF_VOLTAGE,
+    CONF_FREQUENCY,
+    DEVICE_CLASS_CURRENT,
+    DEVICE_CLASS_FREQUENCY,
+    DEVICE_CLASS_POWER,
+    DEVICE_CLASS_VOLTAGE,
     ENTITY_CATEGORY_CONFIG,
     ENTITY_CATEGORY_DIAGNOSTIC,
     STATE_CLASS_MEASUREMENT,
+    UNIT_AMPERE,
+    UNIT_DEGREES,
+    UNIT_HERTZ,
+    UNIT_VOLT,
+    UNIT_WATT,
 )
 
 DEPENDENCIES = ["esp32", "i2c"]
@@ -33,6 +50,8 @@ EmporiaVueRestoreFirmwareButton = emporiavue_ns.class_(
 EmporiaVueFlashExternalFirmwareButton = emporiavue_ns.class_(
     "EmporiaVueFlashExternalFirmwareButton", button.Button
 )
+MeteringPhaseConfig = emporiavue_ns.class_("MeteringPhaseConfig")
+MeteringCTClampConfig = emporiavue_ns.class_("MeteringCTClampConfig")
 
 CONF_SWCLK_PIN = "swclk_pin"
 CONF_SWDIO_PIN = "swdio_pin"
@@ -67,6 +86,9 @@ CONF_MODE = "mode"
 CONF_ENTITY_PREFIX = "entity_prefix"
 CONF_AUTO_UPDATE_SAMD = "auto_update_samd"
 CONF_DIAGNOSTICS_INTERVAL = "diagnostics_interval"
+CONF_METERING_INTERVAL = "metering_interval"
+CONF_PHASES = "phases"
+CONF_CT_CLAMPS = "ct_clamps"
 
 HARDWARE_CUSTOM = "custom"
 HARDWARE_VUE2 = "vue2"
@@ -83,6 +105,34 @@ HARDWARE_IDS = {
 MODE_IDS = {
     MODE_I2C: 0,
     MODE_SPI: 1,
+}
+
+PHASE_INPUTS = {
+    "BLACK": 0,
+    "RED": 1,
+    "BLUE": 2,
+}
+
+CT_INPUTS = {
+    "A": 0,
+    "B": 1,
+    "C": 2,
+    "1": 3,
+    "2": 4,
+    "3": 5,
+    "4": 6,
+    "5": 7,
+    "6": 8,
+    "7": 9,
+    "8": 10,
+    "9": 11,
+    "10": 12,
+    "11": 13,
+    "12": 14,
+    "13": 15,
+    "14": 16,
+    "15": 17,
+    "16": 18,
 }
 
 EXTERNAL_SAMD_FIRMWARE_HEADER = Path(__file__).with_name("external_samd_firmware.h")
@@ -328,6 +378,78 @@ def _write_external_samd_firmware_header(firmwares=None):
         raise cv.Invalid(f"external_samd_firmware header generation failed: {err}") from err
 
 
+def _validate_metering_phases(value):
+    phases = cv.Schema(
+        cv.ensure_list(
+            {
+                cv.Required(CONF_ID): cv.declare_id(MeteringPhaseConfig),
+                cv.Required(CONF_INPUT): cv.one_of(*PHASE_INPUTS.keys(), upper=True),
+                cv.Optional(CONF_CALIBRATION, default=0.022): cv.positive_float,
+                cv.Optional(CONF_VOLTAGE): sensor.sensor_schema(
+                    unit_of_measurement=UNIT_VOLT,
+                    device_class=DEVICE_CLASS_VOLTAGE,
+                    state_class=STATE_CLASS_MEASUREMENT,
+                    accuracy_decimals=1,
+                ),
+                cv.Optional(CONF_FREQUENCY): sensor.sensor_schema(
+                    unit_of_measurement=UNIT_HERTZ,
+                    device_class=DEVICE_CLASS_FREQUENCY,
+                    state_class=STATE_CLASS_MEASUREMENT,
+                    accuracy_decimals=1,
+                ),
+                cv.Optional(CONF_PHASE_ANGLE): sensor.sensor_schema(
+                    unit_of_measurement=UNIT_DEGREES,
+                    state_class=STATE_CLASS_MEASUREMENT,
+                    accuracy_decimals=0,
+                ),
+            }
+        )
+    )(value)
+
+    if len(phases) > 3:
+        raise cv.Invalid("No more than 3 metering phases are supported")
+
+    inputs = [phase[CONF_INPUT] for phase in phases]
+    if len(inputs) != len(set(inputs)):
+        raise cv.Invalid("Only one metering phase entry per input color is allowed")
+
+    for index, phase in enumerate(phases):
+        input_wire = phase[CONF_INPUT]
+        if input_wire == "BLACK" and CONF_PHASE_ANGLE in phase:
+            raise cv.Invalid(
+                "Phase angle is not supported for the black wire, only for red and blue",
+                path=[index, CONF_PHASE_ANGLE],
+            )
+        if input_wire in {"RED", "BLUE"} and CONF_FREQUENCY in phase:
+            raise cv.Invalid(
+                "Frequency is not supported for red and blue, only for the black wire",
+                path=[index, CONF_FREQUENCY],
+            )
+
+    return phases
+
+
+METERING_CT_CLAMP_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.declare_id(MeteringCTClampConfig),
+        cv.Required(CONF_PHASE_ID): cv.use_id(MeteringPhaseConfig),
+        cv.Required(CONF_INPUT): cv.one_of(*CT_INPUTS.keys(), upper=True),
+        cv.Optional(CONF_POWER): sensor.sensor_schema(
+            unit_of_measurement=UNIT_WATT,
+            device_class=DEVICE_CLASS_POWER,
+            state_class=STATE_CLASS_MEASUREMENT,
+            accuracy_decimals=1,
+        ),
+        cv.Optional(CONF_CURRENT): sensor.sensor_schema(
+            unit_of_measurement=UNIT_AMPERE,
+            device_class=DEVICE_CLASS_CURRENT,
+            state_class=STATE_CLASS_MEASUREMENT,
+            accuracy_decimals=2,
+        ),
+    }
+)
+
+
 EMPORIAVUE_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(EmporiaVueComponent),
@@ -349,6 +471,9 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_ENTITY_PREFIX): cv.string_strict,
         cv.Optional(CONF_AUTO_UPDATE_SAMD, default=False): cv.boolean,
         cv.Optional(CONF_DIAGNOSTICS_INTERVAL): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_METERING_INTERVAL): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_PHASES): _validate_metering_phases,
+        cv.Optional(CONF_CT_CLAMPS): cv.ensure_list(METERING_CT_CLAMP_SCHEMA),
         cv.Optional(CONF_BACKUP_PARTITION, default="samd_bak"): cv.string_strict,
         cv.Optional(CONF_EXTERNAL_SAMD_FIRMWARE): cv.ensure_list(
             cv.Schema(
@@ -504,6 +629,8 @@ async def to_code(config):
     cg.add(var.set_auto_update_samd(config[CONF_AUTO_UPDATE_SAMD]))
     if diagnostics_interval := config.get(CONF_DIAGNOSTICS_INTERVAL):
         cg.add(var.set_diagnostics_interval(diagnostics_interval))
+    if metering_interval := config.get(CONF_METERING_INTERVAL):
+        cg.add(var.set_metering_interval(metering_interval))
     cg.add(var.set_backup_partition_name(config[CONF_BACKUP_PARTITION]))
     if firmware_version_config := config.get(CONF_FIRMWARE_VERSION):
         sens = await text_sensor.new_text_sensor(firmware_version_config)
@@ -532,6 +659,45 @@ async def to_code(config):
     if diag_last_sample_count_config := config.get(CONF_DIAG_LAST_SAMPLE_COUNT):
         sens = await sensor.new_sensor(diag_last_sample_count_config)
         cg.add(var.set_diag_last_sample_count_sensor(sens))
+
+    phases = []
+    for phase_config in config.get(CONF_PHASES, []):
+        phase_var = cg.new_Pvariable(phase_config[CONF_ID], MeteringPhaseConfig())
+        cg.add(phase_var.set_input_wire(PHASE_INPUTS[phase_config[CONF_INPUT]]))
+        cg.add(phase_var.set_calibration(phase_config[CONF_CALIBRATION]))
+
+        if voltage_config := phase_config.get(CONF_VOLTAGE):
+            sens = await sensor.new_sensor(voltage_config)
+            cg.add(phase_var.set_voltage_sensor(sens))
+        if frequency_config := phase_config.get(CONF_FREQUENCY):
+            sens = await sensor.new_sensor(frequency_config)
+            cg.add(phase_var.set_frequency_sensor(sens))
+        if phase_angle_config := phase_config.get(CONF_PHASE_ANGLE):
+            sens = await sensor.new_sensor(phase_angle_config)
+            cg.add(phase_var.set_phase_angle_sensor(sens))
+
+        phases.append(phase_var)
+    if phases:
+        cg.add(var.set_metering_phases(phases))
+
+    ct_clamps = []
+    for ct_config in config.get(CONF_CT_CLAMPS, []):
+        ct_clamp_var = cg.new_Pvariable(ct_config[CONF_ID], MeteringCTClampConfig())
+        phase_var = await cg.get_variable(ct_config[CONF_PHASE_ID])
+        cg.add(ct_clamp_var.set_phase(phase_var))
+        cg.add(ct_clamp_var.set_input_port(CT_INPUTS[ct_config[CONF_INPUT]]))
+
+        if power_config := ct_config.get(CONF_POWER):
+            sens = await sensor.new_sensor(power_config)
+            cg.add(ct_clamp_var.set_power_sensor(sens))
+        if current_config := ct_config.get(CONF_CURRENT):
+            sens = await sensor.new_sensor(current_config)
+            cg.add(ct_clamp_var.set_current_sensor(sens))
+
+        ct_clamps.append(ct_clamp_var)
+    if ct_clamps:
+        cg.add(var.set_metering_ct_clamps(ct_clamps))
+
     if backup_firmware_button_config := config.get(CONF_BACKUP_FIRMWARE_BUTTON):
         btn = await button.new_button(backup_firmware_button_config)
         await cg.register_parented(btn, var)

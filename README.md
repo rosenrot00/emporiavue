@@ -181,8 +181,9 @@ emporiavue:
 
 The repository currently includes `packages/vue2-i2c.yaml`. It sets `hardware: vue2` and `mode: i2c`, adds a 64 KiB
 `samd_bak` data partition, and enables the firmware version entities plus the backup, update, and restore
-buttons. The transport is explicit in the filename so a future SPI transport can live next to it as
-`packages/vue2-spi.yaml`.
+buttons. It also enables a slow `metering_interval: 10s` I2C read path that decodes the stock-compatible frame into the
+component's internal metering frame without replacing the existing `emporia_vue` sensors. The transport is explicit in
+the filename so a future SPI transport can live next to it as `packages/vue2-spi.yaml`.
 
 Keep your private `external_components` block in the main node YAML, then include the package:
 
@@ -202,6 +203,32 @@ custom partition lists under `esp32.partitions`, and partition-table OTA needs `
 ESPHome OTA platform before running `esphome upload --partition-table`.
 
 SAMD writes are enabled by default, and updating the managed SAMD firmware does not require a legacy backup.
+
+Optional metering sensors can be attached to the new transport-independent frame. Keep the interval slow while the
+legacy sensor component is still polling the same I2C device:
+
+```yaml
+emporiavue:
+  metering_interval: 10s
+  phases:
+    - id: vue_phase_a
+      input: BLACK
+      calibration: 0.022830
+      voltage:
+        name: "Vue2 Metering Phase A Voltage"
+      frequency:
+        name: "Vue2 Metering Phase A Frequency"
+    - id: vue_phase_b
+      input: RED
+      calibration: 0.022520
+      phase_angle:
+        name: "Vue2 Metering Phase B Angle"
+  ct_clamps:
+    - phase_id: vue_phase_a
+      input: A
+      power:
+        name: "Vue2 Metering Phase A Power"
+```
 
 ## Future SAMD09 firmware improvements
 
