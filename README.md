@@ -218,16 +218,22 @@ emporiavue:
   mains:
     phase_a:
       id: vue_metering_phase_a
+      input: BLACK
+      clamp: A
       calibration: 0.022
       voltage:
         name: "Vue2 Metering Phase A Voltage"
       frequency:
         name: "Vue2 Metering Phase A Frequency"
     phase_b:
+      input: RED
+      clamp: B
       calibration: 0.022
       phase_angle:
         name: "Vue2 Metering Phase B Angle"
     phase_c:
+      input: BLUE
+      clamp: C
       calibration: 0.022
   ct_clamps:
     - phase_id: vue_metering_phase_a

@@ -22,10 +22,16 @@ emporiavue:
   metering_interval: 10s
   mains:
     phase_a:
+      input: BLACK
+      clamp: A
       calibration: 0.022
     phase_b:
+      input: RED
+      clamp: B
       calibration: 0.022
     phase_c:
+      input: BLUE
+      clamp: C
       calibration: 0.022
   backup_partition: samd_bak
   connect_under_reset: true

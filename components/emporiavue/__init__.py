@@ -93,6 +93,7 @@ CONF_DIAGNOSTICS_INTERVAL = "diagnostics_interval"
 CONF_METERING_INTERVAL = "metering_interval"
 CONF_MAINS = "mains"
 CONF_CALIBRATION_NUMBER = "calibration_number"
+CONF_CLAMP = "clamp"
 CONF_CT_ID = "ct_id"
 CONF_PHASES = "phases"
 CONF_CT_CLAMPS = "ct_clamps"
@@ -145,17 +146,17 @@ CT_INPUTS = {
 MAIN_PHASE_DEFAULTS = {
     "phase_a": {
         CONF_INPUT: "BLACK",
-        "clamp": "A",
+        CONF_CLAMP: "A",
         "label": "Phase A",
     },
     "phase_b": {
         CONF_INPUT: "RED",
-        "clamp": "B",
+        CONF_CLAMP: "B",
         "label": "Phase B",
     },
     "phase_c": {
         CONF_INPUT: "BLUE",
-        "clamp": "C",
+        CONF_CLAMP: "C",
         "label": "Phase C",
     },
 }
@@ -263,6 +264,8 @@ def _apply_mains_defaults(config):
         else:
             phase_config = dict(phase_config)
 
+        phase_config.setdefault(CONF_INPUT, defaults[CONF_INPUT])
+        phase_config.setdefault(CONF_CLAMP, defaults[CONF_CLAMP])
         calibration_number_config = phase_config.get(CONF_CALIBRATION_NUMBER)
         default_name = f"{defaults['label']} Calibration"
         if calibration_number_config is None:
@@ -544,6 +547,8 @@ METERING_MAIN_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(MeteringPhaseConfig),
         cv.GenerateID(CONF_CT_ID): cv.declare_id(MeteringCTClampConfig),
+        cv.Required(CONF_INPUT): cv.one_of(*PHASE_INPUTS.keys(), upper=True),
+        cv.Required(CONF_CLAMP): cv.one_of("A", "B", "C", upper=True),
         cv.Required(CONF_CALIBRATION): cv.positive_float,
         cv.Optional(CONF_CALIBRATION_NUMBER): CALIBRATION_NUMBER_SCHEMA,
         cv.Optional(CONF_VOLTAGE): PHASE_VOLTAGE_SENSOR_SCHEMA,
@@ -564,16 +569,24 @@ def _validate_mains(value):
         }
     )(value)
 
+    inputs = [phase_config[CONF_INPUT] for phase_config in mains.values()]
+    if len(inputs) != len(set(inputs)):
+        raise cv.Invalid("Only one main phase entry per voltage input color is allowed")
+
+    clamps = [phase_config[CONF_CLAMP] for phase_config in mains.values()]
+    if len(clamps) != len(set(clamps)):
+        raise cv.Invalid("Only one main phase entry per main CT clamp is allowed")
+
     for phase_key, phase_config in mains.items():
-        input_wire = MAIN_PHASE_DEFAULTS[phase_key][CONF_INPUT]
+        input_wire = phase_config[CONF_INPUT]
         if input_wire == "BLACK" and CONF_PHASE_ANGLE in phase_config:
             raise cv.Invalid(
-                "Phase angle is not supported for phase_a/black, only for phase_b/red and phase_c/blue",
+                "Phase angle is not supported for the black wire, only for red and blue",
                 path=[phase_key, CONF_PHASE_ANGLE],
             )
         if input_wire in {"RED", "BLUE"} and CONF_FREQUENCY in phase_config:
             raise cv.Invalid(
-                "Frequency is not supported for phase_b/red or phase_c/blue, only for phase_a/black",
+                "Frequency is not supported for red or blue, only for the black wire",
                 path=[phase_key, CONF_FREQUENCY],
             )
 
@@ -805,9 +818,8 @@ async def to_code(config):
     phases = []
     ct_clamps = []
     for phase_key, main_config in config.get(CONF_MAINS, {}).items():
-        defaults = MAIN_PHASE_DEFAULTS[phase_key]
         phase_var = cg.new_Pvariable(main_config[CONF_ID], MeteringPhaseConfig())
-        cg.add(phase_var.set_input_wire(PHASE_INPUTS[defaults[CONF_INPUT]]))
+        cg.add(phase_var.set_input_wire(PHASE_INPUTS[main_config[CONF_INPUT]]))
         cg.add(phase_var.set_calibration(main_config[CONF_CALIBRATION]))
 
         if calibration_number_config := main_config.get(CONF_CALIBRATION_NUMBER):
@@ -835,7 +847,7 @@ async def to_code(config):
 
         ct_clamp_var = cg.new_Pvariable(main_config[CONF_CT_ID], MeteringCTClampConfig())
         cg.add(ct_clamp_var.set_phase(phase_var))
-        cg.add(ct_clamp_var.set_input_port(CT_INPUTS[defaults["clamp"]]))
+        cg.add(ct_clamp_var.set_input_port(CT_INPUTS[main_config[CONF_CLAMP]]))
         if power_config := main_config.get(CONF_POWER):
             sens = await sensor.new_sensor(power_config)
             cg.add(ct_clamp_var.set_power_sensor(sens))
