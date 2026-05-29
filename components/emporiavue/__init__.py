@@ -57,6 +57,7 @@ CONF_INIT_PINS_ON_BOOT = "init_pins_on_boot"
 CONF_MODE = "mode"
 CONF_ENTITY_PREFIX = "entity_prefix"
 CONF_AUTO_UPDATE_SAMD = "auto_update_samd"
+CONF_DIAGNOSTICS_INTERVAL = "diagnostics_interval"
 
 HARDWARE_CUSTOM = "custom"
 HARDWARE_VUE2 = "vue2"
@@ -75,9 +76,15 @@ MODE_IDS = {
     MODE_SPI: 1,
 }
 
-DEFAULT_ENTITY_NAMES = {
+CORE_ENTITY_NAMES = {
     CONF_FIRMWARE_VERSION: "SAMD Firmware Version",
     CONF_BUNDLED_FIRMWARE_VERSION: "SAMD Bundled Firmware Version",
+    CONF_BACKUP_FIRMWARE_BUTTON: "Backup SAMD09 Firmware",
+    CONF_INSTALL_FIRMWARE_BUTTON: "Update SAMD09 Firmware",
+    CONF_RESTORE_FIRMWARE_BUTTON: "Restore SAMD09 Backup Firmware",
+}
+
+DIAGNOSTIC_ENTITY_NAMES = {
     CONF_DIAG_SAMPLE_BLOCKS: "SAMD Sample Blocks",
     CONF_DIAG_PACKETS_BUILT: "SAMD Packets Built",
     CONF_DIAG_PACKETS_READ: "SAMD Packets Read",
@@ -87,11 +94,7 @@ DEFAULT_ENTITY_NAMES = {
     CONF_DIAG_I2C_OVERSIZE_READS: "SAMD I2C Oversize Reads",
     CONF_DIAG_LAST_SAMPLE_COUNT: "SAMD Last Sample Count",
     CONF_DIAG_LAST_I2C_READ_LEN: "SAMD Last I2C Read Length",
-    CONF_BACKUP_FIRMWARE_BUTTON: "Backup SAMD09 Firmware",
-    CONF_INSTALL_FIRMWARE_BUTTON: "Update SAMD09 Firmware",
-    CONF_RESTORE_FIRMWARE_BUTTON: "Restore SAMD09 Backup Firmware",
 }
-
 
 def _prefixed_entity_name(prefix, name):
     if not prefix:
@@ -108,7 +111,7 @@ def _apply_entity_name_defaults(config):
     if not prefix:
         return config
 
-    for key, default_name in DEFAULT_ENTITY_NAMES.items():
+    for key, default_name in CORE_ENTITY_NAMES.items():
         entity_config = config.get(key)
         if entity_config is None:
             entity_config = {}
@@ -120,6 +123,36 @@ def _apply_entity_name_defaults(config):
         if entity_config.get(CONF_NAME, default_name) == default_name:
             entity_config[CONF_NAME] = _prefixed_entity_name(prefix, default_name)
 
+        config[key] = entity_config
+
+    for key, default_name in DIAGNOSTIC_ENTITY_NAMES.items():
+        entity_config = config.get(key)
+        if entity_config is None or not isinstance(entity_config, dict):
+            continue
+
+        entity_config = dict(entity_config)
+        if entity_config.get(CONF_NAME, default_name) == default_name:
+            entity_config[CONF_NAME] = _prefixed_entity_name(prefix, default_name)
+
+        config[key] = entity_config
+    return config
+
+
+def _apply_diagnostics_defaults(config):
+    config = dict(config)
+    if CONF_DIAGNOSTICS_INTERVAL not in config:
+        return config
+
+    for key, default_name in DIAGNOSTIC_ENTITY_NAMES.items():
+        entity_config = config.get(key)
+        if entity_config is None:
+            entity_config = {}
+        elif not isinstance(entity_config, dict):
+            continue
+        else:
+            entity_config = dict(entity_config)
+
+        entity_config.setdefault(CONF_NAME, default_name)
         config[key] = entity_config
     return config
 
@@ -142,7 +175,7 @@ def _apply_hardware_defaults(config):
 
 
 def _apply_defaults(config):
-    return _apply_entity_name_defaults(_apply_hardware_defaults(config))
+    return _apply_entity_name_defaults(_apply_diagnostics_defaults(_apply_hardware_defaults(config)))
 
 
 EMPORIAVUE_SCHEMA = cv.Schema(
@@ -165,6 +198,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_MODE, default=MODE_I2C): cv.one_of(MODE_I2C, MODE_SPI, lower=True),
         cv.Optional(CONF_ENTITY_PREFIX): cv.string_strict,
         cv.Optional(CONF_AUTO_UPDATE_SAMD, default=False): cv.boolean,
+        cv.Optional(CONF_DIAGNOSTICS_INTERVAL): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_BACKUP_PARTITION, default="samd_bak"): cv.string_strict,
         cv.Optional(
             CONF_FIRMWARE_VERSION,
@@ -182,7 +216,6 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         ),
         cv.Optional(
             CONF_DIAG_SAMPLE_BLOCKS,
-            default={CONF_NAME: "SAMD Sample Blocks"},
         ): sensor.sensor_schema(
             icon="mdi:counter",
             state_class=STATE_CLASS_MEASUREMENT,
@@ -191,7 +224,6 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         ),
         cv.Optional(
             CONF_DIAG_PACKETS_BUILT,
-            default={CONF_NAME: "SAMD Packets Built"},
         ): sensor.sensor_schema(
             icon="mdi:counter",
             state_class=STATE_CLASS_MEASUREMENT,
@@ -200,7 +232,6 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         ),
         cv.Optional(
             CONF_DIAG_PACKETS_READ,
-            default={CONF_NAME: "SAMD Packets Read"},
         ): sensor.sensor_schema(
             icon="mdi:counter",
             state_class=STATE_CLASS_MEASUREMENT,
@@ -209,7 +240,6 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         ),
         cv.Optional(
             CONF_DIAG_DMA_TRANSFER_ERRORS,
-            default={CONF_NAME: "SAMD DMA Transfer Errors"},
         ): sensor.sensor_schema(
             icon="mdi:alert-circle-outline",
             state_class=STATE_CLASS_MEASUREMENT,
@@ -218,7 +248,6 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         ),
         cv.Optional(
             CONF_DIAG_PACKET_OVERRUNS,
-            default={CONF_NAME: "SAMD Packet Overruns"},
         ): sensor.sensor_schema(
             icon="mdi:alert-circle-outline",
             state_class=STATE_CLASS_MEASUREMENT,
@@ -227,7 +256,6 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         ),
         cv.Optional(
             CONF_DIAG_I2C_PARTIAL_READS,
-            default={CONF_NAME: "SAMD I2C Partial Reads"},
         ): sensor.sensor_schema(
             icon="mdi:alert-circle-outline",
             state_class=STATE_CLASS_MEASUREMENT,
@@ -236,7 +264,6 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         ),
         cv.Optional(
             CONF_DIAG_I2C_OVERSIZE_READS,
-            default={CONF_NAME: "SAMD I2C Oversize Reads"},
         ): sensor.sensor_schema(
             icon="mdi:alert-circle-outline",
             state_class=STATE_CLASS_MEASUREMENT,
@@ -245,7 +272,6 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         ),
         cv.Optional(
             CONF_DIAG_LAST_SAMPLE_COUNT,
-            default={CONF_NAME: "SAMD Last Sample Count"},
         ): sensor.sensor_schema(
             icon="mdi:counter",
             state_class=STATE_CLASS_MEASUREMENT,
@@ -254,7 +280,6 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         ),
         cv.Optional(
             CONF_DIAG_LAST_I2C_READ_LEN,
-            default={CONF_NAME: "SAMD Last I2C Read Length"},
         ): sensor.sensor_schema(
             icon="mdi:counter",
             state_class=STATE_CLASS_MEASUREMENT,
@@ -316,6 +341,8 @@ async def to_code(config):
     cg.add(var.set_runtime_mode(MODE_IDS[config[CONF_MODE]]))
     cg.add(var.set_entity_prefix(config.get(CONF_ENTITY_PREFIX, "")))
     cg.add(var.set_auto_update_samd(config[CONF_AUTO_UPDATE_SAMD]))
+    if diagnostics_interval := config.get(CONF_DIAGNOSTICS_INTERVAL):
+        cg.add(var.set_diagnostics_interval(diagnostics_interval))
     cg.add(var.set_backup_partition_name(config[CONF_BACKUP_PARTITION]))
     if firmware_version_config := config.get(CONF_FIRMWARE_VERSION):
         sens = await text_sensor.new_text_sensor(firmware_version_config)

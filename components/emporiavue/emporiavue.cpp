@@ -63,6 +63,11 @@ void EmporiaVueComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Init pins on boot: %s", YESNO(this->init_pins_on_boot_));
   ESP_LOGCONFIG(TAG, "  Runtime mode: %s", this->runtime_mode_ == RuntimeMode::SPI ? "spi" : "i2c");
   ESP_LOGCONFIG(TAG, "  Auto-update SAMD: %s", YESNO(this->auto_update_samd_));
+  if (this->diagnostics_interval_ms_ == 0) {
+    ESP_LOGCONFIG(TAG, "  Diagnostics interval: disabled");
+  } else {
+    ESP_LOGCONFIG(TAG, "  Diagnostics interval: %" PRIu32 " ms", this->diagnostics_interval_ms_);
+  }
   const char *entity_prefix = this->entity_prefix_.empty() ? "(default)" : this->entity_prefix_.c_str();
   ESP_LOGCONFIG(TAG, "  Entity prefix: %s", entity_prefix);
   LOG_TEXT_SENSOR("  ", "Firmware version", this->firmware_version_sensor_);
@@ -1384,6 +1389,10 @@ void EmporiaVueComponent::start_i2c_diagnostics_() {
     return;
   }
 
+  if (this->diagnostics_interval_ms_ == 0) {
+    this->diagnostics_started_ = true;
+    return;
+  }
   if (this->runtime_mode_ != RuntimeMode::I2C) {
     this->diagnostics_started_ = true;
     return;
@@ -1394,8 +1403,10 @@ void EmporiaVueComponent::start_i2c_diagnostics_() {
   }
 
   this->diagnostics_started_ = true;
-  this->set_timeout("initial_samd_i2c_diagnostics", 1000, [this]() { this->refresh_i2c_diagnostics_(); });
-  this->set_interval("samd_i2c_diagnostics", DIAGNOSTICS_INTERVAL_MS, [this]() { this->refresh_i2c_diagnostics_(); });
+  this->set_timeout("initial_samd_i2c_diagnostics", this->diagnostics_interval_ms_,
+                    [this]() { this->refresh_i2c_diagnostics_(); });
+  this->set_interval("samd_i2c_diagnostics", this->diagnostics_interval_ms_,
+                     [this]() { this->refresh_i2c_diagnostics_(); });
 }
 
 bool EmporiaVueComponent::firmware_mode_matches_runtime_() const {

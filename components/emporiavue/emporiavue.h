@@ -48,6 +48,9 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   }
   void set_entity_prefix(const std::string &entity_prefix) { this->entity_prefix_ = entity_prefix; }
   void set_auto_update_samd(bool auto_update_samd) { this->auto_update_samd_ = auto_update_samd; }
+  void set_diagnostics_interval(uint32_t diagnostics_interval_ms) {
+    this->diagnostics_interval_ms_ = diagnostics_interval_ms;
+  }
   void set_backup_partition_name(const std::string &backup_partition_name) {
     this->backup_partition_name_ = backup_partition_name;
   }
@@ -162,7 +165,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   static constexpr uint16_t MANAGED_MODE_SPI = 2;
   static constexpr uint16_t STOCK_I2C_FRAME_SIZE = 284;
   static constexpr uint8_t MANAGED_I2C_DIAGNOSTIC_COMMAND = 0xF1;
-  static constexpr uint32_t DIAGNOSTICS_INTERVAL_MS = 60000;
 
   struct BackupHeader {
     uint32_t magic;
@@ -431,6 +433,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   RuntimeMode runtime_mode_{RuntimeMode::I2C};
   std::string entity_prefix_{};
   bool auto_update_samd_{false};
+  uint32_t diagnostics_interval_ms_{0};
   bool diagnostics_started_{false};
   std::string backup_partition_name_{"samd_bak"};
   const esp_partition_t *backup_partition_{nullptr};
