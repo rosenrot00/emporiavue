@@ -323,7 +323,7 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
   this->install_page_size_ = 0;
   this->install_row_size_ = 0;
   this->install_external_firmware_index_ = external_firmware_index;
-  ESP_LOGI(TAG, "Starting SAMD09 firmware %s check", requested_name);
+  ESP_LOGD(TAG, "Starting SAMD09 firmware %s check", requested_name);
 
   if (this->swdio_pin_ == nullptr || this->swclk_pin_ == nullptr) {
     this->set_error_("SWD pins are not configured");
@@ -510,13 +510,8 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
   this->install_next_progress_log_offset_ = INSTALL_PROGRESS_LOG_INTERVAL;
   this->install_stage_ = InstallStage::FLASH_PAGES;
   this->install_active_ = true;
-  ESP_LOGI(TAG, "SAMD09 firmware %s progress: 0/%" PRIu32 " bytes", requested_name, this->install_flash_size_);
-  ESP_LOGI(TAG,
-           "SAMD09 firmware %s started: current_kind=%s, current_version=%" PRIu32
-           ", source_size=%" PRIu32 ", reason=%s",
-           requested_name,
-           current.kind == FirmwareKind::MANAGED ? "managed" : (current.kind == FirmwareKind::STOCK ? "stock" : "unknown"),
-           current.version, source_size, action_reason.c_str());
+  ESP_LOGI(TAG, "SAMD09 firmware %s started: %" PRIu32 " bytes, %s", requested_name, source_size,
+           action_reason.c_str());
 }
 
 void EmporiaVueComponent::reset_target_() {
@@ -556,14 +551,14 @@ void EmporiaVueComponent::cold_plug_swd_() {
   if (!this->target_reset_asserted_) {
     this->assert_reset_();
   }
-  ESP_LOGI(TAG, "Releasing SAMD09 reset with SWCLK low for cold-plug");
+  ESP_LOGV(TAG, "Releasing SAMD09 reset with SWCLK low for cold-plug");
   this->deassert_reset_for_swd_attach_();
   delay(this->reset_release_time_ms_);
 }
 
 void EmporiaVueComponent::begin_swd_session_() {
   if (this->connect_under_reset_active_()) {
-    ESP_LOGI(TAG, "Holding SAMD09 SWCLK low and asserting reset for connect-under-reset");
+    ESP_LOGV(TAG, "Holding SAMD09 SWCLK low and asserting reset for connect-under-reset");
     this->swclk_pin_->pin_mode(gpio::FLAG_OUTPUT);
     this->swclk_pin_->digital_write(false);
     this->assert_reset_();
@@ -577,7 +572,7 @@ void EmporiaVueComponent::begin_swd_session_() {
 
 void EmporiaVueComponent::finish_swd_session_() {
   if (this->connect_under_reset_active_() && this->target_reset_asserted_) {
-    ESP_LOGI(TAG, "Releasing SAMD09 reset after connect-under-reset");
+    ESP_LOGV(TAG, "Releasing SAMD09 reset after connect-under-reset");
     this->deassert_reset_();
   }
 }
@@ -1085,12 +1080,12 @@ bool EmporiaVueComponent::mem_write32_(uint32_t address, uint32_t value) {
 }
 
 bool EmporiaVueComponent::halt_core_() {
-  ESP_LOGD(TAG, "Halting SAMD09 core");
+  ESP_LOGV(TAG, "Halting SAMD09 core");
   return this->mem_write32_(DHCSR, DHCSR_DBGKEY | DHCSR_C_DEBUGEN | DHCSR_C_HALT);
 }
 
 bool EmporiaVueComponent::resume_core_() {
-  ESP_LOGD(TAG, "Resuming SAMD09 core");
+  ESP_LOGV(TAG, "Resuming SAMD09 core");
   return this->mem_write32_(DHCSR, DHCSR_DBGKEY | DHCSR_C_DEBUGEN);
 }
 
@@ -1217,7 +1212,7 @@ bool EmporiaVueComponent::verify_mem_ap_() {
     this->set_error_(str_sprintf("unexpected MEM-AP IDR %s", hex32_(idr).c_str()));
     return false;
   }
-  ESP_LOGD(TAG, "MEM-AP IDR=%s", hex32_(idr).c_str());
+  ESP_LOGV(TAG, "MEM-AP IDR=%s", hex32_(idr).c_str());
   return true;
 }
 
