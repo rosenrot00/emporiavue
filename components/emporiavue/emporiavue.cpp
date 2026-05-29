@@ -1519,6 +1519,8 @@ bool EmporiaVueComponent::detect_current_firmware_by_swd_(FirmwareInfo *info, st
   }
 
   this->release_pins_();
+  this->reset_target_();
+  this->release_pins_();
   ESP_LOGI(TAG, "SAMD09 SWD firmware detection complete: %s",
            info->kind == FirmwareKind::MANAGED ? "managed footer found" : "no managed footer");
   return true;
