@@ -203,11 +203,11 @@ void EmporiaVueComponent::backup_firmware() {
            this->backup_flash_size_, this->backup_page_size_, this->backup_page_count_);
 }
 
-void EmporiaVueComponent::install_firmware() { this->start_firmware_action_(FirmwareAction::UPDATE_MANAGED); }
+void EmporiaVueComponent::install_firmware() { this->start_firmware_action_(FirmwareAction::UPDATE_MANAGED, true); }
 
-void EmporiaVueComponent::restore_firmware() { this->start_firmware_action_(FirmwareAction::RESTORE_STOCK); }
+void EmporiaVueComponent::restore_firmware() { this->start_firmware_action_(FirmwareAction::RESTORE_STOCK, false); }
 
-void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action) {
+void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action, bool force_update) {
   if (requested_action != FirmwareAction::UPDATE_MANAGED && requested_action != FirmwareAction::RESTORE_STOCK) {
     ESP_LOGW(TAG, "Unsupported SAMD09 firmware action requested");
     return;
@@ -319,18 +319,23 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
     selected_action = FirmwareAction::RESTORE_STOCK;
     action_reason = "valid backup is available";
   } else {
-    selected_action = this->determine_firmware_action_(current, &action_reason);
-    if (selected_action == FirmwareAction::UNKNOWN) {
-      release_after_check();
-      this->publish_firmware_status_("update blocked: " + action_reason);
-      ESP_LOGW(TAG, "SAMD09 firmware update blocked: %s", action_reason.c_str());
-      return;
-    }
-    if (selected_action != FirmwareAction::UPDATE_MANAGED) {
-      release_after_check();
-      this->publish_firmware_status_("update not needed: " + action_reason);
-      ESP_LOGI(TAG, "SAMD09 firmware update not needed: %s", action_reason.c_str());
-      return;
+    if (force_update) {
+      selected_action = FirmwareAction::UPDATE_MANAGED;
+      action_reason = "manual update requested";
+    } else {
+      selected_action = this->determine_firmware_action_(current, &action_reason);
+      if (selected_action == FirmwareAction::UNKNOWN) {
+        release_after_check();
+        this->publish_firmware_status_("update blocked: " + action_reason);
+        ESP_LOGW(TAG, "SAMD09 firmware update blocked: %s", action_reason.c_str());
+        return;
+      }
+      if (selected_action != FirmwareAction::UPDATE_MANAGED) {
+        release_after_check();
+        this->publish_firmware_status_("update not needed: " + action_reason);
+        ESP_LOGI(TAG, "SAMD09 firmware update not needed: %s", action_reason.c_str());
+        return;
+      }
     }
 
     if (!this->bundled_firmware_available_()) {
@@ -1535,7 +1540,7 @@ void EmporiaVueComponent::publish_initial_firmware_detection_() {
 
   ESP_LOGI(TAG, "SAMD09 auto-update starting: %s", auto_update_reason.c_str());
   this->publish_firmware_status_("auto update: " + auto_update_reason);
-  this->start_firmware_action_(FirmwareAction::UPDATE_MANAGED);
+  this->start_firmware_action_(FirmwareAction::UPDATE_MANAGED, false);
 }
 
 bool EmporiaVueComponent::detect_current_firmware_by_swd_(FirmwareInfo *info, std::string *error) {

@@ -382,7 +382,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   bool read_current_firmware_info_(FirmwareInfo *info);
   bool read_valid_backup_(BackupHeader *header, std::string *error);
   FirmwareAction determine_firmware_action_(const FirmwareInfo &current, std::string *reason) const;
-  void start_firmware_action_(FirmwareAction requested_action);
+  void start_firmware_action_(FirmwareAction requested_action, bool force_update);
   bool bundled_firmware_available_() const;
   bool bundled_firmware_matches_target_() const;
   uint32_t bundled_firmware_hardware_id_() const;
