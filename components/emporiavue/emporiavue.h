@@ -71,6 +71,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
 
   void backup_firmware();
   void install_firmware();
+  void restore_firmware();
 
  protected:
   static constexpr uint8_t DP_ABORT = 0x00;
@@ -237,11 +238,13 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
     UNKNOWN = 0,
     NONE,
     UPDATE_MANAGED,
+    RESTORE_STOCK,
   };
 
   enum class FlashSource : uint8_t {
     NONE = 0,
     BUNDLED,
+    BACKUP,
   };
 
   enum class FirmwareKind : uint8_t {
@@ -349,6 +352,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   bool detect_managed_firmware_(uint32_t flash_size, bool *managed);
   bool read_managed_firmware_info_(uint32_t flash_size, ManagedFirmwareInfo *managed_info, bool *found);
   bool read_current_firmware_info_(FirmwareInfo *info);
+  bool read_valid_backup_(BackupHeader *header, std::string *error);
   FirmwareAction determine_firmware_action_(const FirmwareInfo &current, std::string *reason) const;
   void start_firmware_action_(FirmwareAction requested_action);
   bool bundled_firmware_available_() const;
@@ -423,6 +427,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   FirmwareAction install_action_{FirmwareAction::UNKNOWN};
   FlashSource install_source_{FlashSource::NONE};
   InstallStage install_stage_{InstallStage::IDLE};
+  BackupHeader install_backup_header_{};
   uint32_t install_next_offset_{0};
   uint32_t install_flash_size_{0};
   uint32_t install_page_size_{0};
@@ -445,6 +450,11 @@ class EmporiaVueBackupFirmwareButton : public button::Button, public Parented<Em
 class EmporiaVueInstallFirmwareButton : public button::Button, public Parented<EmporiaVueComponent> {
  protected:
   void press_action() override { this->parent_->install_firmware(); }
+};
+
+class EmporiaVueRestoreFirmwareButton : public button::Button, public Parented<EmporiaVueComponent> {
+ protected:
+  void press_action() override { this->parent_->restore_firmware(); }
 };
 
 }  // namespace emporiavue

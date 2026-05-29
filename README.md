@@ -51,6 +51,7 @@ The default config creates only the SAMD firmware controls that are needed durin
 - `Backup SAMD09 Firmware`: backs up detected legacy SAMD09 firmware into the `samd_bak` ESP32 data partition. It refuses to back up firmware marked as managed by this project.
 - `Update SAMD09 Firmware`: checks whether the running SAMD09 firmware is stock or older than the bundled managed
   SAMD09 image and flashes that bundled image.
+- `Restore SAMD09 Backup Firmware`: restores the verified firmware image from the `samd_bak` partition.
 
 You need the normal ESPHome `api:` setup in your node config for Home Assistant to see those buttons. The results appear in the ESPHome log/console at `INFO` level.
 If the `samd_bak` partition is not present at boot, the firmware status entity reports `backup partition missing` and
@@ -65,8 +66,8 @@ decisions compare the detected raw integer against the bundled image's raw integ
 `emporia_vue` I2C frame is 284 bytes; a future managed SAMD firmware can expose these values in its I2C payload too,
 but this SWD component does not depend on that yet.
 Because Home Assistant buttons cannot be disabled dynamically by an external component, use `SAMD Firmware Status` as
-the authoritative state. The update button exits without writing if its action is not applicable or no bundled image is
-compiled in.
+the authoritative state. The update and restore buttons exit without writing if their action is not applicable, no
+bundled image is compiled in, or no valid backup is present.
 
 The bundled SAMD09 image is built from `firmware/samd09`, which is based on
 `gekkehenkie11/emporia-SAMD09` at commit `0baafe6d8812639d14f8f66b03844567f913ddc0` with small local build fixes for
@@ -137,7 +138,7 @@ emporiavue:
 
 The repository includes `packages/vue2-managed.yaml`. It configures the Vue 2 internal SWD pins through
 `hardware: vue2`, adds a 64 KiB `samd_bak` data partition, and enables the firmware status/version entities plus the
-backup and update buttons.
+backup, update, and restore buttons.
 
 Keep your private `external_components` block in the main node YAML, then include the package:
 

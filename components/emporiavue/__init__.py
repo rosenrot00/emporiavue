@@ -23,11 +23,15 @@ EmporiaVueBackupFirmwareButton = emporiavue_ns.class_(
 EmporiaVueInstallFirmwareButton = emporiavue_ns.class_(
     "EmporiaVueInstallFirmwareButton", button.Button
 )
+EmporiaVueRestoreFirmwareButton = emporiavue_ns.class_(
+    "EmporiaVueRestoreFirmwareButton", button.Button
+)
 
 CONF_SWCLK_PIN = "swclk_pin"
 CONF_SWDIO_PIN = "swdio_pin"
 CONF_BACKUP_FIRMWARE_BUTTON = "backup_firmware_button"
 CONF_INSTALL_FIRMWARE_BUTTON = "install_firmware_button"
+CONF_RESTORE_FIRMWARE_BUTTON = "restore_firmware_button"
 CONF_DIAGNOSTICS_STATUS = "diagnostics_status"
 CONF_DIAG_SAMPLE_BLOCKS = "diag_sample_blocks"
 CONF_DIAG_PACKETS_BUILT = "diag_packets_built"
@@ -217,6 +221,14 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             icon="mdi:update",
             entity_category=ENTITY_CATEGORY_CONFIG,
         ),
+        cv.Optional(
+            CONF_RESTORE_FIRMWARE_BUTTON,
+            default={CONF_NAME: "Restore SAMD09 Backup Firmware"},
+        ): button.button_schema(
+            EmporiaVueRestoreFirmwareButton,
+            icon="mdi:backup-restore",
+            entity_category=ENTITY_CATEGORY_CONFIG,
+        ),
     }
 ).extend(cv.COMPONENT_SCHEMA).extend(i2c.i2c_device_schema(0x64))
 
@@ -289,4 +301,7 @@ async def to_code(config):
         await cg.register_parented(btn, var)
     if install_firmware_button_config := config.get(CONF_INSTALL_FIRMWARE_BUTTON):
         btn = await button.new_button(install_firmware_button_config)
+        await cg.register_parented(btn, var)
+    if restore_firmware_button_config := config.get(CONF_RESTORE_FIRMWARE_BUTTON):
+        btn = await button.new_button(restore_firmware_button_config)
         await cg.register_parented(btn, var)
