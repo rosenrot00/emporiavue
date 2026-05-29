@@ -406,7 +406,10 @@ def _apply_raw_power_defaults(config):
         circuits = dict(config[CONF_CIRCUITS])
         for circuit_key, circuit_config in list(circuits.items()):
             if isinstance(circuit_config, dict):
-                default_name = f"Circuit {circuit_config.get(CONF_INPUT, circuit_key)} Power"
+                if circuit_key.startswith("cir"):
+                    default_name = f"Circuit {circuit_key.removeprefix('cir')} Power"
+                else:
+                    default_name = f"{circuit_key.replace('_', ' ').title()} Power"
                 circuits[circuit_key] = _split_power_sensor_config(
                     circuit_config,
                     circuit_key,
