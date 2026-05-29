@@ -372,7 +372,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void start_i2c_diagnostics_();
   bool firmware_mode_matches_runtime_() const;
   void publish_firmware_mode_mismatch_();
-  i2c::ErrorCode read_normal_i2c_frame_(const char *context);
   void probe_runtime_i2c_after_firmware_update_();
   void publish_initial_firmware_detection_();
   bool detect_current_firmware_by_swd_(FirmwareInfo *info, std::string *error);

@@ -1440,42 +1440,6 @@ void EmporiaVueComponent::publish_firmware_mode_mismatch_() {
       str_sprintf("not reading: firmware is %s, configured %s; update firmware", detected_mode, configured_mode));
 }
 
-i2c::ErrorCode EmporiaVueComponent::read_normal_i2c_frame_(const char *context) {
-  std::array<uint8_t, STOCK_I2C_FRAME_SIZE> frame{};
-  const i2c::ErrorCode error = this->read(frame.data(), frame.size());
-  if (error != i2c::ERROR_OK) {
-    ESP_LOGW(TAG, "SAMD09 normal I2C frame read failed (%s): i2c error %u", context,
-             static_cast<unsigned>(error));
-    return error;
-  }
-
-  std::string first16;
-  for (size_t i = 0; i < std::min<size_t>(16, frame.size()); i++) {
-    append_hex_byte_(&first16, frame[i]);
-  }
-
-  size_t nonzero = 0;
-  size_t non_ff = 0;
-  for (uint8_t byte : frame) {
-    if (byte != 0x00) {
-      nonzero++;
-    }
-    if (byte != 0xFF) {
-      non_ff++;
-    }
-  }
-
-  const uint16_t end_word = uint16_t(frame[STOCK_I2C_FRAME_SIZE - 2]) |
-                            (uint16_t(frame[STOCK_I2C_FRAME_SIZE - 1]) << 8);
-  ESP_LOGI(TAG,
-           "SAMD09 normal I2C frame read OK (%s): len=%u unread=%u checksum=%s unknown=%s sequence=%u end=%s "
-           "nonzero=%u non_ff=%u first16=%s",
-           context, static_cast<unsigned>(frame.size()), static_cast<unsigned>(frame[0]), hex8_(frame[1]).c_str(),
-           hex8_(frame[2]).c_str(), static_cast<unsigned>(frame[3]), hex16_(end_word).c_str(),
-           static_cast<unsigned>(nonzero), static_cast<unsigned>(non_ff), first16.c_str());
-  return i2c::ERROR_OK;
-}
-
 void EmporiaVueComponent::probe_runtime_i2c_after_firmware_update_() {
   if (this->runtime_mode_ != RuntimeMode::I2C) {
     this->publish_firmware_status_("update complete; spi mode active");
@@ -1493,13 +1457,7 @@ void EmporiaVueComponent::probe_runtime_i2c_after_firmware_update_() {
              static_cast<unsigned>(info_result));
   }
 
-  const i2c::ErrorCode frame_error = this->read_normal_i2c_frame_("post-update");
-  if (frame_error == i2c::ERROR_OK) {
-    this->publish_firmware_status_("update complete; normal i2c frame ok");
-  } else {
-    this->publish_firmware_status_(str_sprintf("update complete; normal i2c frame failed: i2c error %u",
-                                               static_cast<unsigned>(frame_error)));
-  }
+  this->publish_firmware_status_("update complete");
   this->start_i2c_diagnostics_();
 }
 
