@@ -59,7 +59,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
     this->backup_partition_name_ = backup_partition_name;
   }
   void set_firmware_status_sensor(text_sensor::TextSensor *sensor) { this->firmware_status_sensor_ = sensor; }
-  void set_firmware_action_sensor(text_sensor::TextSensor *sensor) { this->firmware_action_sensor_ = sensor; }
   void set_firmware_version_sensor(text_sensor::TextSensor *sensor) { this->firmware_version_sensor_ = sensor; }
   void set_diagnostics_status_sensor(text_sensor::TextSensor *sensor) { this->diagnostics_status_sensor_ = sensor; }
   void set_diag_sample_blocks_sensor(sensor::Sensor *sensor) { this->diag_sample_blocks_sensor_ = sensor; }
@@ -410,7 +409,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   InternalGPIOPin *swclk_pin_{nullptr};
   InternalGPIOPin *reset_pin_{nullptr};
   text_sensor::TextSensor *firmware_status_sensor_{nullptr};
-  text_sensor::TextSensor *firmware_action_sensor_{nullptr};
   text_sensor::TextSensor *firmware_version_sensor_{nullptr};
   text_sensor::TextSensor *diagnostics_status_sensor_{nullptr};
   sensor::Sensor *diag_sample_blocks_sensor_{nullptr};

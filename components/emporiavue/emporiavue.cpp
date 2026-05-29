@@ -148,7 +148,6 @@ void EmporiaVueComponent::dump_config() {
   const char *entity_prefix = this->entity_prefix_.empty() ? "(default)" : this->entity_prefix_.c_str();
   ESP_LOGCONFIG(TAG, "  Entity prefix: %s", entity_prefix);
   LOG_TEXT_SENSOR("  ", "Firmware status", this->firmware_status_sensor_);
-  LOG_TEXT_SENSOR("  ", "Firmware action", this->firmware_action_sensor_);
   LOG_TEXT_SENSOR("  ", "Firmware version", this->firmware_version_sensor_);
   LOG_TEXT_SENSOR("  ", "Diagnostics status", this->diagnostics_status_sensor_);
 }
@@ -1226,11 +1225,7 @@ void EmporiaVueComponent::publish_firmware_status_(const std::string &status) {
   }
 }
 
-void EmporiaVueComponent::publish_firmware_action_(const std::string &action) {
-  if (this->firmware_action_sensor_ != nullptr) {
-    this->firmware_action_sensor_->publish_state(action);
-  }
-}
+void EmporiaVueComponent::publish_firmware_action_(const std::string &) {}
 
 void EmporiaVueComponent::publish_firmware_version_(const FirmwareInfo &info) {
   if (this->firmware_version_sensor_ == nullptr) {

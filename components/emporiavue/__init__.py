@@ -69,7 +69,6 @@ CONF_DIAG_I2C_OVERSIZE_READS = "diag_i2c_oversize_reads"
 CONF_DIAG_LAST_SAMPLE_COUNT = "diag_last_sample_count"
 CONF_DIAG_LAST_I2C_READ_LEN = "diag_last_i2c_read_len"
 CONF_FIRMWARE_STATUS = "firmware_status"
-CONF_FIRMWARE_ACTION = "firmware_action"
 CONF_FIRMWARE_VERSION = "firmware_version"
 CONF_BACKUP_PARTITION = "backup_partition"
 CONF_HARDWARE = "hardware"
@@ -154,13 +153,6 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(
             CONF_FIRMWARE_STATUS,
             default={CONF_NAME: "SAMD Firmware Status"},
-        ): text_sensor.text_sensor_schema(
-            icon="mdi:chip",
-            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
-        ),
-        cv.Optional(
-            CONF_FIRMWARE_ACTION,
-            default={CONF_NAME: "SAMD Firmware Action"},
         ): text_sensor.text_sensor_schema(
             icon="mdi:chip",
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
@@ -363,9 +355,6 @@ async def to_code(config):
     if firmware_status_config := config.get(CONF_FIRMWARE_STATUS):
         sens = await text_sensor.new_text_sensor(firmware_status_config)
         cg.add(var.set_firmware_status_sensor(sens))
-    if firmware_action_config := config.get(CONF_FIRMWARE_ACTION):
-        sens = await text_sensor.new_text_sensor(firmware_action_config)
-        cg.add(var.set_firmware_action_sensor(sens))
     if firmware_version_config := config.get(CONF_FIRMWARE_VERSION):
         sens = await text_sensor.new_text_sensor(firmware_version_config)
         cg.add(var.set_firmware_version_sensor(sens))

@@ -32,8 +32,6 @@ emporiavue:
 
   firmware_status:
     name: "SAMD Firmware Status"
-  firmware_action:
-    name: "SAMD Firmware Action"
   firmware_version:
     name: "SAMD Firmware Version"
 
