@@ -622,20 +622,8 @@ void EmporiaVueComponent::publish_firmware_version_(const FirmwareInfo &info) {
   }
   switch (info.kind) {
     case FirmwareKind::MANAGED:
-      if (info.source == FirmwareDetectionSource::I2C && info.i2c_frame_length != 0) {
-        this->firmware_version_sensor_->publish_state(
-            str_sprintf("managed hw=%u %s v%s (%u bytes)", static_cast<unsigned>(info.hardware_id),
-                        firmware_mode_name_(info.mode_id), format_firmware_version_(info.version).c_str(),
-                        static_cast<unsigned>(info.i2c_frame_length)));
-      } else if (info.source == FirmwareDetectionSource::SWD) {
-        this->firmware_version_sensor_->publish_state(
-            str_sprintf("managed hw=%u %s v%s (swd)", static_cast<unsigned>(info.hardware_id),
-                        firmware_mode_name_(info.mode_id), format_firmware_version_(info.version).c_str()));
-      } else {
-        this->firmware_version_sensor_->publish_state(
-            str_sprintf("managed hw=%u %s v%s", static_cast<unsigned>(info.hardware_id),
-                        firmware_mode_name_(info.mode_id), format_firmware_version_(info.version).c_str()));
-      }
+      this->firmware_version_sensor_->publish_state(
+          str_sprintf("v%s (%s)", format_firmware_version_(info.version).c_str(), firmware_mode_name_(info.mode_id)));
       break;
     case FirmwareKind::STOCK:
       this->firmware_version_sensor_->publish_state("stock");
