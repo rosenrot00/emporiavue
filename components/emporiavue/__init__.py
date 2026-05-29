@@ -44,6 +44,7 @@ CONF_DIAG_LAST_SAMPLE_COUNT = "diag_last_sample_count"
 CONF_DIAG_LAST_I2C_READ_LEN = "diag_last_i2c_read_len"
 CONF_FIRMWARE_STATUS = "firmware_status"
 CONF_FIRMWARE_VERSION = "firmware_version"
+CONF_BUNDLED_FIRMWARE_VERSION = "bundled_firmware_version"
 CONF_BACKUP_PARTITION = "backup_partition"
 CONF_HARDWARE = "hardware"
 CONF_RESET_BEFORE_READ = "reset_before_read"
@@ -78,6 +79,7 @@ MODE_IDS = {
 DEFAULT_ENTITY_NAMES = {
     CONF_FIRMWARE_STATUS: "SAMD Firmware Status",
     CONF_FIRMWARE_VERSION: "SAMD Firmware Version",
+    CONF_BUNDLED_FIRMWARE_VERSION: "SAMD Bundled Firmware Version",
     CONF_DIAGNOSTICS_STATUS: "SAMD Diagnostics Status",
     CONF_DIAG_SAMPLE_BLOCKS: "SAMD Sample Blocks",
     CONF_DIAG_PACKETS_BUILT: "SAMD Packets Built",
@@ -179,6 +181,13 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             default={CONF_NAME: "SAMD Firmware Version"},
         ): text_sensor.text_sensor_schema(
             icon="mdi:chip",
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(
+            CONF_BUNDLED_FIRMWARE_VERSION,
+            default={CONF_NAME: "SAMD Bundled Firmware Version"},
+        ): text_sensor.text_sensor_schema(
+            icon="mdi:package-variant",
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
         cv.Optional(
@@ -322,6 +331,9 @@ async def to_code(config):
     if firmware_version_config := config.get(CONF_FIRMWARE_VERSION):
         sens = await text_sensor.new_text_sensor(firmware_version_config)
         cg.add(var.set_firmware_version_sensor(sens))
+    if bundled_firmware_version_config := config.get(CONF_BUNDLED_FIRMWARE_VERSION):
+        sens = await text_sensor.new_text_sensor(bundled_firmware_version_config)
+        cg.add(var.set_bundled_firmware_version_sensor(sens))
     if diagnostics_status_config := config.get(CONF_DIAGNOSTICS_STATUS):
         sens = await text_sensor.new_text_sensor(diagnostics_status_config)
         cg.add(var.set_diagnostics_status_sensor(sens))

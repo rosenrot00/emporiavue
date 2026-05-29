@@ -26,6 +26,8 @@ emporiavue:
     name: "SAMD Firmware Status"
   firmware_version:
     name: "SAMD Firmware Version"
+  bundled_firmware_version:
+    name: "SAMD Bundled Firmware Version"
 
   backup_firmware_button:
     name: "Backup SAMD09 Firmware"

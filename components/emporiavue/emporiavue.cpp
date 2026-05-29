@@ -21,6 +21,7 @@ void EmporiaVueComponent::setup() {
   this->inspect_backup_partition_();
   FirmwareInfo unknown_info{};
   this->publish_firmware_version_(unknown_info);
+  this->publish_bundled_firmware_version_();
   if (this->diagnostics_status_sensor_ != nullptr) {
     this->diagnostics_status_sensor_->publish_state("unknown");
   }
@@ -73,6 +74,7 @@ void EmporiaVueComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Entity prefix: %s", entity_prefix);
   LOG_TEXT_SENSOR("  ", "Firmware status", this->firmware_status_sensor_);
   LOG_TEXT_SENSOR("  ", "Firmware version", this->firmware_version_sensor_);
+  LOG_TEXT_SENSOR("  ", "Bundled firmware version", this->bundled_firmware_version_sensor_);
   LOG_TEXT_SENSOR("  ", "Diagnostics status", this->diagnostics_status_sensor_);
 }
 
@@ -633,6 +635,19 @@ void EmporiaVueComponent::publish_firmware_version_(const FirmwareInfo &info) {
       this->firmware_version_sensor_->publish_state("unknown");
       break;
   }
+}
+
+void EmporiaVueComponent::publish_bundled_firmware_version_() {
+  if (this->bundled_firmware_version_sensor_ == nullptr) {
+    return;
+  }
+  if (!this->bundled_firmware_available_()) {
+    this->bundled_firmware_version_sensor_->publish_state("none");
+    return;
+  }
+  this->bundled_firmware_version_sensor_->publish_state(
+      str_sprintf("v%s (%s)", format_firmware_version_(this->bundled_firmware_version_()).c_str(),
+                  firmware_mode_name_(static_cast<uint16_t>(this->bundled_firmware_mode_id_()))));
 }
 
 std::string EmporiaVueComponent::hex32_(uint32_t value) { return str_sprintf("0x%08" PRIx32, value); }
