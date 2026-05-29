@@ -94,7 +94,9 @@ CONF_METERING_INTERVAL = "metering_interval"
 CONF_MAINS = "mains"
 CONF_CALIBRATION_NUMBER = "calibration_number"
 CONF_CLAMP = "clamp"
+CONF_MAIN_CLAMP = "main_clamp"
 CONF_CT_ID = "ct_id"
+CONF_VOLTAGE_INPUT = "voltage_input"
 CONF_PHASES = "phases"
 CONF_CT_CLAMPS = "ct_clamps"
 
@@ -144,21 +146,27 @@ CT_INPUTS = {
 }
 
 MAIN_PHASE_DEFAULTS = {
-    "phase_a": {
-        CONF_INPUT: "BLACK",
-        CONF_CLAMP: "A",
-        "label": "Phase A",
+    "line_1": {
+        CONF_VOLTAGE_INPUT: "BLACK",
+        CONF_MAIN_CLAMP: "A",
+        "label": "Line 1",
     },
-    "phase_b": {
-        CONF_INPUT: "RED",
-        CONF_CLAMP: "B",
-        "label": "Phase B",
+    "line_2": {
+        CONF_VOLTAGE_INPUT: "RED",
+        CONF_MAIN_CLAMP: "B",
+        "label": "Line 2",
     },
-    "phase_c": {
-        CONF_INPUT: "BLUE",
-        CONF_CLAMP: "C",
-        "label": "Phase C",
+    "line_3": {
+        CONF_VOLTAGE_INPUT: "BLUE",
+        CONF_MAIN_CLAMP: "C",
+        "label": "Line 3",
     },
+}
+
+MAIN_PHASE_ALIASES = {
+    "phase_a": "line_1",
+    "phase_b": "line_2",
+    "phase_c": "line_3",
 }
 
 EXTERNAL_SAMD_FIRMWARE_HEADER = Path(__file__).with_name("external_samd_firmware.h")
@@ -252,7 +260,13 @@ def _apply_mains_defaults(config):
     if not isinstance(mains, dict):
         return config
 
-    normalized_mains = dict(mains)
+    normalized_mains = {}
+    for raw_key, raw_config in mains.items():
+        normalized_key = MAIN_PHASE_ALIASES.get(raw_key, raw_key)
+        if normalized_key in normalized_mains:
+            raise cv.Invalid(f"duplicate mains entry for {normalized_key}")
+        normalized_mains[normalized_key] = raw_config
+
     for phase_key, defaults in MAIN_PHASE_DEFAULTS.items():
         if phase_key not in normalized_mains:
             continue
@@ -264,8 +278,12 @@ def _apply_mains_defaults(config):
         else:
             phase_config = dict(phase_config)
 
-        phase_config.setdefault(CONF_INPUT, defaults[CONF_INPUT])
-        phase_config.setdefault(CONF_CLAMP, defaults[CONF_CLAMP])
+        if CONF_VOLTAGE_INPUT not in phase_config and CONF_INPUT in phase_config:
+            phase_config[CONF_VOLTAGE_INPUT] = phase_config[CONF_INPUT]
+        if CONF_MAIN_CLAMP not in phase_config and CONF_CLAMP in phase_config:
+            phase_config[CONF_MAIN_CLAMP] = phase_config[CONF_CLAMP]
+        phase_config.setdefault(CONF_VOLTAGE_INPUT, defaults[CONF_VOLTAGE_INPUT])
+        phase_config.setdefault(CONF_MAIN_CLAMP, defaults[CONF_MAIN_CLAMP])
         calibration_number_config = phase_config.get(CONF_CALIBRATION_NUMBER)
         default_name = f"{defaults['label']} Calibration"
         if calibration_number_config is None:
@@ -547,8 +565,8 @@ METERING_MAIN_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(MeteringPhaseConfig),
         cv.GenerateID(CONF_CT_ID): cv.declare_id(MeteringCTClampConfig),
-        cv.Required(CONF_INPUT): cv.one_of(*PHASE_INPUTS.keys(), upper=True),
-        cv.Required(CONF_CLAMP): cv.one_of("A", "B", "C", upper=True),
+        cv.Required(CONF_VOLTAGE_INPUT): cv.one_of(*PHASE_INPUTS.keys(), upper=True),
+        cv.Required(CONF_MAIN_CLAMP): cv.one_of("A", "B", "C", upper=True),
         cv.Required(CONF_CALIBRATION): cv.positive_float,
         cv.Optional(CONF_CALIBRATION_NUMBER): CALIBRATION_NUMBER_SCHEMA,
         cv.Optional(CONF_VOLTAGE): PHASE_VOLTAGE_SENSOR_SCHEMA,
@@ -563,22 +581,22 @@ METERING_MAIN_SCHEMA = cv.Schema(
 def _validate_mains(value):
     mains = cv.Schema(
         {
-            cv.Optional("phase_a"): METERING_MAIN_SCHEMA,
-            cv.Optional("phase_b"): METERING_MAIN_SCHEMA,
-            cv.Optional("phase_c"): METERING_MAIN_SCHEMA,
+            cv.Optional("line_1"): METERING_MAIN_SCHEMA,
+            cv.Optional("line_2"): METERING_MAIN_SCHEMA,
+            cv.Optional("line_3"): METERING_MAIN_SCHEMA,
         }
     )(value)
 
-    inputs = [phase_config[CONF_INPUT] for phase_config in mains.values()]
+    inputs = [phase_config[CONF_VOLTAGE_INPUT] for phase_config in mains.values()]
     if len(inputs) != len(set(inputs)):
         raise cv.Invalid("Only one main phase entry per voltage input color is allowed")
 
-    clamps = [phase_config[CONF_CLAMP] for phase_config in mains.values()]
+    clamps = [phase_config[CONF_MAIN_CLAMP] for phase_config in mains.values()]
     if len(clamps) != len(set(clamps)):
         raise cv.Invalid("Only one main phase entry per main CT clamp is allowed")
 
     for phase_key, phase_config in mains.items():
-        input_wire = phase_config[CONF_INPUT]
+        input_wire = phase_config[CONF_VOLTAGE_INPUT]
         if input_wire == "BLACK" and CONF_PHASE_ANGLE in phase_config:
             raise cv.Invalid(
                 "Phase angle is not supported for the black wire, only for red and blue",
@@ -819,7 +837,7 @@ async def to_code(config):
     ct_clamps = []
     for phase_key, main_config in config.get(CONF_MAINS, {}).items():
         phase_var = cg.new_Pvariable(main_config[CONF_ID], MeteringPhaseConfig())
-        cg.add(phase_var.set_input_wire(PHASE_INPUTS[main_config[CONF_INPUT]]))
+        cg.add(phase_var.set_input_wire(PHASE_INPUTS[main_config[CONF_VOLTAGE_INPUT]]))
         cg.add(phase_var.set_calibration(main_config[CONF_CALIBRATION]))
 
         if calibration_number_config := main_config.get(CONF_CALIBRATION_NUMBER):
@@ -847,7 +865,7 @@ async def to_code(config):
 
         ct_clamp_var = cg.new_Pvariable(main_config[CONF_CT_ID], MeteringCTClampConfig())
         cg.add(ct_clamp_var.set_phase(phase_var))
-        cg.add(ct_clamp_var.set_input_port(CT_INPUTS[main_config[CONF_CLAMP]]))
+        cg.add(ct_clamp_var.set_input_port(CT_INPUTS[main_config[CONF_MAIN_CLAMP]]))
         if power_config := main_config.get(CONF_POWER):
             sens = await sensor.new_sensor(power_config)
             cg.add(ct_clamp_var.set_power_sensor(sens))

@@ -21,17 +21,17 @@ emporiavue:
   mode: i2c
   metering_interval: 10s
   mains:
-    phase_a:
-      input: BLACK
-      clamp: A
+    line_1:
+      voltage_input: BLACK
+      main_clamp: A
       calibration: 0.022
-    phase_b:
-      input: RED
-      clamp: B
+    line_2:
+      voltage_input: RED
+      main_clamp: B
       calibration: 0.022
-    phase_c:
-      input: BLUE
-      clamp: C
+    line_3:
+      voltage_input: BLUE
+      main_clamp: C
       calibration: 0.022
   backup_partition: samd_bak
   connect_under_reset: true

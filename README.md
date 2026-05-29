@@ -216,27 +216,27 @@ legacy sensor component is still polling the same I2C device:
 emporiavue:
   metering_interval: 10s
   mains:
-    phase_a:
-      id: vue_metering_phase_a
-      input: BLACK
-      clamp: A
+    line_1:
+      id: vue_metering_line_1
+      voltage_input: BLACK
+      main_clamp: A
       calibration: 0.022
       voltage:
         name: "Vue2 Metering Phase A Voltage"
       frequency:
         name: "Vue2 Metering Phase A Frequency"
-    phase_b:
-      input: RED
-      clamp: B
+    line_2:
+      voltage_input: RED
+      main_clamp: B
       calibration: 0.022
       phase_angle:
         name: "Vue2 Metering Phase B Angle"
-    phase_c:
-      input: BLUE
-      clamp: C
+    line_3:
+      voltage_input: BLUE
+      main_clamp: C
       calibration: 0.022
   ct_clamps:
-    - phase_id: vue_metering_phase_a
+    - phase_id: vue_metering_line_1
       input: "1"
       power:
         name: "Vue2 Metering Circuit 1 Power"
