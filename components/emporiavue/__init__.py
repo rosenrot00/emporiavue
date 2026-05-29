@@ -406,7 +406,9 @@ def _apply_raw_power_defaults(config):
         circuits = dict(config[CONF_CIRCUITS])
         for circuit_key, circuit_config in list(circuits.items()):
             if isinstance(circuit_config, dict):
-                if circuit_key.startswith("cir"):
+                if CONF_NAME in circuit_config:
+                    default_name = circuit_config[CONF_NAME]
+                elif circuit_key.startswith("cir"):
                     default_name = f"Circuit {circuit_key.removeprefix('cir')} Power"
                 else:
                     default_name = f"{circuit_key.replace('_', ' ').title()} Power"
@@ -432,7 +434,7 @@ def _apply_raw_power_defaults(config):
         ct_clamps = []
         for index, ct_config in enumerate(config[CONF_CT_CLAMPS]):
             if isinstance(ct_config, dict):
-                default_name = f"CT {ct_config.get(CONF_INPUT, index + 1)} Power"
+                default_name = ct_config.get(CONF_NAME, f"CT {ct_config.get(CONF_INPUT, index + 1)} Power")
                 ct_clamps.append(
                     _split_power_sensor_config(
                         ct_config,
@@ -765,6 +767,7 @@ METERING_CIRCUIT_SCHEMA = cv.Schema(
         cv.GenerateID(CONF_CT_ID): cv.declare_id(MeteringCTClampConfig),
         cv.Required(CONF_INPUT): cv.one_of(*BRANCH_CT_INPUTS.keys(), upper=True),
         cv.Required(CONF_LINE): cv.int_range(min=1, max=3),
+        cv.Optional(CONF_NAME): cv.string_strict,
         cv.Optional(CONF_FILTERS): INTERNAL_POWER_FILTER_SCHEMA,
         cv.Optional(CONF_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_RAW_POWER): POWER_SENSOR_SCHEMA,
@@ -837,6 +840,7 @@ METERING_CT_CLAMP_SCHEMA = cv.Schema(
         cv.GenerateID(): cv.declare_id(MeteringCTClampConfig),
         cv.Required(CONF_PHASE_ID): cv.use_id(MeteringPhaseConfig),
         cv.Required(CONF_INPUT): cv.one_of(*CT_INPUTS.keys(), upper=True),
+        cv.Optional(CONF_NAME): cv.string_strict,
         cv.Optional(CONF_FILTERS): INTERNAL_POWER_FILTER_SCHEMA,
         cv.Optional(CONF_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_RAW_POWER): POWER_SENSOR_SCHEMA,
