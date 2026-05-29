@@ -84,12 +84,3 @@ emporiavue:
       input: "6"
       line: 3
       name: "Circuit 6 Power"
-  groups:
-    balance_power:
-      circuits: [total_power, -cir1, -cir2, -cir3, -cir4, -cir5, -cir6]
-      filters:
-        - lambda: |-
-            return x > 0.0f ? x : 0.0f;
-      power:
-        id: balance_power
-        name: "Balance Power"
