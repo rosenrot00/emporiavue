@@ -60,6 +60,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
     this->diagnostics_interval_ms_ = diagnostics_interval_ms;
   }
   void set_metering_interval(uint32_t metering_interval_ms) { this->metering_interval_ms_ = metering_interval_ms; }
+  void set_grid_deadband(float grid_deadband) { this->grid_deadband_ = grid_deadband; }
   void set_metering_phases(std::vector<MeteringPhaseConfig *> phases) {
     this->metering_phases_ = std::move(phases);
   }
@@ -69,6 +70,9 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void set_backup_partition_name(const std::string &backup_partition_name) {
     this->backup_partition_name_ = backup_partition_name;
   }
+  void set_total_power_sensor(sensor::Sensor *sensor) { this->total_power_sensor_ = sensor; }
+  void set_grid_import_power_sensor(sensor::Sensor *sensor) { this->grid_import_power_sensor_ = sensor; }
+  void set_grid_export_power_sensor(sensor::Sensor *sensor) { this->grid_export_power_sensor_ = sensor; }
   void set_firmware_version_sensor(text_sensor::TextSensor *sensor) { this->firmware_version_sensor_ = sensor; }
   void set_bundled_firmware_version_sensor(text_sensor::TextSensor *sensor) {
     this->bundled_firmware_version_sensor_ = sensor;
@@ -498,6 +502,10 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   uint8_t last_metering_sequence_{0};
   bool last_metering_sequence_valid_{false};
   MeteringFrame last_metering_frame_{};
+  float grid_deadband_{2.0f};
+  sensor::Sensor *total_power_sensor_{nullptr};
+  sensor::Sensor *grid_import_power_sensor_{nullptr};
+  sensor::Sensor *grid_export_power_sensor_{nullptr};
   std::vector<MeteringPhaseConfig *> metering_phases_{};
   std::vector<MeteringCTClampConfig *> metering_ct_clamps_{};
   std::string backup_partition_name_{"samd_bak"};

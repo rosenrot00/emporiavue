@@ -84,8 +84,12 @@ void EmporiaVueComponent::dump_config() {
   } else {
     ESP_LOGCONFIG(TAG, "  Metering interval: %" PRIu32 " ms", this->metering_interval_ms_);
   }
+  ESP_LOGCONFIG(TAG, "  Grid deadband: %.1f W", this->grid_deadband_);
   const char *entity_prefix = this->entity_prefix_.empty() ? "(default)" : this->entity_prefix_.c_str();
   ESP_LOGCONFIG(TAG, "  Entity prefix: %s", entity_prefix);
+  LOG_SENSOR("  ", "Total power", this->total_power_sensor_);
+  LOG_SENSOR("  ", "Grid import power", this->grid_import_power_sensor_);
+  LOG_SENSOR("  ", "Grid export power", this->grid_export_power_sensor_);
   LOG_TEXT_SENSOR("  ", "Firmware version", this->firmware_version_sensor_);
   LOG_TEXT_SENSOR("  ", "Bundled firmware version", this->bundled_firmware_version_sensor_);
   for (auto *phase : this->metering_phases_) {
@@ -1562,6 +1566,9 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
     }
   }
 
+  float total_power = 0.0f;
+  bool has_total_power = false;
+
   for (auto *ct_clamp : this->metering_ct_clamps_) {
     const uint8_t port = ct_clamp->get_input_port();
     const MeteringPhaseConfig *phase = ct_clamp->get_phase();
@@ -1569,14 +1576,34 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
       continue;
     }
 
-    if (ct_clamp->get_power_sensor() != nullptr) {
+    float power = 0.0f;
+    if (ct_clamp->get_power_sensor() != nullptr || port < 3) {
       const int32_t raw_power = frame.clamps[port].power_raw_by_phase[phase->get_input_wire()];
       const float correction_factor = port < 3 ? 5.5f : 22.0f;
-      ct_clamp->get_power_sensor()->publish_state(raw_power * phase->get_calibration() / correction_factor);
+      power = raw_power * phase->get_calibration() / correction_factor;
+      if (port < 3) {
+        total_power += power;
+        has_total_power = true;
+      }
+    }
+    if (ct_clamp->get_power_sensor() != nullptr) {
+      ct_clamp->get_power_sensor()->publish_state(power);
     }
     if (ct_clamp->get_current_sensor() != nullptr) {
       const float scalar = port < 3 ? (775.0f / 42624.0f) : (775.0f / 170496.0f);
       ct_clamp->get_current_sensor()->publish_state(frame.clamps[port].current_raw * scalar);
+    }
+  }
+
+  if (has_total_power) {
+    if (this->total_power_sensor_ != nullptr) {
+      this->total_power_sensor_->publish_state(total_power);
+    }
+    if (this->grid_import_power_sensor_ != nullptr) {
+      this->grid_import_power_sensor_->publish_state(total_power > this->grid_deadband_ ? total_power : 0.0f);
+    }
+    if (this->grid_export_power_sensor_ != nullptr) {
+      this->grid_export_power_sensor_->publish_state(total_power < -this->grid_deadband_ ? -total_power : 0.0f);
     }
   }
 }

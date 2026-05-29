@@ -90,6 +90,10 @@ CONF_ENTITY_PREFIX = "entity_prefix"
 CONF_AUTO_UPDATE_SAMD = "auto_update_samd"
 CONF_DIAGNOSTICS_INTERVAL = "diagnostics_interval"
 CONF_METERING_INTERVAL = "metering_interval"
+CONF_GRID_DEADBAND = "grid_deadband"
+CONF_TOTAL_POWER = "total_power"
+CONF_GRID_IMPORT_POWER = "grid_import_power"
+CONF_GRID_EXPORT_POWER = "grid_export_power"
 CONF_MAINS = "mains"
 CONF_CIRCUITS = "circuits"
 CONF_LINE = "line"
@@ -660,6 +664,10 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_AUTO_UPDATE_SAMD, default=False): cv.boolean,
         cv.Optional(CONF_DIAGNOSTICS_INTERVAL): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_METERING_INTERVAL): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_GRID_DEADBAND, default=2.0): cv.positive_float,
+        cv.Optional(CONF_TOTAL_POWER): POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_GRID_IMPORT_POWER): POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_GRID_EXPORT_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_MAINS): _validate_mains,
         cv.Optional(CONF_CIRCUITS): _validate_circuits,
         cv.Optional(CONF_PHASES): _validate_metering_phases,
@@ -821,7 +829,17 @@ async def to_code(config):
         cg.add(var.set_diagnostics_interval(diagnostics_interval))
     if metering_interval := config.get(CONF_METERING_INTERVAL):
         cg.add(var.set_metering_interval(metering_interval))
+    cg.add(var.set_grid_deadband(config[CONF_GRID_DEADBAND]))
     cg.add(var.set_backup_partition_name(config[CONF_BACKUP_PARTITION]))
+    if total_power_config := config.get(CONF_TOTAL_POWER):
+        sens = await sensor.new_sensor(total_power_config)
+        cg.add(var.set_total_power_sensor(sens))
+    if grid_import_power_config := config.get(CONF_GRID_IMPORT_POWER):
+        sens = await sensor.new_sensor(grid_import_power_config)
+        cg.add(var.set_grid_import_power_sensor(sens))
+    if grid_export_power_config := config.get(CONF_GRID_EXPORT_POWER):
+        sens = await sensor.new_sensor(grid_export_power_config)
+        cg.add(var.set_grid_export_power_sensor(sens))
     if firmware_version_config := config.get(CONF_FIRMWARE_VERSION):
         sens = await text_sensor.new_text_sensor(firmware_version_config)
         cg.add(var.set_firmware_version_sensor(sens))
