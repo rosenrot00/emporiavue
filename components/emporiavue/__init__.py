@@ -13,7 +13,6 @@ from esphome.const import (
     CONF_INITIAL_VALUE,
     CONF_NAME,
     CONF_PHASE_ANGLE,
-    CONF_PHASE_ID,
     CONF_POWER,
     CONF_RESET_PIN,
     CONF_VOLTAGE,
@@ -92,6 +91,7 @@ CONF_AUTO_UPDATE_SAMD = "auto_update_samd"
 CONF_DIAGNOSTICS_INTERVAL = "diagnostics_interval"
 CONF_METERING_INTERVAL = "metering_interval"
 CONF_MAINS = "mains"
+CONF_PHASE_ID = "phase_id"
 CONF_CALIBRATION_NUMBER = "calibration_number"
 CONF_MAIN_CLAMP = "main_clamp"
 CONF_CT_ID = "ct_id"
