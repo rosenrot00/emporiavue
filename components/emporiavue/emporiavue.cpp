@@ -227,6 +227,7 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
   this->install_backup_header_ = BackupHeader{};
   this->install_stage_ = InstallStage::IDLE;
   this->install_next_offset_ = 0;
+  this->install_next_progress_log_offset_ = 0;
   this->install_flash_size_ = 0;
   this->install_page_size_ = 0;
   this->install_row_size_ = 0;
@@ -397,10 +398,12 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
   this->install_page_size_ = current.page_size;
   this->install_row_size_ = current.page_size * NVM_PAGES_PER_ROW;
   this->install_next_offset_ = 0;
+  this->install_next_progress_log_offset_ = INSTALL_PROGRESS_LOG_INTERVAL;
   this->install_stage_ = InstallStage::FLASH_PAGES;
   this->install_active_ = true;
   this->publish_status_(std::string(requested_name) + " SAMD firmware");
   this->publish_firmware_status_(str_sprintf("%s flashing 0/%" PRIu32, requested_name, this->install_flash_size_));
+  ESP_LOGI(TAG, "SAMD09 firmware %s progress: 0/%" PRIu32 " bytes", requested_name, this->install_flash_size_);
   ESP_LOGI(TAG,
            "SAMD09 firmware %s started: current_kind=%s, current_version=%" PRIu32
            ", source_size=%" PRIu32 ", reason=%s",
@@ -2045,9 +2048,15 @@ void EmporiaVueComponent::process_install_() {
   }
 
   this->install_next_offset_ += length;
-  if ((this->install_next_offset_ % 4096U) == 0 || this->install_next_offset_ >= this->install_flash_size_) {
+  if (this->install_next_offset_ >= this->install_next_progress_log_offset_ ||
+      this->install_next_offset_ >= this->install_flash_size_) {
+    ESP_LOGI(TAG, "SAMD09 firmware %s progress: %" PRIu32 "/%" PRIu32 " bytes", this->install_action_name_(),
+             this->install_next_offset_, this->install_flash_size_);
     this->publish_firmware_status_(str_sprintf("%s flashing %" PRIu32 "/%" PRIu32, this->install_action_name_(),
                                                this->install_next_offset_, this->install_flash_size_));
+    while (this->install_next_progress_log_offset_ <= this->install_next_offset_) {
+      this->install_next_progress_log_offset_ += INSTALL_PROGRESS_LOG_INTERVAL;
+    }
   }
 }
 
@@ -2071,6 +2080,7 @@ void EmporiaVueComponent::fail_install_(const std::string &error) {
   this->install_source_ = FlashSource::NONE;
   this->install_backup_header_ = BackupHeader{};
   this->install_stage_ = InstallStage::IDLE;
+  this->install_next_progress_log_offset_ = 0;
   this->release_pins_();
   this->publish_status_(action_name + " failed: " + error);
   this->publish_firmware_status_(action_name + " failed: " + error);
@@ -2125,6 +2135,7 @@ void EmporiaVueComponent::finish_install_success_() {
   this->install_source_ = FlashSource::NONE;
   this->install_backup_header_ = BackupHeader{};
   this->install_stage_ = InstallStage::IDLE;
+  this->install_next_progress_log_offset_ = 0;
   this->release_pins_();
 
   if (this->reset_pin_ != nullptr) {

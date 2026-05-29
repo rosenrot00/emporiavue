@@ -114,6 +114,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   static constexpr uint16_t NVM_STATUS_NVME = 0x0010;
   static constexpr uint16_t NVM_STATUS_ERROR_MASK = NVM_STATUS_PROGE | NVM_STATUS_LOCKE | NVM_STATUS_NVME;
   static constexpr uint32_t NVM_PAGES_PER_ROW = 4;
+  static constexpr uint32_t INSTALL_PROGRESS_LOG_INTERVAL = 3072;
   static constexpr uint32_t FLASH_START = 0x00000000UL;
   static constexpr uint32_t DHCSR = 0xE000EDF0UL;
   static constexpr uint32_t DCRSR = 0xE000EDF4UL;
@@ -457,6 +458,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   InstallStage install_stage_{InstallStage::IDLE};
   BackupHeader install_backup_header_{};
   uint32_t install_next_offset_{0};
+  uint32_t install_next_progress_log_offset_{0};
   uint32_t install_flash_size_{0};
   uint32_t install_page_size_{0};
   uint32_t install_row_size_{0};
