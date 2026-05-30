@@ -491,8 +491,8 @@ emporiavue:
 
 ### Phase Detection
 
-Phase detection is an optional setup helper for single-line branch circuits. It compares the circuit CT against all
-available voltage references, ignores samples below `min_power`, and publishes a compact text result every
+Phase detection is an optional diagnostic helper for single-line branch circuits. It compares the circuit CT against all
+available voltage references, ignores samples below `min_power`, and publishes a compact diagnostic text result every
 `update_interval`.
 
 ```yaml

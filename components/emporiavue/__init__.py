@@ -93,6 +93,7 @@ CONF_MIN_SAMPLES = "min_samples"
 CONF_CONFIDENCE_RATIO = "confidence_ratio"
 CONF_IDLE_TIMEOUT = "idle_timeout"
 CONF_UPDATE_INTERVAL = "update_interval"
+CONF_ENTITY_CATEGORY = "entity_category"
 CONF_TOTAL_POWER = "total_power"
 CONF_GRID_IMPORT_POWER = "grid_import_power"
 CONF_GRID_EXPORT_POWER = "grid_export_power"
@@ -500,6 +501,7 @@ def _apply_phase_detection_defaults(config):
             phase_detection_config[CONF_NAME] = default_name
         if prefix and name_is_default:
             phase_detection_config[CONF_NAME] = _prefixed_entity_name(prefix, default_name)
+        phase_detection_config[CONF_ENTITY_CATEGORY] = ENTITY_CATEGORY_DIAGNOSTIC
 
         circuit_config = dict(circuit_config)
         circuit_config[CONF_PHASE_DETECTION] = phase_detection_config
