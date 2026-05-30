@@ -18,7 +18,7 @@ import/export, and more accurate handling of real-world wiring such as line-to-l
 
 | Version | Changes |
 |---|---|
-| 2026.05.1 | Initial public release with [Vue 2 I2C packages](#vue-2-i2c-packages), [runtime voltage calibration](#runtime-calibration), [internal metering filters](#internal-metering-filters), [stable circuit IDs and energy](#stable-circuit-ids-current-and-energy), [apparent power and power factor](#apparent-power-and-power-factor), [groups](#groups), [line-to-line circuit power](#line-to-line-circuits), [virtual lines](#virtual-lines), [windowed phase detection](#phase-detection), [grid import/export](#grid-importexport), [diagnostics](#diagnostics), and [SAMD09 firmware management](#samd09-firmware-management). |
+| 2026.05.1 | Initial public release with [Vue 2 I2C packages](#vue-2-i2c-packages), [runtime voltage calibration](#runtime-calibration), [internal metering filters](#internal-metering-filters), [stable circuit IDs and energy](#stable-circuit-ids-current-and-energy), [apparent power and power factor](#apparent-power-and-power-factor), [groups](#groups), [line-to-line circuit power](#line-to-line-circuits), [virtual lines](#virtual-lines), [phase detection](#phase-detection), [grid import/export](#grid-importexport), [diagnostics](#diagnostics), and [SAMD09 firmware management](#samd09-firmware-management). |
 
 ## Setup Examples
 
@@ -544,8 +544,8 @@ If `name` is omitted, the component uses a stable default such as `Line 2-3 Volt
 ### Phase Detection
 
 Phase detection is an optional diagnostic helper for single-line branch circuits. It compares the circuit CT against all
-available voltage references, collects valid samples for one `update_interval` window, publishes one compact diagnostic
-text result, and then starts a fresh window.
+available voltage references, collects valid samples for one `update_interval` period, publishes one compact diagnostic
+text result, and then starts a fresh period.
 
 ```yaml
 emporiavue:
@@ -573,7 +573,7 @@ The Home Assistant text sensor stays short:
 - `L3 87%`: suggested YAML setting is likely `line: 3`.
 - `ambiguous L2/L3`: the best two candidates are too close.
 
-Debug logging includes the details used for the decision, for example the window duration, sample count, and mean
+Debug logging includes the details used for the decision, for example the elapsed interval, sample count, and mean
 absolute scores per line.
 Phase detection is not available for line-to-line circuits because those intentionally use two voltage references.
 
