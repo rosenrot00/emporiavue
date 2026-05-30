@@ -392,8 +392,8 @@ emporiavue:
 
 ### SAMD09 Firmware Management
 
-Firmware management is optional. It is available for reading, flashing, restoring, or testing SAMD09 images when you
-explicitly need it.
+SAMD09 firmware management is an advanced recovery and testing tool. Normal metering does not require pressing any
+SAMD flash button.
 
 > [!WARNING]
 > Flashing the SAMD09 changes the measurement controller firmware inside the Vue 2. Only use the flash buttons if you
@@ -404,10 +404,15 @@ device that is already flashed, update the ESP32 partition table once. ESPHome d
 `esp32.partitions`, and partition-table OTA needs `allow_partition_access: true` on the ESPHome OTA platform before
 running `esphome upload --partition-table`.
 
-SAMD writes are enabled by default, and updating the managed SAMD firmware does not require a legacy backup. The
-firmware buttons are configuration entities: `Read SAMD Firmware` stores the current SAMD image in `samd_bak`,
-`Flash SAMD Bundled Firmware` installs the bundled managed image, and `Flash SAMD Backup Firmware` restores the saved
-backup image. If external firmware is configured, an additional external flash button is generated for that image.
+The firmware buttons are configuration entities:
+
+- `Read SAMD Firmware` stores the current SAMD image in `samd_bak`.
+- `Flash SAMD Bundled Firmware` installs the firmware image bundled with this component.
+- `Flash SAMD Backup Firmware` restores the saved backup image.
+- External firmware entries create additional flash buttons for those images.
+
+`auto_update_samd` defaults to `false`. Leave it disabled unless you explicitly want the component to update the SAMD09
+automatically when the detected firmware is missing, older, or built for a different transport.
 
 ```yaml
 emporiavue:
