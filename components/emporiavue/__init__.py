@@ -89,9 +89,7 @@ CONF_METERING_INTERVAL = "metering_interval"
 CONF_GRID_DEADBAND = "grid_deadband"
 CONF_PHASE_DETECTION = "phase_detection"
 CONF_MIN_POWER = "min_power"
-CONF_MIN_SAMPLES = "min_samples"
 CONF_CONFIDENCE_RATIO = "confidence_ratio"
-CONF_IDLE_TIMEOUT = "idle_timeout"
 CONF_UPDATE_INTERVAL = "update_interval"
 CONF_ENTITY_CATEGORY = "entity_category"
 CONF_TOTAL_POWER = "total_power"
@@ -755,9 +753,7 @@ INTERNAL_POWER_FILTER_SCHEMA = cv.ensure_list(
 PHASE_DETECTION_GLOBAL_SCHEMA = cv.Schema(
     {
         cv.Optional(CONF_MIN_POWER, default=30.0): _validate_watts,
-        cv.Optional(CONF_MIN_SAMPLES, default=30): cv.int_range(min=1, max=10000),
         cv.Optional(CONF_CONFIDENCE_RATIO, default=1.5): _validate_confidence_ratio,
-        cv.Optional(CONF_IDLE_TIMEOUT, default="2min"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_UPDATE_INTERVAL, default="10s"): cv.positive_time_period_milliseconds,
     }
 )
@@ -1183,9 +1179,7 @@ async def to_code(config):
     cg.add(var.set_metering_interval(config[CONF_METERING_INTERVAL]))
     cg.add(var.set_grid_deadband(config[CONF_GRID_DEADBAND]))
     phase_detection_config = config[CONF_PHASE_DETECTION]
-    cg.add(var.set_phase_detection_min_samples(phase_detection_config[CONF_MIN_SAMPLES]))
     cg.add(var.set_phase_detection_confidence_ratio(phase_detection_config[CONF_CONFIDENCE_RATIO]))
-    cg.add(var.set_phase_detection_idle_timeout(phase_detection_config[CONF_IDLE_TIMEOUT]))
     cg.add(var.set_phase_detection_update_interval(phase_detection_config[CONF_UPDATE_INTERVAL]))
     cg.add(var.set_backup_partition_name(config[CONF_BACKUP_PARTITION]))
     if raw_total_power_config := config.get(CONF_RAW_TOTAL_POWER):

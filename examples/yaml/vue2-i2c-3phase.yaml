@@ -68,6 +68,11 @@ time:
     lambda: 'return max(x, 0.0f);'
 
 emporiavue:
+  phase_detection:
+    min_power: 30W
+    confidence_ratio: 1.5
+    update_interval: 10s
+
   mains:
     line_1:
       voltage:
@@ -114,6 +119,7 @@ emporiavue:
         filters: *throttle_avg
     cir3:
       line: 1
+      phase_detection: true
       power:
         filters: *throttle_avg
     cir4:
