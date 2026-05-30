@@ -24,7 +24,7 @@ import/export, and more accurate handling of real-world wiring such as line-to-l
 
 Use the Vue 2 I2C base package plus exactly one topology package. Start with the topology that matches how the Vue
 voltage inputs are wired, then override only the circuit names, line assignments, filters, and groups that differ in
-your panel.
+your panel. Full copy/paste YAML files are collected in [`examples/yaml`](examples/yaml/).
 
 ### Vue 2 3phase With Neutral
 
@@ -89,7 +89,8 @@ emporiavue:
 
 Some community installations have a 3phase subpanel without neutral. A related
 [emporia-vue-local discussion](https://github.com/emporia-vue-local/esphome/discussions/414) used one line as a
-pseudo-reference so line-to-line loads could still be calculated.
+pseudo-reference so line-to-line loads could still be calculated. A complete YAML starting point is available at
+[`examples/yaml/vue2-i2c-3phase-no-neutral.yaml`](examples/yaml/vue2-i2c-3phase-no-neutral.yaml).
 
 > [!WARNING]
 > This is an advanced electrical setup, not a generic recommendation. Do not rewire the Vue voltage reference unless
