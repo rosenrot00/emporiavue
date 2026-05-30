@@ -88,6 +88,7 @@ CONF_AUTO_UPDATE_SAMD = "auto_update_samd"
 CONF_DIAGNOSTICS_INTERVAL = "diagnostics_interval"
 CONF_METERING_INTERVAL = "metering_interval"
 CONF_GRID_DEADBAND = "grid_deadband"
+CONF_MIN_APPARENT_POWER = "min_apparent_power"
 CONF_PHASE_DETECTION = "phase_detection"
 CONF_MIN_POWER = "min_power"
 CONF_CONFIDENCE_RATIO = "confidence_ratio"
@@ -106,6 +107,8 @@ CONF_GROUPS = "groups"
 CONF_VIRTUAL_LINES = "virtual_lines"
 CONF_LINES = "lines"
 CONF_LINE = "line"
+CONF_APPARENT_POWER = "apparent_power"
+CONF_POWER_FACTOR = "power_factor"
 CONF_PHASE_ID = "phase_id"
 CONF_CALIBRATION_NUMBER = "calibration_number"
 CONF_MAIN_CLAMP = "main_clamp"
@@ -366,6 +369,34 @@ def _split_power_sensor_config(parent_config, raw_id, always_create_raw=False, d
     return parent_config
 
 
+def _name_from_power_name(power_name, replacement):
+    if power_name.endswith(" Power"):
+        return f"{power_name[:-6]} {replacement}"
+    if power_name.endswith(" power"):
+        return f"{power_name[:-6]} {replacement.lower()}"
+    return f"{power_name} {replacement}"
+
+
+def _apply_optional_sensor_default_name(parent_config, key, default_name):
+    if key not in parent_config:
+        return parent_config
+
+    sensor_config = parent_config[key]
+    if sensor_config is None:
+        sensor_config = {}
+    elif not isinstance(sensor_config, dict):
+        raise cv.Invalid(f"{key} must be a mapping")
+    else:
+        sensor_config = dict(sensor_config)
+
+    if CONF_NAME not in sensor_config and CONF_ID not in sensor_config:
+        sensor_config[CONF_NAME] = default_name
+
+    parent_config = dict(parent_config)
+    parent_config[key] = sensor_config
+    return parent_config
+
+
 def _parse_group_source(source):
     if not isinstance(source, str):
         raise cv.Invalid("Group source must be a string")
@@ -430,9 +461,19 @@ def _apply_raw_power_defaults(config):
         for main_key, main_config in list(mains.items()):
             if isinstance(main_config, dict):
                 default_name = f"{main_key.replace('_', ' ').title()} Power"
-                mains[main_key] = _split_power_sensor_config(
+                main_config = _split_power_sensor_config(
                     main_config, f"{main_key}_power", default_power_name=default_name
                 )
+                main_config = _apply_optional_sensor_default_name(
+                    main_config, CONF_CURRENT, _name_from_power_name(default_name, "Current")
+                )
+                main_config = _apply_optional_sensor_default_name(
+                    main_config, CONF_APPARENT_POWER, _name_from_power_name(default_name, "Apparent Power")
+                )
+                main_config = _apply_optional_sensor_default_name(
+                    main_config, CONF_POWER_FACTOR, _name_from_power_name(default_name, "Power Factor")
+                )
+                mains[main_key] = main_config
         config[CONF_MAINS] = mains
 
     if CONF_CIRCUITS in config and isinstance(config[CONF_CIRCUITS], dict):
@@ -451,6 +492,19 @@ def _apply_raw_power_defaults(config):
                     always_create_raw=True,
                     default_power_name=default_name,
                 )
+                circuits[circuit_key] = _apply_optional_sensor_default_name(
+                    circuits[circuit_key], CONF_CURRENT, _name_from_power_name(default_name, "Current")
+                )
+                circuits[circuit_key] = _apply_optional_sensor_default_name(
+                    circuits[circuit_key],
+                    CONF_APPARENT_POWER,
+                    _name_from_power_name(default_name, "Apparent Power"),
+                )
+                circuits[circuit_key] = _apply_optional_sensor_default_name(
+                    circuits[circuit_key],
+                    CONF_POWER_FACTOR,
+                    _name_from_power_name(default_name, "Power Factor"),
+                )
         config[CONF_CIRCUITS] = circuits
 
     if CONF_GROUPS in config and isinstance(config[CONF_GROUPS], dict):
@@ -468,13 +522,21 @@ def _apply_raw_power_defaults(config):
         for index, ct_config in enumerate(config[CONF_CT_CLAMPS]):
             if isinstance(ct_config, dict):
                 default_name = ct_config.get(CONF_NAME, f"CT {ct_config.get(CONF_INPUT, index + 1)} Power")
-                ct_clamps.append(
-                    _split_power_sensor_config(
-                        ct_config,
-                        f"ct_{index}_power",
-                        default_power_name=default_name,
-                    )
+                ct_config = _split_power_sensor_config(
+                    ct_config,
+                    f"ct_{index}_power",
+                    default_power_name=default_name,
                 )
+                ct_config = _apply_optional_sensor_default_name(
+                    ct_config, CONF_CURRENT, _name_from_power_name(default_name, "Current")
+                )
+                ct_config = _apply_optional_sensor_default_name(
+                    ct_config, CONF_APPARENT_POWER, _name_from_power_name(default_name, "Apparent Power")
+                )
+                ct_config = _apply_optional_sensor_default_name(
+                    ct_config, CONF_POWER_FACTOR, _name_from_power_name(default_name, "Power Factor")
+                )
+                ct_clamps.append(ct_config)
             else:
                 ct_clamps.append(ct_config)
         config[CONF_CT_CLAMPS] = ct_clamps
@@ -769,6 +831,20 @@ CURRENT_SENSOR_SCHEMA = sensor.sensor_schema(
     accuracy_decimals=2,
 )
 
+APPARENT_POWER_SENSOR_SCHEMA = sensor.sensor_schema(
+    unit_of_measurement="VA",
+    device_class="apparent_power",
+    state_class=STATE_CLASS_MEASUREMENT,
+    accuracy_decimals=1,
+)
+
+POWER_FACTOR_SENSOR_SCHEMA = sensor.sensor_schema(
+    icon="mdi:cosine-wave",
+    device_class="power_factor",
+    state_class=STATE_CLASS_MEASUREMENT,
+    accuracy_decimals=2,
+)
+
 
 def _validate_watts(value):
     if isinstance(value, str):
@@ -786,6 +862,25 @@ def _validate_watts(value):
     value = cv.float_(value)
     if value <= 0:
         raise cv.Invalid("power value must be positive")
+    return value
+
+
+def _validate_volt_amps(value):
+    if isinstance(value, str):
+        normalized = value.strip().lower().replace(" ", "")
+        multiplier = 1.0
+        if normalized.endswith("kva"):
+            normalized = normalized[:-3]
+            multiplier = 1000.0
+        elif normalized.endswith("va"):
+            normalized = normalized[:-2]
+        try:
+            value = float(normalized) * multiplier
+        except ValueError as err:
+            raise cv.Invalid("apparent power value must be a number, VA, or kVA value") from err
+    value = cv.float_(value)
+    if value < 0:
+        raise cv.Invalid("apparent power value must not be negative")
     return value
 
 
@@ -887,6 +982,8 @@ METERING_MAIN_SCHEMA = cv.Schema(
         cv.Optional(CONF_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_RAW_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_CURRENT): CURRENT_SENSOR_SCHEMA,
+        cv.Optional(CONF_APPARENT_POWER): APPARENT_POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_POWER_FACTOR): POWER_FACTOR_SENSOR_SCHEMA,
     }
 )
 
@@ -964,6 +1061,8 @@ METERING_CIRCUIT_SCHEMA = cv.Schema(
         cv.Optional(CONF_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_RAW_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_CURRENT): CURRENT_SENSOR_SCHEMA,
+        cv.Optional(CONF_APPARENT_POWER): APPARENT_POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_POWER_FACTOR): POWER_FACTOR_SENSOR_SCHEMA,
         cv.Optional(CONF_PHASE_DETECTION): _validate_phase_detection_sensor,
     }
 )
@@ -1065,6 +1164,8 @@ METERING_CT_CLAMP_SCHEMA = cv.Schema(
         cv.Optional(CONF_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_RAW_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_CURRENT): CURRENT_SENSOR_SCHEMA,
+        cv.Optional(CONF_APPARENT_POWER): APPARENT_POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_POWER_FACTOR): POWER_FACTOR_SENSOR_SCHEMA,
     }
 )
 
@@ -1087,6 +1188,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_DIAGNOSTICS_INTERVAL): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_METERING_INTERVAL, default="220ms"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_GRID_DEADBAND, default=2.0): cv.positive_float,
+        cv.Optional(CONF_MIN_APPARENT_POWER, default="20VA"): _validate_volt_amps,
         cv.Optional(CONF_PHASE_DETECTION, default={}): PHASE_DETECTION_GLOBAL_SCHEMA,
         cv.Optional(CONF_TOTAL_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_RAW_TOTAL_POWER): POWER_SENSOR_SCHEMA,
@@ -1265,6 +1367,7 @@ async def to_code(config):
         cg.add(var.set_diagnostics_interval(diagnostics_interval))
     cg.add(var.set_metering_interval(config[CONF_METERING_INTERVAL]))
     cg.add(var.set_grid_deadband(config[CONF_GRID_DEADBAND]))
+    cg.add(var.set_min_apparent_power(config[CONF_MIN_APPARENT_POWER]))
     phase_detection_config = config[CONF_PHASE_DETECTION]
     cg.add(var.set_phase_detection_confidence_ratio(phase_detection_config[CONF_CONFIDENCE_RATIO]))
     cg.add(var.set_phase_detection_update_interval(phase_detection_config[CONF_UPDATE_INTERVAL]))
@@ -1362,6 +1465,12 @@ async def to_code(config):
         if current_config := main_config.get(CONF_CURRENT):
             sens = await sensor.new_sensor(current_config)
             cg.add(ct_clamp_var.set_current_sensor(sens))
+        if apparent_power_config := main_config.get(CONF_APPARENT_POWER):
+            sens = await sensor.new_sensor(apparent_power_config)
+            cg.add(ct_clamp_var.set_apparent_power_sensor(sens))
+        if power_factor_config := main_config.get(CONF_POWER_FACTOR):
+            sens = await sensor.new_sensor(power_factor_config)
+            cg.add(ct_clamp_var.set_power_factor_sensor(sens))
         ct_clamps.append(ct_clamp_var)
 
     for circuit_key, circuit_config in config.get(CONF_CIRCUITS, {}).items():
@@ -1386,6 +1495,12 @@ async def to_code(config):
         if current_config := circuit_config.get(CONF_CURRENT):
             sens = await sensor.new_sensor(current_config)
             cg.add(ct_clamp_var.set_current_sensor(sens))
+        if apparent_power_config := circuit_config.get(CONF_APPARENT_POWER):
+            sens = await sensor.new_sensor(apparent_power_config)
+            cg.add(ct_clamp_var.set_apparent_power_sensor(sens))
+        if power_factor_config := circuit_config.get(CONF_POWER_FACTOR):
+            sens = await sensor.new_sensor(power_factor_config)
+            cg.add(ct_clamp_var.set_power_factor_sensor(sens))
         if phase_detection_sensor_config := circuit_config.get(CONF_PHASE_DETECTION):
             phase_detection_text_sensor_config = dict(phase_detection_sensor_config)
             phase_detection_text_sensor_config.pop(CONF_MIN_POWER, None)
@@ -1462,6 +1577,12 @@ async def to_code(config):
         if current_config := ct_config.get(CONF_CURRENT):
             sens = await sensor.new_sensor(current_config)
             cg.add(ct_clamp_var.set_current_sensor(sens))
+        if apparent_power_config := ct_config.get(CONF_APPARENT_POWER):
+            sens = await sensor.new_sensor(apparent_power_config)
+            cg.add(ct_clamp_var.set_apparent_power_sensor(sens))
+        if power_factor_config := ct_config.get(CONF_POWER_FACTOR):
+            sens = await sensor.new_sensor(power_factor_config)
+            cg.add(ct_clamp_var.set_power_factor_sensor(sens))
 
         ct_clamps.append(ct_clamp_var)
     if ct_clamps:

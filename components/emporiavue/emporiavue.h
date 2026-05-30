@@ -77,6 +77,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   }
   void set_metering_interval(uint32_t metering_interval_ms) { this->metering_interval_ms_ = metering_interval_ms; }
   void set_grid_deadband(float grid_deadband) { this->grid_deadband_ = grid_deadband; }
+  void set_min_apparent_power(float min_apparent_power) { this->min_apparent_power_ = min_apparent_power; }
   void set_phase_detection_confidence_ratio(float confidence_ratio) {
     this->phase_detection_confidence_ratio_ = confidence_ratio;
   }
@@ -503,6 +504,10 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void fail_backup_(const std::string &error);
   void finish_backup_success_();
   bool calculate_ct_power_(const MeteringFrame &frame, const MeteringCTClampConfig *ct_clamp, float *power) const;
+  bool calculate_ct_voltage_(const MeteringFrame &frame, const MeteringCTClampConfig *ct_clamp, float *voltage) const;
+  bool calculate_ct_current_(const MeteringFrame &frame, const MeteringCTClampConfig *ct_clamp, float *current) const;
+  bool calculate_ct_apparent_power_(const MeteringFrame &frame, const MeteringCTClampConfig *ct_clamp,
+                                    float *apparent_power) const;
   void update_phase_detection_(const MeteringFrame &frame, MeteringCTClampConfig *ct_clamp);
 
   InternalGPIOPin *swdio_pin_{nullptr};
@@ -534,6 +539,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   bool last_metering_sequence_valid_{false};
   MeteringFrame last_metering_frame_{};
   float grid_deadband_{2.0f};
+  float min_apparent_power_{20.0f};
   float phase_detection_confidence_ratio_{1.5f};
   uint32_t phase_detection_update_interval_ms_{10000};
   sensor::Sensor *raw_total_power_sensor_{nullptr};
@@ -653,6 +659,10 @@ class MeteringCTClampConfig {
   sensor::Sensor *get_power_sensor() const { return this->power_sensor_; }
   void set_current_sensor(sensor::Sensor *sensor) { this->current_sensor_ = sensor; }
   sensor::Sensor *get_current_sensor() const { return this->current_sensor_; }
+  void set_apparent_power_sensor(sensor::Sensor *sensor) { this->apparent_power_sensor_ = sensor; }
+  sensor::Sensor *get_apparent_power_sensor() const { return this->apparent_power_sensor_; }
+  void set_power_factor_sensor(sensor::Sensor *sensor) { this->power_factor_sensor_ = sensor; }
+  sensor::Sensor *get_power_factor_sensor() const { return this->power_factor_sensor_; }
   void add_power_multiply_filter(float multiplier) { this->power_filters_.add_multiply_filter(multiplier); }
   void add_power_lambda_filter(std::function<float(float)> filter) {
     this->power_filters_.add_lambda_filter(std::move(filter));
@@ -694,6 +704,8 @@ class MeteringCTClampConfig {
   sensor::Sensor *raw_power_sensor_{nullptr};
   sensor::Sensor *power_sensor_{nullptr};
   sensor::Sensor *current_sensor_{nullptr};
+  sensor::Sensor *apparent_power_sensor_{nullptr};
+  sensor::Sensor *power_factor_sensor_{nullptr};
   MeteringPowerFilters power_filters_{};
   text_sensor::TextSensor *phase_detection_sensor_{nullptr};
   std::string phase_detection_name_{};

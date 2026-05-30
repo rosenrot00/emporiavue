@@ -68,6 +68,8 @@ time:
     lambda: 'return max(x, 0.0f);'
 
 emporiavue:
+  min_apparent_power: 20VA
+
   phase_detection:
     min_power: 30W
     confidence_ratio: 1.5
@@ -124,6 +126,10 @@ emporiavue:
       power:
         filters: *throttle_avg
       current:
+        filters: *throttle_avg
+      apparent_power:
+        filters: *throttle_avg
+      power_factor:
         filters: *throttle_avg
     cir3:
       line: 1

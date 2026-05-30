@@ -77,6 +77,7 @@ void EmporiaVueComponent::dump_config() {
     ESP_LOGCONFIG(TAG, "  Metering interval: %" PRIu32 " ms", this->metering_interval_ms_);
   }
   ESP_LOGCONFIG(TAG, "  Grid deadband: %.1f W", this->grid_deadband_);
+  ESP_LOGCONFIG(TAG, "  Minimum apparent power: %.1f VA", this->min_apparent_power_);
   ESP_LOGCONFIG(TAG, "  Phase detection confidence ratio: %.2f", this->phase_detection_confidence_ratio_);
   ESP_LOGCONFIG(TAG, "  Phase detection window: %" PRIu32 " ms", this->phase_detection_update_interval_ms_);
   const char *entity_prefix = this->entity_prefix_.empty() ? "(default)" : this->entity_prefix_.c_str();
@@ -117,6 +118,8 @@ void EmporiaVueComponent::dump_config() {
     LOG_SENSOR("    ", "Raw power", ct_clamp->get_raw_power_sensor());
     LOG_SENSOR("    ", "Power", ct_clamp->get_power_sensor());
     LOG_SENSOR("    ", "Current", ct_clamp->get_current_sensor());
+    LOG_SENSOR("    ", "Apparent power", ct_clamp->get_apparent_power_sensor());
+    LOG_SENSOR("    ", "Power factor", ct_clamp->get_power_factor_sensor());
     LOG_TEXT_SENSOR("    ", "Phase detection", ct_clamp->get_phase_detection_sensor());
   }
   for (auto *group : this->metering_groups_) {
@@ -1577,6 +1580,75 @@ bool EmporiaVueComponent::calculate_ct_power_(const MeteringFrame &frame, const 
   return true;
 }
 
+bool EmporiaVueComponent::calculate_ct_voltage_(const MeteringFrame &frame, const MeteringCTClampConfig *ct_clamp,
+                                                float *voltage) const {
+  if (ct_clamp == nullptr || voltage == nullptr) {
+    return false;
+  }
+
+  const MeteringPhaseConfig *phase = ct_clamp->get_phase();
+  if (phase == nullptr || phase->get_input_wire() >= 3) {
+    return false;
+  }
+
+  const uint8_t input_a = phase->get_input_wire();
+  const float voltage_a = frame.phases[input_a].voltage_raw * phase->get_calibration();
+  if (!ct_clamp->is_line_pair()) {
+    *voltage = voltage_a;
+    return true;
+  }
+
+  const MeteringPhaseConfig *phase_b = ct_clamp->get_line_pair_phase_b();
+  const uint16_t raw_frequency = frame.phases[0].cycle_count_raw;
+  if (phase_b == nullptr || phase_b->get_input_wire() >= 3 || raw_frequency == 0) {
+    return false;
+  }
+
+  const uint8_t input_b = phase_b->get_input_wire();
+  const float voltage_b = frame.phases[input_b].voltage_raw * phase_b->get_calibration();
+  constexpr float two_pi = 6.28318530717958647692f;
+  const float angle_a =
+      input_a == 0 ? 0.0f : frame.phases[input_a].cycle_count_raw * two_pi / static_cast<float>(raw_frequency);
+  const float angle_b =
+      input_b == 0 ? 0.0f : frame.phases[input_b].cycle_count_raw * two_pi / static_cast<float>(raw_frequency);
+  const float voltage_sq = voltage_a * voltage_a + voltage_b * voltage_b -
+                           2.0f * voltage_a * voltage_b * std::cos(angle_a - angle_b);
+  *voltage = std::sqrt(std::max(0.0f, voltage_sq));
+  return true;
+}
+
+bool EmporiaVueComponent::calculate_ct_current_(const MeteringFrame &frame, const MeteringCTClampConfig *ct_clamp,
+                                                float *current) const {
+  if (ct_clamp == nullptr || current == nullptr) {
+    return false;
+  }
+  const uint8_t port = ct_clamp->get_input_port();
+  if (port >= 19) {
+    return false;
+  }
+  const float scalar = port < 3 ? (775.0f / 42624.0f) : (775.0f / 170496.0f);
+  *current = frame.clamps[port].current_raw * scalar;
+  return true;
+}
+
+bool EmporiaVueComponent::calculate_ct_apparent_power_(const MeteringFrame &frame,
+                                                       const MeteringCTClampConfig *ct_clamp,
+                                                       float *apparent_power) const {
+  if (apparent_power == nullptr) {
+    return false;
+  }
+
+  float voltage = 0.0f;
+  float current = 0.0f;
+  if (!this->calculate_ct_voltage_(frame, ct_clamp, &voltage) ||
+      !this->calculate_ct_current_(frame, ct_clamp, &current)) {
+    return false;
+  }
+
+  *apparent_power = std::fabs(ct_clamp->apply_power_filters(voltage * current));
+  return true;
+}
+
 void EmporiaVueComponent::update_phase_detection_(const MeteringFrame &frame, MeteringCTClampConfig *ct_clamp) {
   if (ct_clamp == nullptr || ct_clamp->get_phase_detection_sensor() == nullptr) {
     return;
@@ -1757,8 +1829,27 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
       }
     }
     if (ct_clamp->get_current_sensor() != nullptr) {
-      const float scalar = port < 3 ? (775.0f / 42624.0f) : (775.0f / 170496.0f);
-      ct_clamp->get_current_sensor()->publish_state(frame.clamps[port].current_raw * scalar);
+      float current = 0.0f;
+      if (this->calculate_ct_current_(frame, ct_clamp, &current)) {
+        ct_clamp->get_current_sensor()->publish_state(current);
+      }
+    }
+
+    if (ct_clamp->get_apparent_power_sensor() != nullptr || ct_clamp->get_power_factor_sensor() != nullptr) {
+      float apparent_power = 0.0f;
+      if (this->calculate_ct_apparent_power_(frame, ct_clamp, &apparent_power)) {
+        const bool above_threshold = apparent_power >= this->min_apparent_power_;
+        if (ct_clamp->get_apparent_power_sensor() != nullptr) {
+          ct_clamp->get_apparent_power_sensor()->publish_state(above_threshold ? apparent_power : 0.0f);
+        }
+        if (ct_clamp->get_power_factor_sensor() != nullptr) {
+          float power_factor = 0.0f;
+          if (above_threshold && this->calculate_ct_power_(frame, ct_clamp, &power)) {
+            power_factor = std::max(0.0f, std::min(1.0f, std::fabs(power) / apparent_power));
+          }
+          ct_clamp->get_power_factor_sensor()->publish_state(power_factor);
+        }
+      }
     }
     this->update_phase_detection_(frame, ct_clamp);
   }

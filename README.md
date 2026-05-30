@@ -18,7 +18,7 @@ import/export, and more accurate handling of real-world wiring such as line-to-l
 
 | Version | Changes |
 |---|---|
-| 2026.05.1 | Initial public release with [Vue 2 I2C packages](#vue-2-i2c-packages), [runtime voltage calibration](#runtime-calibration), [internal metering filters](#internal-metering-filters), [stable circuit IDs and energy](#stable-circuit-ids-and-energy), [groups](#groups), [line-to-line circuit power](#line-to-line-circuits), [virtual lines](#virtual-lines), [windowed phase detection](#phase-detection), [grid import/export](#grid-importexport), [diagnostics](#diagnostics), and [SAMD09 firmware management](#samd09-firmware-management). |
+| 2026.05.1 | Initial public release with [Vue 2 I2C packages](#vue-2-i2c-packages), [runtime voltage calibration](#runtime-calibration), [internal metering filters](#internal-metering-filters), [stable circuit IDs and energy](#stable-circuit-ids-current-and-energy), [apparent power and power factor](#apparent-power-and-power-factor), [groups](#groups), [line-to-line circuit power](#line-to-line-circuits), [virtual lines](#virtual-lines), [windowed phase detection](#phase-detection), [grid import/export](#grid-importexport), [diagnostics](#diagnostics), and [SAMD09 firmware management](#samd09-firmware-management). |
 
 ## Setup Examples
 
@@ -194,6 +194,8 @@ time:
     lambda: 'return max(x, 0.0f);'
 
 emporiavue:
+  min_apparent_power: 20VA
+
   phase_detection:
     min_power: 30W
     confidence_ratio: 1.5
@@ -250,6 +252,10 @@ emporiavue:
       power:
         filters: *throttle_avg
       current:
+        filters: *throttle_avg
+      apparent_power:
+        filters: *throttle_avg
+      power_factor:
         filters: *throttle_avg
     cir3:
       line: 1
@@ -456,6 +462,39 @@ sensor:
     filters:
       - multiply: 0.001
 ```
+
+### Apparent Power and Power Factor
+
+Configured mains, circuits, and legacy `ct_clamps` can expose apparent power and power factor. Apparent power uses the
+SAMD09 RMS voltage and RMS current values:
+
+```text
+apparent_power = voltage_rms * current_rms
+power_factor = real_power / apparent_power
+```
+
+For line-to-line circuits, the component uses the calculated line-to-line voltage as the voltage reference. This keeps
+`line: [2, 3]` loads consistent with their real voltage reference.
+
+```yaml
+emporiavue:
+  min_apparent_power: 20VA
+
+  circuits:
+    cir2:
+      apparent_power:
+        name: "Circuit 2 Apparent Power"
+        filters:
+          - throttle_average: 5s
+      power_factor:
+        name: "Circuit 2 Power Factor"
+        filters:
+          - throttle_average: 5s
+```
+
+`min_apparent_power` defaults to `20VA`. Below that threshold, apparent power and power factor publish `0` instead of
+showing noise-dominated standby values. Set it lower, higher, or to `0VA` if your installation needs a different cutoff.
+Power factor is published as a dimensionless magnitude between `0` and `1`; use the real power sensor for direction.
 
 ### Groups
 
