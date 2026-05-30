@@ -26,7 +26,13 @@ Use the Vue 2 I2C base package plus exactly one topology package. Start with the
 voltage inputs are wired, then override only the circuit names, line assignments, filters, and groups that differ in
 your panel. Full copy/paste YAML files are collected in [`examples/yaml`](examples/yaml/).
 
-### Vue 2 3phase With Neutral
+For most users the choice is just:
+
+- `packages/vue2-i2c-1phase.yaml` for one measured line
+- `packages/vue2-i2c-2phase.yaml` for split-phase or two measured lines
+- `packages/vue2-i2c-3phase.yaml` for 3phase with neutral
+
+### 3phase With Neutral
 
 This is the normal 3phase setup: the Vue neutral terminal is wired to neutral, and the three voltage inputs map to the
 three mains lines. This is the setup used by the full example below.
@@ -41,7 +47,7 @@ packages:
       - packages/vue2-i2c-3phase.yaml
 ```
 
-### Vue 2 2phase / Split Phase
+### 2phase / Split Phase
 
 Use the 2phase preset when the installation has two measured lines. Keep the base package and swap only the topology
 package.
@@ -56,7 +62,7 @@ packages:
       - packages/vue2-i2c-2phase.yaml
 ```
 
-### Vue 2 1phase
+### 1phase
 
 Use the 1phase preset for single-line installations. Circuit YAML can still name circuits and add filters, but only one
 line is used as the voltage reference.
@@ -71,55 +77,16 @@ packages:
       - packages/vue2-i2c-1phase.yaml
 ```
 
-### Vue 2 Line-to-Line Loads
+### 3phase Without Neutral
 
-For loads connected between two measured lines, set the circuit line to a two-item list. The component calculates power
-against the voltage difference between those two lines.
-
-```yaml
-emporiavue:
-  circuits:
-    cir2:
-      line: [2, 3]
-      power:
-        name: "Line 2-3 Load Power"
-```
-
-### Vue 2 3phase Without Neutral
-
-Some 3phase subpanels do not have neutral available. If the installation has been reviewed and one measured line is
-intentionally used as the Vue voltage reference, line-to-line loads can still be calculated. A complete YAML starting
-point is available at
-[`examples/yaml/vue2-i2c-3phase-no-neutral.yaml`](examples/yaml/vue2-i2c-3phase-no-neutral.yaml).
+Some 3phase subpanels do not have neutral available. This is not a normal preset, because the voltage reference must be
+reviewed for the specific installation. A starting point is available at
+[`examples/yaml/vue2-i2c-3phase-no-neutral.yaml`](examples/yaml/vue2-i2c-3phase-no-neutral.yaml), and line-to-line
+circuit examples are described below in [Line-to-Line Circuits](#line-to-line-circuits).
 
 > [!WARNING]
 > This is an advanced electrical setup, not a generic recommendation. Do not rewire the Vue voltage reference unless
 > you understand the installation, local electrical rules, and the device safety implications.
-
-If the Vue reference is intentionally wired to `L2`, then `line_1` can represent `L1-L2`, `line_2` is near zero and
-usually hidden, and `line_3` can represent `L3-L2`. A load between `L1-L3` can then use `line: [1, 3]`.
-
-```yaml
-emporiavue:
-  mains:
-    line_2:
-      voltage:
-        internal: true
-
-  circuits:
-    cir1:
-      line: 1
-      power:
-        name: "L1-L2 Load Power"
-    cir2:
-      line: 3
-      power:
-        name: "L2-L3 Load Power"
-    cir3:
-      line: [1, 3]
-      power:
-        name: "L1-L3 Load Power"
-```
 
 ## Example YAML
 
