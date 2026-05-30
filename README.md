@@ -76,6 +76,9 @@ logger:
   logs:
     sensor: INFO
 
+preferences:
+  flash_write_interval: never
+
 time:
   - platform: sntp
     id: my_time
