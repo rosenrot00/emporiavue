@@ -18,7 +18,7 @@ import/export, and more accurate handling of real-world wiring such as line-to-l
 
 | Version | Changes |
 |---|---|
-| 2026.05.1 | Initial public release with [Vue 2 I2C packages](#vue-2-i2c-packages), [runtime voltage calibration](#runtime-calibration), [internal metering filters](#internal-metering-filters), [stable circuit IDs and energy](#stable-circuit-ids-and-energy), [groups](#groups), [line-to-line circuit power](#line-to-line-circuits), [grid import/export](#grid-importexport), and [SAMD09 firmware management](#samd09-firmware-management). |
+| 2026.05.1 | Initial public release with [Vue 2 I2C packages](#vue-2-i2c-packages), [runtime voltage calibration](#runtime-calibration), [internal metering filters](#internal-metering-filters), [stable circuit IDs and energy](#stable-circuit-ids-and-energy), [groups](#groups), [line-to-line circuit power](#line-to-line-circuits), [grid import/export](#grid-importexport), [diagnostics](#diagnostics), and [SAMD09 firmware management](#samd09-firmware-management). |
 
 ## Example YAML
 
@@ -389,6 +389,24 @@ emporiavue:
     filters:
       - throttle_average: 5s
 ```
+
+### Diagnostics
+
+Diagnostics are optional and stay disabled unless you set `diagnostics_interval`. Use a slow interval such as `30s`;
+these entities are meant for checking firmware and transport health, not for normal power dashboards.
+
+```yaml
+emporiavue:
+  diagnostics_interval: 30s
+```
+
+Useful diagnostic entities include:
+
+- `SAMD Packets Built`: metering packets completed by the SAMD09.
+- `SAMD Packets Read`: metering packets read by the ESP32.
+- `SAMD Packet Overruns`: packets overwritten before the ESP32 read them.
+- `SAMD DMA Transfer Errors`: DMA errors reported by the SAMD09.
+- `SAMD Last Sample Count`: sample count used for the last completed metering packet.
 
 ### SAMD09 Firmware Management
 
