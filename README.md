@@ -20,6 +20,106 @@ import/export, and more accurate handling of real-world wiring such as line-to-l
 |---|---|
 | 2026.05.1 | Initial public release with [Vue 2 I2C packages](#vue-2-i2c-packages), [runtime voltage calibration](#runtime-calibration), [internal metering filters](#internal-metering-filters), [stable circuit IDs and energy](#stable-circuit-ids-and-energy), [groups](#groups), [line-to-line circuit power](#line-to-line-circuits), [grid import/export](#grid-importexport), [diagnostics](#diagnostics), and [SAMD09 firmware management](#samd09-firmware-management). |
 
+## Setup Examples
+
+Use the Vue 2 I2C base package plus exactly one topology package. Start with the topology that matches how the Vue
+voltage inputs are wired, then override only the circuit names, line assignments, filters, and groups that differ in
+your panel.
+
+### Vue 2 3phase With Neutral
+
+This is the normal 3phase setup: the Vue neutral terminal is wired to neutral, and the three voltage inputs map to the
+three mains lines. This is the setup used by the full example below.
+
+```yaml
+packages:
+  emporiavue:
+    url: https://github.com/rosenrot00/emporiavue
+    ref: main
+    files:
+      - packages/vue2-i2c.yaml
+      - packages/vue2-i2c-3phase.yaml
+```
+
+### Vue 2 2phase / Split Phase
+
+Use the 2phase preset when the installation has two measured lines. Keep the base package and swap only the topology
+package.
+
+```yaml
+packages:
+  emporiavue:
+    url: https://github.com/rosenrot00/emporiavue
+    ref: main
+    files:
+      - packages/vue2-i2c.yaml
+      - packages/vue2-i2c-2phase.yaml
+```
+
+### Vue 2 1phase
+
+Use the 1phase preset for single-line installations. Circuit YAML can still name circuits and add filters, but only one
+line is used as the voltage reference.
+
+```yaml
+packages:
+  emporiavue:
+    url: https://github.com/rosenrot00/emporiavue
+    ref: main
+    files:
+      - packages/vue2-i2c.yaml
+      - packages/vue2-i2c-1phase.yaml
+```
+
+### Vue 2 Line-to-Line Loads
+
+For loads connected between two measured lines, set the circuit line to a two-item list. The component calculates power
+against the voltage difference between those two lines.
+
+```yaml
+emporiavue:
+  circuits:
+    cir2:
+      line: [2, 3]
+      power:
+        name: "Line 2-3 Load Power"
+```
+
+### Vue 2 3phase Without Neutral
+
+Some community installations have a 3phase subpanel without neutral. A related
+[emporia-vue-local discussion](https://github.com/emporia-vue-local/esphome/discussions/414) used one line as a
+pseudo-reference so line-to-line loads could still be calculated.
+
+> [!WARNING]
+> This is an advanced electrical setup, not a generic recommendation. Do not rewire the Vue voltage reference unless
+> you understand the installation, local electrical rules, and the device safety implications.
+
+If the Vue reference is intentionally wired to `L2`, then `line_1` can represent `L1-L2`, `line_2` is near zero and
+usually hidden, and `line_3` can represent `L3-L2`. A load between `L1-L3` can then use `line: [1, 3]`.
+
+```yaml
+emporiavue:
+  mains:
+    line_2:
+      voltage:
+        internal: true
+
+  circuits:
+    cir1:
+      line: 1
+      power:
+        name: "L1-L2 Load Power"
+    cir2:
+      line: 3
+      power:
+        name: "L2-L3 Load Power"
+    cir3:
+      line: [1, 3]
+      power:
+        name: "L1-L3 Load Power"
+```
+
 ## Example YAML
 
 A compact Vue 2 3phase setup can look like this. The packages provide the hardware defaults; the node YAML only
