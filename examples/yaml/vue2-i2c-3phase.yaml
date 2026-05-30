@@ -123,6 +123,8 @@ emporiavue:
       line: 3
       power:
         filters: *throttle_avg
+      current:
+        filters: *throttle_avg
     cir3:
       line: 1
       phase_detection: true

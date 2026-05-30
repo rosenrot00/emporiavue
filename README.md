@@ -249,6 +249,8 @@ emporiavue:
       line: 3
       power:
         filters: *throttle_avg
+      current:
+        filters: *throttle_avg
     cir3:
       line: 1
       phase_detection: true
@@ -423,10 +425,23 @@ emporiavue:
           - throttle_average: 5s
 ```
 
-### Stable Circuit IDs and Energy
+### Stable Circuit IDs, Current, and Energy
 
 Every configured circuit gets a stable internal power ID such as `cir1` or `cir5`, even if you do not expose that circuit
 as a visible power sensor. That keeps ESPHome energy sensors simple and avoids duplicate display sensors.
+
+Circuits can also expose current directly from the SAMD09 RMS current value. This is not estimated from `power /
+voltage`.
+
+```yaml
+emporiavue:
+  circuits:
+    cir2:
+      current:
+        name: "Circuit 2 Current"
+        filters:
+          - throttle_average: 5s
+```
 
 ```yaml
 sensor:
