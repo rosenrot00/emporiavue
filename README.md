@@ -93,8 +93,6 @@ time:
     lambda: 'return max(x, 0.0f);'
 
 emporiavue:
-  metering_interval: 220ms
-
   mains:
     line_1:
       voltage:
@@ -424,7 +422,7 @@ emporiavue:
 The repository currently includes the base `packages/vue2-i2c.yaml` package and three topology presets:
 `packages/vue2-i2c-1phase.yaml`, `packages/vue2-i2c-2phase.yaml`, and `packages/vue2-i2c-3phase.yaml`. The base package
 sets `hardware: vue2` and `mode: i2c`, adds a 64 KiB `samd_bak` data partition, and enables the firmware version
-entities plus the backup, update, and restore buttons. It also uses the component's default `metering_interval: 200ms`
+entities plus the backup, update, and restore buttons. It also uses the component's default `metering_interval: 220ms`
 I2C read path that decodes the stock-compatible frame into the component's internal metering frame. The transport is
 explicit in the filename so a future SPI transport can live next to it as `packages/vue2-spi.yaml`.
 

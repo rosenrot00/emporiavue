@@ -874,7 +874,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_ENTITY_PREFIX): cv.string_strict,
         cv.Optional(CONF_AUTO_UPDATE_SAMD, default=False): cv.boolean,
         cv.Optional(CONF_DIAGNOSTICS_INTERVAL): cv.positive_time_period_milliseconds,
-        cv.Optional(CONF_METERING_INTERVAL, default="200ms"): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_METERING_INTERVAL, default="220ms"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_GRID_DEADBAND, default=2.0): cv.positive_float,
         cv.Optional(CONF_TOTAL_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_RAW_TOTAL_POWER): POWER_SENSOR_SCHEMA,
