@@ -87,9 +87,9 @@ emporiavue:
 
 ### Vue 2 3phase Without Neutral
 
-Some community installations have a 3phase subpanel without neutral. A related
-[emporia-vue-local discussion](https://github.com/emporia-vue-local/esphome/discussions/414) used one line as a
-pseudo-reference so line-to-line loads could still be calculated. A complete YAML starting point is available at
+Some 3phase subpanels do not have neutral available. If the installation has been reviewed and one measured line is
+intentionally used as the Vue voltage reference, line-to-line loads can still be calculated. A complete YAML starting
+point is available at
 [`examples/yaml/vue2-i2c-3phase-no-neutral.yaml`](examples/yaml/vue2-i2c-3phase-no-neutral.yaml).
 
 > [!WARNING]

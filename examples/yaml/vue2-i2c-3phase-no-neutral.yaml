@@ -1,8 +1,5 @@
 # Advanced Emporia Vue 2 I2C 3phase setup without neutral in the measured panel.
 #
-# This example is based on the community discussion at:
-# https://github.com/emporia-vue-local/esphome/discussions/414
-#
 # WARNING: This is not a generic recommendation to rewire the Vue voltage
 # reference. Only use this pattern if the installation has been electrically
 # reviewed and you understand the safety implications.
