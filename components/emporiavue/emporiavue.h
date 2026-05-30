@@ -76,6 +76,16 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   }
   void set_metering_interval(uint32_t metering_interval_ms) { this->metering_interval_ms_ = metering_interval_ms; }
   void set_grid_deadband(float grid_deadband) { this->grid_deadband_ = grid_deadband; }
+  void set_phase_detection_min_samples(uint32_t min_samples) { this->phase_detection_min_samples_ = min_samples; }
+  void set_phase_detection_confidence_ratio(float confidence_ratio) {
+    this->phase_detection_confidence_ratio_ = confidence_ratio;
+  }
+  void set_phase_detection_idle_timeout(uint32_t idle_timeout_ms) {
+    this->phase_detection_idle_timeout_ms_ = idle_timeout_ms;
+  }
+  void set_phase_detection_update_interval(uint32_t update_interval_ms) {
+    this->phase_detection_update_interval_ms_ = update_interval_ms;
+  }
   void set_metering_phases(std::vector<MeteringPhaseConfig *> phases) {
     this->metering_phases_ = std::move(phases);
   }
@@ -493,6 +503,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void fail_backup_(const std::string &error);
   void finish_backup_success_();
   bool calculate_ct_power_(const MeteringFrame &frame, const MeteringCTClampConfig *ct_clamp, float *power) const;
+  void update_phase_detection_(const MeteringFrame &frame, MeteringCTClampConfig *ct_clamp);
 
   InternalGPIOPin *swdio_pin_{nullptr};
   InternalGPIOPin *swclk_pin_{nullptr};
@@ -523,6 +534,10 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   bool last_metering_sequence_valid_{false};
   MeteringFrame last_metering_frame_{};
   float grid_deadband_{2.0f};
+  uint32_t phase_detection_min_samples_{30};
+  float phase_detection_confidence_ratio_{1.5f};
+  uint32_t phase_detection_idle_timeout_ms_{120000};
+  uint32_t phase_detection_update_interval_ms_{10000};
   sensor::Sensor *raw_total_power_sensor_{nullptr};
   sensor::Sensor *total_power_sensor_{nullptr};
   sensor::Sensor *raw_grid_import_power_sensor_{nullptr};
@@ -613,6 +628,11 @@ class MeteringCalibrationNumber : public number::Number, public Parented<Meterin
 
 class MeteringCTClampConfig {
  public:
+  struct PhaseDetectionCandidate {
+    MeteringPhaseConfig *phase{nullptr};
+    uint8_t line{0};
+  };
+
   void set_phase(MeteringPhaseConfig *phase) {
     this->phase_ = phase;
     this->line_pair_ = false;
@@ -640,6 +660,37 @@ class MeteringCTClampConfig {
   }
   float apply_power_filters(float value) const { return this->power_filters_.apply(value); }
   size_t get_power_filter_count() const { return this->power_filters_.size(); }
+  void set_phase_detection_sensor(text_sensor::TextSensor *sensor) { this->phase_detection_sensor_ = sensor; }
+  text_sensor::TextSensor *get_phase_detection_sensor() const { return this->phase_detection_sensor_; }
+  void set_phase_detection_name(const std::string &name) { this->phase_detection_name_ = name; }
+  const std::string &get_phase_detection_name() const { return this->phase_detection_name_; }
+  void set_phase_detection_min_power(float min_power) { this->phase_detection_min_power_ = min_power; }
+  float get_phase_detection_min_power() const { return this->phase_detection_min_power_; }
+  void add_phase_detection_candidate(MeteringPhaseConfig *phase, uint8_t line) {
+    this->phase_detection_candidates_.push_back(PhaseDetectionCandidate{phase, line});
+  }
+  const std::vector<PhaseDetectionCandidate> &get_phase_detection_candidates() const {
+    return this->phase_detection_candidates_;
+  }
+  void reset_phase_detection() {
+    this->phase_detection_scores_.fill(0.0f);
+    this->phase_detection_samples_ = 0;
+    this->phase_detection_last_valid_ms_ = 0;
+  }
+  void add_phase_detection_score(uint8_t line, float score) {
+    if (line >= 1 && line <= 3) {
+      this->phase_detection_scores_[line - 1] += score;
+    }
+  }
+  const std::array<float, 3> &get_phase_detection_scores() const { return this->phase_detection_scores_; }
+  void increment_phase_detection_samples() { this->phase_detection_samples_++; }
+  uint32_t get_phase_detection_samples() const { return this->phase_detection_samples_; }
+  void set_phase_detection_last_valid_ms(uint32_t value) { this->phase_detection_last_valid_ms_ = value; }
+  uint32_t get_phase_detection_last_valid_ms() const { return this->phase_detection_last_valid_ms_; }
+  void set_phase_detection_last_publish_ms(uint32_t value) { this->phase_detection_last_publish_ms_ = value; }
+  uint32_t get_phase_detection_last_publish_ms() const { return this->phase_detection_last_publish_ms_; }
+  void set_phase_detection_last_state(const std::string &state) { this->phase_detection_last_state_ = state; }
+  const std::string &get_phase_detection_last_state() const { return this->phase_detection_last_state_; }
 
  protected:
   MeteringPhaseConfig *phase_{nullptr};
@@ -650,6 +701,15 @@ class MeteringCTClampConfig {
   sensor::Sensor *power_sensor_{nullptr};
   sensor::Sensor *current_sensor_{nullptr};
   MeteringPowerFilters power_filters_{};
+  text_sensor::TextSensor *phase_detection_sensor_{nullptr};
+  std::string phase_detection_name_{};
+  float phase_detection_min_power_{30.0f};
+  std::vector<PhaseDetectionCandidate> phase_detection_candidates_{};
+  std::array<float, 3> phase_detection_scores_{0.0f, 0.0f, 0.0f};
+  uint32_t phase_detection_samples_{0};
+  uint32_t phase_detection_last_valid_ms_{0};
+  uint32_t phase_detection_last_publish_ms_{0};
+  std::string phase_detection_last_state_{};
 };
 
 class MeteringGroupConfig {

@@ -18,7 +18,7 @@ import/export, and more accurate handling of real-world wiring such as line-to-l
 
 | Version | Changes |
 |---|---|
-| 2026.05.1 | Initial public release with [Vue 2 I2C packages](#vue-2-i2c-packages), [runtime voltage calibration](#runtime-calibration), [internal metering filters](#internal-metering-filters), [stable circuit IDs and energy](#stable-circuit-ids-and-energy), [groups](#groups), [line-to-line circuit power](#line-to-line-circuits), [grid import/export](#grid-importexport), [diagnostics](#diagnostics), and [SAMD09 firmware management](#samd09-firmware-management). |
+| 2026.05.1 | Initial public release with [Vue 2 I2C packages](#vue-2-i2c-packages), [runtime voltage calibration](#runtime-calibration), [internal metering filters](#internal-metering-filters), [stable circuit IDs and energy](#stable-circuit-ids-and-energy), [groups](#groups), [line-to-line circuit power](#line-to-line-circuits), [phase detection](#phase-detection), [grid import/export](#grid-importexport), [diagnostics](#diagnostics), and [SAMD09 firmware management](#samd09-firmware-management). |
 
 ## Setup Examples
 
@@ -488,6 +488,44 @@ emporiavue:
       filters:
         - multiply: -1
 ```
+
+### Phase Detection
+
+Phase detection is an optional setup helper for single-line branch circuits. It compares the circuit CT against all
+available voltage references, ignores samples below `min_power`, and publishes a compact text result every
+`update_interval`.
+
+```yaml
+emporiavue:
+  phase_detection:
+    min_power: 30W
+    min_samples: 30
+    confidence_ratio: 1.5
+    idle_timeout: 2min
+    update_interval: 10s
+
+  circuits:
+    cir2:
+      phase_detection: true
+
+    cir5:
+      phase_detection:
+        name: "Heat Pump Phase"
+        min_power: 100W
+```
+
+If no name is provided, the component derives one from the circuit power name: `Circuit 2 Power` becomes
+`Circuit 2 Phase`, and `Heat Pump Power` becomes `Heat Pump Phase`.
+
+The Home Assistant text sensor stays short:
+
+- `low load`: the circuit is below `min_power`.
+- `measuring`: valid samples are being collected.
+- `L3 87%`: suggested YAML setting is likely `line: 3`.
+- `ambiguous L2/L3`: the best two candidates are too close.
+
+Debug logging includes the details used for the decision, for example sample count and mean absolute scores per line.
+Phase detection is not available for line-to-line circuits because those intentionally use two voltage references.
 
 ### Grid Import/Export
 

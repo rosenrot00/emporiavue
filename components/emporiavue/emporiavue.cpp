@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cinttypes>
+#include <cmath>
 #include <cstring>
 
 namespace esphome {
@@ -76,6 +77,10 @@ void EmporiaVueComponent::dump_config() {
     ESP_LOGCONFIG(TAG, "  Metering interval: %" PRIu32 " ms", this->metering_interval_ms_);
   }
   ESP_LOGCONFIG(TAG, "  Grid deadband: %.1f W", this->grid_deadband_);
+  ESP_LOGCONFIG(TAG, "  Phase detection min samples: %" PRIu32, this->phase_detection_min_samples_);
+  ESP_LOGCONFIG(TAG, "  Phase detection confidence ratio: %.2f", this->phase_detection_confidence_ratio_);
+  ESP_LOGCONFIG(TAG, "  Phase detection idle timeout: %" PRIu32 " ms", this->phase_detection_idle_timeout_ms_);
+  ESP_LOGCONFIG(TAG, "  Phase detection update interval: %" PRIu32 " ms", this->phase_detection_update_interval_ms_);
   const char *entity_prefix = this->entity_prefix_.empty() ? "(default)" : this->entity_prefix_.c_str();
   ESP_LOGCONFIG(TAG, "  Entity prefix: %s", entity_prefix);
   LOG_SENSOR("  ", "Raw total power", this->raw_total_power_sensor_);
@@ -114,6 +119,7 @@ void EmporiaVueComponent::dump_config() {
     LOG_SENSOR("    ", "Raw power", ct_clamp->get_raw_power_sensor());
     LOG_SENSOR("    ", "Power", ct_clamp->get_power_sensor());
     LOG_SENSOR("    ", "Current", ct_clamp->get_current_sensor());
+    LOG_TEXT_SENSOR("    ", "Phase detection", ct_clamp->get_phase_detection_sensor());
   }
   for (auto *group : this->metering_groups_) {
     ESP_LOGCONFIG(TAG, "  Metering group");
@@ -1562,6 +1568,129 @@ bool EmporiaVueComponent::calculate_ct_power_(const MeteringFrame &frame, const 
   return true;
 }
 
+void EmporiaVueComponent::update_phase_detection_(const MeteringFrame &frame, MeteringCTClampConfig *ct_clamp) {
+  if (ct_clamp == nullptr || ct_clamp->get_phase_detection_sensor() == nullptr) {
+    return;
+  }
+
+  const uint8_t port = ct_clamp->get_input_port();
+  const auto &candidates = ct_clamp->get_phase_detection_candidates();
+  if (port >= 19 || candidates.size() < 2) {
+    return;
+  }
+
+  const uint32_t now = millis();
+  const float correction_factor = port < 3 ? 5.5f : 22.0f;
+  std::array<float, 3> sample_scores{0.0f, 0.0f, 0.0f};
+  float max_sample_score = 0.0f;
+  uint8_t valid_candidates = 0;
+
+  for (const auto &candidate : candidates) {
+    if (candidate.phase == nullptr || candidate.line < 1 || candidate.line > 3) {
+      continue;
+    }
+    const uint8_t input = candidate.phase->get_input_wire();
+    if (input >= 3) {
+      continue;
+    }
+    const int32_t raw_power = frame.clamps[port].power_raw_by_phase[input];
+    const float power = raw_power * candidate.phase->get_calibration() / correction_factor;
+    const float score = std::fabs(power);
+    sample_scores[candidate.line - 1] = score;
+    max_sample_score = std::max(max_sample_score, score);
+    valid_candidates++;
+  }
+  if (valid_candidates < 2) {
+    return;
+  }
+
+  std::string state;
+  bool publish_log_low_load = false;
+  const uint32_t last_valid = ct_clamp->get_phase_detection_last_valid_ms();
+  if (max_sample_score < ct_clamp->get_phase_detection_min_power()) {
+    const bool idle_timeout_elapsed =
+        last_valid == 0 || (now - last_valid) >= this->phase_detection_idle_timeout_ms_;
+    if (ct_clamp->get_phase_detection_samples() == 0 || idle_timeout_elapsed) {
+      ct_clamp->reset_phase_detection();
+      state = "low load";
+      publish_log_low_load = true;
+    } else {
+      state = ct_clamp->get_phase_detection_last_state();
+      if (state.empty()) {
+        state = "measuring";
+      }
+    }
+  } else {
+    for (uint8_t line = 1; line <= 3; line++) {
+      ct_clamp->add_phase_detection_score(line, sample_scores[line - 1]);
+    }
+    ct_clamp->increment_phase_detection_samples();
+    ct_clamp->set_phase_detection_last_valid_ms(now);
+
+    const uint32_t samples = ct_clamp->get_phase_detection_samples();
+    if (samples < this->phase_detection_min_samples_) {
+      state = "measuring";
+    } else {
+      const auto &scores = ct_clamp->get_phase_detection_scores();
+      uint8_t best_line = 1;
+      uint8_t second_line = 2;
+      float best_score = -1.0f;
+      float second_score = -1.0f;
+      for (uint8_t line = 1; line <= 3; line++) {
+        const float score = scores[line - 1];
+        if (score > best_score) {
+          second_score = best_score;
+          second_line = best_line;
+          best_score = score;
+          best_line = line;
+        } else if (score > second_score) {
+          second_score = score;
+          second_line = line;
+        }
+      }
+
+      const float ratio = second_score > 0.0f ? best_score / second_score : 999.0f;
+      const float confidence = (best_score + second_score) > 0.0f
+                                   ? best_score * 100.0f / (best_score + second_score)
+                                   : 0.0f;
+      if (ratio < this->phase_detection_confidence_ratio_) {
+        state = str_sprintf("ambiguous L%u/L%u", static_cast<unsigned>(best_line),
+                            static_cast<unsigned>(second_line));
+      } else {
+        state = str_sprintf("L%u %.0f%%", static_cast<unsigned>(best_line), confidence);
+      }
+    }
+  }
+
+  if (state.empty()) {
+    return;
+  }
+
+  const uint32_t last_publish = ct_clamp->get_phase_detection_last_publish_ms();
+  if (last_publish != 0 && (now - last_publish) < this->phase_detection_update_interval_ms_) {
+    ct_clamp->set_phase_detection_last_state(state);
+    return;
+  }
+
+  ct_clamp->set_phase_detection_last_publish_ms(now);
+  ct_clamp->set_phase_detection_last_state(state);
+  ct_clamp->get_phase_detection_sensor()->publish_state(state);
+
+  if (publish_log_low_load) {
+    ESP_LOGD(TAG, "%s: low load max=%.1fW min_power=%.1fW", ct_clamp->get_phase_detection_name().c_str(),
+             max_sample_score, ct_clamp->get_phase_detection_min_power());
+    return;
+  }
+
+  const uint32_t samples = ct_clamp->get_phase_detection_samples();
+  const auto &scores = ct_clamp->get_phase_detection_scores();
+  const float divisor = samples == 0 ? 1.0f : static_cast<float>(samples);
+  ESP_LOGD(TAG,
+           "%s: state=%s samples=%" PRIu32 " scores L1=%.1fW L2=%.1fW L3=%.1fW min_power=%.1fW",
+           ct_clamp->get_phase_detection_name().c_str(), state.c_str(), samples, scores[0] / divisor,
+           scores[1] / divisor, scores[2] / divisor, ct_clamp->get_phase_detection_min_power());
+}
+
 void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
   if (!frame.valid) {
     return;
@@ -1615,6 +1744,7 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
       const float scalar = port < 3 ? (775.0f / 42624.0f) : (775.0f / 170496.0f);
       ct_clamp->get_current_sensor()->publish_state(frame.clamps[port].current_raw * scalar);
     }
+    this->update_phase_detection_(frame, ct_clamp);
   }
 
   for (auto *group : this->metering_groups_) {

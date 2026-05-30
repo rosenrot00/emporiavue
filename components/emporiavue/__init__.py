@@ -87,6 +87,12 @@ CONF_AUTO_UPDATE_SAMD = "auto_update_samd"
 CONF_DIAGNOSTICS_INTERVAL = "diagnostics_interval"
 CONF_METERING_INTERVAL = "metering_interval"
 CONF_GRID_DEADBAND = "grid_deadband"
+CONF_PHASE_DETECTION = "phase_detection"
+CONF_MIN_POWER = "min_power"
+CONF_MIN_SAMPLES = "min_samples"
+CONF_CONFIDENCE_RATIO = "confidence_ratio"
+CONF_IDLE_TIMEOUT = "idle_timeout"
+CONF_UPDATE_INTERVAL = "update_interval"
 CONF_TOTAL_POWER = "total_power"
 CONF_GRID_IMPORT_POWER = "grid_import_power"
 CONF_GRID_EXPORT_POWER = "grid_export_power"
@@ -297,6 +303,26 @@ def _apply_mains_defaults(config):
     return config
 
 
+def _circuit_default_power_name(circuit_key, circuit_config):
+    power_config = circuit_config.get(CONF_POWER)
+    if isinstance(power_config, dict) and power_config.get(CONF_NAME):
+        return power_config[CONF_NAME]
+    if CONF_NAME in circuit_config:
+        return circuit_config[CONF_NAME]
+    if circuit_key.startswith("cir"):
+        return f"Circuit {circuit_key.removeprefix('cir')} Power"
+    return f"{circuit_key.replace('_', ' ').title()} Power"
+
+
+def _circuit_default_phase_name(circuit_key, circuit_config):
+    power_name = _circuit_default_power_name(circuit_key, circuit_config)
+    if power_name.endswith(" Power"):
+        return f"{power_name[:-6]} Phase"
+    if power_name.endswith(" power"):
+        return f"{power_name[:-6]} phase"
+    return f"{power_name} Phase"
+
+
 def _split_power_sensor_config(parent_config, raw_id, always_create_raw=False, default_power_name=None):
     power_config = parent_config.get(CONF_POWER)
     raw_config = parent_config.get(CONF_RAW_POWER)
@@ -444,6 +470,45 @@ def _apply_raw_power_defaults(config):
     return config
 
 
+def _apply_phase_detection_defaults(config):
+    config = dict(config)
+    if CONF_CIRCUITS not in config or not isinstance(config[CONF_CIRCUITS], dict):
+        return config
+
+    prefix = config.get(CONF_ENTITY_PREFIX, "")
+    circuits = dict(config[CONF_CIRCUITS])
+    for circuit_key, circuit_config in list(circuits.items()):
+        if not isinstance(circuit_config, dict) or CONF_PHASE_DETECTION not in circuit_config:
+            continue
+
+        phase_detection_config = circuit_config[CONF_PHASE_DETECTION]
+        if phase_detection_config is False or phase_detection_config is None:
+            circuit_config = dict(circuit_config)
+            circuit_config.pop(CONF_PHASE_DETECTION, None)
+            circuits[circuit_key] = circuit_config
+            continue
+        if phase_detection_config is True:
+            phase_detection_config = {}
+        elif not isinstance(phase_detection_config, dict):
+            raise cv.Invalid(f"circuits.{circuit_key}.phase_detection must be true or a mapping")
+        else:
+            phase_detection_config = dict(phase_detection_config)
+
+        default_name = _circuit_default_phase_name(circuit_key, circuit_config)
+        name_is_default = phase_detection_config.get(CONF_NAME) in (None, default_name)
+        if phase_detection_config.get(CONF_NAME) is None:
+            phase_detection_config[CONF_NAME] = default_name
+        if prefix and name_is_default:
+            phase_detection_config[CONF_NAME] = _prefixed_entity_name(prefix, default_name)
+
+        circuit_config = dict(circuit_config)
+        circuit_config[CONF_PHASE_DETECTION] = phase_detection_config
+        circuits[circuit_key] = circuit_config
+
+    config[CONF_CIRCUITS] = circuits
+    return config
+
+
 def _apply_external_firmware_defaults(config):
     config = dict(config)
     if CONF_EXTERNAL_SAMD_FIRMWARE not in config:
@@ -516,8 +581,10 @@ def _apply_hardware_defaults(config):
 def _apply_defaults(config):
     return _apply_entity_name_defaults(
         _apply_diagnostics_defaults(
-            _apply_raw_power_defaults(
-                _apply_mains_defaults(_apply_external_firmware_defaults(_apply_hardware_defaults(config)))
+            _apply_phase_detection_defaults(
+                _apply_raw_power_defaults(
+                    _apply_mains_defaults(_apply_external_firmware_defaults(_apply_hardware_defaults(config)))
+                )
             )
         )
     )
@@ -650,12 +717,67 @@ CURRENT_SENSOR_SCHEMA = sensor.sensor_schema(
     accuracy_decimals=2,
 )
 
+
+def _validate_watts(value):
+    if isinstance(value, str):
+        normalized = value.strip().lower().replace(" ", "")
+        multiplier = 1.0
+        if normalized.endswith("kw"):
+            normalized = normalized[:-2]
+            multiplier = 1000.0
+        elif normalized.endswith("w"):
+            normalized = normalized[:-1]
+        try:
+            value = float(normalized) * multiplier
+        except ValueError as err:
+            raise cv.Invalid("power value must be a number, W, or kW value") from err
+    value = cv.float_(value)
+    if value <= 0:
+        raise cv.Invalid("power value must be positive")
+    return value
+
+
+def _validate_confidence_ratio(value):
+    value = cv.float_(value)
+    if value <= 1.0:
+        raise cv.Invalid("confidence_ratio must be greater than 1.0")
+    return value
+
 INTERNAL_POWER_FILTER_SCHEMA = cv.ensure_list(
     cv.Any(
         cv.Schema({cv.Required(CONF_MULTIPLY): cv.float_}),
         cv.Schema({cv.Required(CONF_LAMBDA): cv.returning_lambda}),
     )
 )
+
+PHASE_DETECTION_GLOBAL_SCHEMA = cv.Schema(
+    {
+        cv.Optional(CONF_MIN_POWER, default=30.0): _validate_watts,
+        cv.Optional(CONF_MIN_SAMPLES, default=30): cv.int_range(min=1, max=10000),
+        cv.Optional(CONF_CONFIDENCE_RATIO, default=1.5): _validate_confidence_ratio,
+        cv.Optional(CONF_IDLE_TIMEOUT, default="2min"): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_UPDATE_INTERVAL, default="10s"): cv.positive_time_period_milliseconds,
+    }
+)
+
+PHASE_DETECTION_SENSOR_SCHEMA = text_sensor.text_sensor_schema(
+    icon="mdi:transmission-tower",
+    entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+).extend(
+    {
+        cv.Optional(CONF_MIN_POWER): _validate_watts,
+    }
+)
+
+
+def _validate_phase_detection_sensor(value):
+    if value is True:
+        value = {}
+    elif value is False or value is None:
+        return None
+    elif not isinstance(value, dict):
+        raise cv.Invalid("phase_detection must be true or a mapping")
+    return PHASE_DETECTION_SENSOR_SCHEMA(value)
 
 
 def _validate_metering_phases(value):
@@ -780,6 +902,7 @@ METERING_CIRCUIT_SCHEMA = cv.Schema(
         cv.Optional(CONF_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_RAW_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_CURRENT): CURRENT_SENSOR_SCHEMA,
+        cv.Optional(CONF_PHASE_DETECTION): _validate_phase_detection_sensor,
     }
 )
 
@@ -824,6 +947,10 @@ def _validate_metering_topology(config):
     mains = config.get(CONF_MAINS, {})
 
     for circuit_key, circuit_config in circuits.items():
+        if CONF_PHASE_DETECTION in circuit_config and isinstance(circuit_config[CONF_LINE], list):
+            raise cv.Invalid(
+                f"circuits.{circuit_key}.phase_detection is only supported for single-line circuits"
+            )
         for line_number in _metering_line_numbers(circuit_config[CONF_LINE]):
             line_key = f"line_{line_number}"
             if line_key not in mains:
@@ -876,6 +1003,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_DIAGNOSTICS_INTERVAL): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_METERING_INTERVAL, default="220ms"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_GRID_DEADBAND, default=2.0): cv.positive_float,
+        cv.Optional(CONF_PHASE_DETECTION, default={}): PHASE_DETECTION_GLOBAL_SCHEMA,
         cv.Optional(CONF_TOTAL_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_RAW_TOTAL_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_GRID_IMPORT_POWER): POWER_SENSOR_SCHEMA,
@@ -1052,6 +1180,11 @@ async def to_code(config):
         cg.add(var.set_diagnostics_interval(diagnostics_interval))
     cg.add(var.set_metering_interval(config[CONF_METERING_INTERVAL]))
     cg.add(var.set_grid_deadband(config[CONF_GRID_DEADBAND]))
+    phase_detection_config = config[CONF_PHASE_DETECTION]
+    cg.add(var.set_phase_detection_min_samples(phase_detection_config[CONF_MIN_SAMPLES]))
+    cg.add(var.set_phase_detection_confidence_ratio(phase_detection_config[CONF_CONFIDENCE_RATIO]))
+    cg.add(var.set_phase_detection_idle_timeout(phase_detection_config[CONF_IDLE_TIMEOUT]))
+    cg.add(var.set_phase_detection_update_interval(phase_detection_config[CONF_UPDATE_INTERVAL]))
     cg.add(var.set_backup_partition_name(config[CONF_BACKUP_PARTITION]))
     if raw_total_power_config := config.get(CONF_RAW_TOTAL_POWER):
         sens = await sensor.new_sensor(raw_total_power_config)
@@ -1170,6 +1303,21 @@ async def to_code(config):
         if current_config := circuit_config.get(CONF_CURRENT):
             sens = await sensor.new_sensor(current_config)
             cg.add(ct_clamp_var.set_current_sensor(sens))
+        if phase_detection_sensor_config := circuit_config.get(CONF_PHASE_DETECTION):
+            phase_detection_text_sensor_config = dict(phase_detection_sensor_config)
+            phase_detection_text_sensor_config.pop(CONF_MIN_POWER, None)
+            sens = await text_sensor.new_text_sensor(phase_detection_text_sensor_config)
+            cg.add(ct_clamp_var.set_phase_detection_sensor(sens))
+            cg.add(ct_clamp_var.set_phase_detection_name(phase_detection_sensor_config[CONF_NAME]))
+            cg.add(
+                ct_clamp_var.set_phase_detection_min_power(
+                    phase_detection_sensor_config.get(
+                        CONF_MIN_POWER, phase_detection_config[CONF_MIN_POWER]
+                    )
+                )
+            )
+            for line_number, phase_var in sorted(main_phase_vars_by_line.items()):
+                cg.add(ct_clamp_var.add_phase_detection_candidate(phase_var, line_number))
 
         ct_clamps.append(ct_clamp_var)
         circuit_ct_clamps_by_key[circuit_key] = ct_clamp_var
