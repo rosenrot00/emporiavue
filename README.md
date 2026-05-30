@@ -345,6 +345,22 @@ emporiavue:
           - throttle_average: 5s
 ```
 
+Groups can also subtract sources. This is useful for a balance power sensor that shows the unmonitored remainder:
+
+```yaml
+emporiavue:
+  groups:
+    balance_power:
+      circuits: [total_power, -cir1, -cir2, -cir3]
+      filters:
+        - lambda: |-
+            return x > 0.0f ? x : 0.0f;
+      power:
+        name: "Balance Power"
+        filters:
+          - throttle_average: 5s
+```
+
 ### Line-to-Line Circuits
 
 Normal circuits use one line reference, for example `line: 2`. For a load connected between two lines, use a two-item
