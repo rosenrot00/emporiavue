@@ -412,9 +412,8 @@ backup image. If external firmware is configured, an additional external flash b
 emporiavue:
   auto_update_samd: false
   external_samd_firmware:
-    - id: test
-      url: "https://raw.githubusercontent.com/OWNER/PRIVATE_REPO/REF/firmware/samd09/images/i2c/test.bin"
-      token: !secret github_token
+    - id: vue2_i2c_v1_0
+      url: "https://raw.githubusercontent.com/rosenrot00/emporiavue/main/firmware/samd09/images/i2c/vue2-i2c-v1.0.bin"
 ```
 
 ## Vue 2 I2C Packages
