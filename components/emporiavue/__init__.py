@@ -53,6 +53,7 @@ EmporiaVueFlashExternalFirmwareButton = emporiavue_ns.class_(
 MeteringPhaseConfig = emporiavue_ns.class_("MeteringPhaseConfig")
 MeteringCTClampConfig = emporiavue_ns.class_("MeteringCTClampConfig")
 MeteringGroupConfig = emporiavue_ns.class_("MeteringGroupConfig")
+MeteringVirtualLineConfig = emporiavue_ns.class_("MeteringVirtualLineConfig")
 MeteringCalibrationNumber = emporiavue_ns.class_(
     "MeteringCalibrationNumber", number.Number
 )
@@ -102,6 +103,8 @@ CONF_RAW_GRID_EXPORT_POWER = "raw_grid_export_power"
 CONF_MAINS = "mains"
 CONF_CIRCUITS = "circuits"
 CONF_GROUPS = "groups"
+CONF_VIRTUAL_LINES = "virtual_lines"
+CONF_LINES = "lines"
 CONF_LINE = "line"
 CONF_PHASE_ID = "phase_id"
 CONF_CALIBRATION_NUMBER = "calibration_number"
@@ -322,6 +325,16 @@ def _circuit_default_phase_name(circuit_key, circuit_config):
     return f"{power_name} Phase"
 
 
+def _virtual_line_default_voltage_name(virtual_line_key, virtual_line_config):
+    lines = virtual_line_config.get(CONF_LINES)
+    if isinstance(lines, list) and len(lines) == 2:
+        try:
+            return f"Line {int(lines[0])}-{int(lines[1])} Voltage"
+        except (TypeError, ValueError):
+            pass
+    return f"{virtual_line_key.replace('_', ' ').title()} Voltage"
+
+
 def _split_power_sensor_config(parent_config, raw_id, always_create_raw=False, default_power_name=None):
     power_config = parent_config.get(CONF_POWER)
     raw_config = parent_config.get(CONF_RAW_POWER)
@@ -469,6 +482,43 @@ def _apply_raw_power_defaults(config):
     return config
 
 
+def _apply_virtual_line_defaults(config):
+    config = dict(config)
+    if CONF_VIRTUAL_LINES not in config or not isinstance(config[CONF_VIRTUAL_LINES], dict):
+        return config
+
+    prefix = config.get(CONF_ENTITY_PREFIX, "")
+    virtual_lines = dict(config[CONF_VIRTUAL_LINES])
+    for virtual_line_key, virtual_line_config in list(virtual_lines.items()):
+        if virtual_line_config is None:
+            virtual_line_config = {}
+        elif not isinstance(virtual_line_config, dict):
+            continue
+        else:
+            virtual_line_config = dict(virtual_line_config)
+
+        voltage_config = virtual_line_config.get(CONF_VOLTAGE)
+        if voltage_config is None:
+            voltage_config = {}
+        elif not isinstance(voltage_config, dict):
+            raise cv.Invalid(f"virtual_lines.{virtual_line_key}.voltage must be a mapping")
+        else:
+            voltage_config = dict(voltage_config)
+
+        default_name = _virtual_line_default_voltage_name(virtual_line_key, virtual_line_config)
+        name_is_default = voltage_config.get(CONF_NAME) in (None, default_name)
+        if voltage_config.get(CONF_NAME) is None:
+            voltage_config[CONF_NAME] = default_name
+        if prefix and name_is_default:
+            voltage_config[CONF_NAME] = _prefixed_entity_name(prefix, default_name)
+
+        virtual_line_config[CONF_VOLTAGE] = voltage_config
+        virtual_lines[virtual_line_key] = virtual_line_config
+
+    config[CONF_VIRTUAL_LINES] = virtual_lines
+    return config
+
+
 def _apply_phase_detection_defaults(config):
     config = dict(config)
     if CONF_CIRCUITS not in config or not isinstance(config[CONF_CIRCUITS], dict):
@@ -582,8 +632,10 @@ def _apply_defaults(config):
     return _apply_entity_name_defaults(
         _apply_diagnostics_defaults(
             _apply_phase_detection_defaults(
-                _apply_raw_power_defaults(
-                    _apply_mains_defaults(_apply_external_firmware_defaults(_apply_hardware_defaults(config)))
+                _apply_virtual_line_defaults(
+                    _apply_raw_power_defaults(
+                        _apply_mains_defaults(_apply_external_firmware_defaults(_apply_hardware_defaults(config)))
+                    )
                 )
             )
         )
@@ -851,6 +903,18 @@ def _validate_metering_line(value):
     return lines
 
 
+def _validate_virtual_line_lines(value):
+    if not isinstance(value, list):
+        raise cv.Invalid("virtual_lines entries need lines: [line_a, line_b]")
+
+    lines = [cv.int_range(min=1, max=3)(line) for line in value]
+    if len(lines) != 2:
+        raise cv.Invalid("virtual_lines entries need exactly two line numbers")
+    if lines[0] == lines[1]:
+        raise cv.Invalid("virtual_lines entries need two different line numbers")
+    return lines
+
+
 def _metering_line_numbers(value):
     if isinstance(value, list):
         return value
@@ -940,6 +1004,19 @@ def _validate_groups(value):
     return groups
 
 
+METERING_VIRTUAL_LINE_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.declare_id(MeteringVirtualLineConfig),
+        cv.Required(CONF_LINES): _validate_virtual_line_lines,
+        cv.Required(CONF_VOLTAGE): PHASE_VOLTAGE_SENSOR_SCHEMA,
+    }
+)
+
+
+def _validate_virtual_lines(value):
+    return cv.Schema({cv.string_strict: METERING_VIRTUAL_LINE_SCHEMA})(value)
+
+
 def _validate_metering_topology(config):
     circuits = config.get(CONF_CIRCUITS, {})
     mains = config.get(CONF_MAINS, {})
@@ -964,6 +1041,15 @@ def _validate_metering_topology(config):
             if source_key not in circuits:
                 raise cv.Invalid(
                     f"groups.{group_key}.circuits references {source_key}, but circuits.{source_key} is not configured"
+                )
+
+    for virtual_line_key, virtual_line_config in config.get(CONF_VIRTUAL_LINES, {}).items():
+        for line_number in virtual_line_config[CONF_LINES]:
+            line_key = f"line_{line_number}"
+            if line_key not in mains:
+                raise cv.Invalid(
+                    f"virtual_lines.{virtual_line_key}.lines references {line_key}, "
+                    f"but mains.{line_key} is not configured"
                 )
 
     return config
@@ -1011,6 +1097,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_MAINS): _validate_mains,
         cv.Optional(CONF_CIRCUITS): _validate_circuits,
         cv.Optional(CONF_GROUPS): _validate_groups,
+        cv.Optional(CONF_VIRTUAL_LINES): _validate_virtual_lines,
         cv.Optional(CONF_PHASES): _validate_metering_phases,
         cv.Optional(CONF_CT_CLAMPS): cv.ensure_list(METERING_CT_CLAMP_SCHEMA),
         cv.Optional(CONF_BACKUP_PARTITION, default="samd_bak"): cv.string_strict,
@@ -1317,6 +1404,17 @@ async def to_code(config):
 
         ct_clamps.append(ct_clamp_var)
         circuit_ct_clamps_by_key[circuit_key] = ct_clamp_var
+
+    virtual_lines = []
+    for virtual_line_config in config.get(CONF_VIRTUAL_LINES, {}).values():
+        virtual_line_var = cg.new_Pvariable(virtual_line_config[CONF_ID], MeteringVirtualLineConfig())
+        line_a, line_b = virtual_line_config[CONF_LINES]
+        cg.add(virtual_line_var.set_lines(main_phase_vars_by_line[line_a], main_phase_vars_by_line[line_b]))
+        voltage_sensor = await sensor.new_sensor(virtual_line_config[CONF_VOLTAGE])
+        cg.add(virtual_line_var.set_voltage_sensor(voltage_sensor))
+        virtual_lines.append(virtual_line_var)
+    if virtual_lines:
+        cg.add(var.set_metering_virtual_lines(virtual_lines))
 
     for phase_config in config.get(CONF_PHASES, []):
         phase_var = cg.new_Pvariable(phase_config[CONF_ID], MeteringPhaseConfig())

@@ -126,6 +126,17 @@ void EmporiaVueComponent::dump_config() {
     LOG_SENSOR("    ", "Raw power", group->get_raw_power_sensor());
     LOG_SENSOR("    ", "Power", group->get_power_sensor());
   }
+  for (auto *virtual_line : this->metering_virtual_lines_) {
+    ESP_LOGCONFIG(TAG, "  Metering virtual line");
+    const auto *line_a = virtual_line->get_line_a();
+    const auto *line_b = virtual_line->get_line_b();
+    if (line_a != nullptr && line_b != nullptr) {
+      ESP_LOGCONFIG(TAG, "    Voltage reference: input %u - input %u",
+                    static_cast<unsigned>(line_a->get_input_wire()),
+                    static_cast<unsigned>(line_b->get_input_wire()));
+    }
+    LOG_SENSOR("    ", "Voltage", virtual_line->get_voltage_sensor());
+  }
 }
 
 void MeteringPhaseConfig::setup_calibration_number() {
@@ -1697,6 +1708,29 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
       phase->get_phase_angle_sensor()->publish_state(
           frame.phases[input].cycle_count_raw * 360.0f / static_cast<float>(raw_frequency));
     }
+  }
+
+  for (auto *virtual_line : this->metering_virtual_lines_) {
+    if (virtual_line->get_voltage_sensor() == nullptr || raw_frequency == 0) {
+      continue;
+    }
+    const MeteringPhaseConfig *line_a = virtual_line->get_line_a();
+    const MeteringPhaseConfig *line_b = virtual_line->get_line_b();
+    if (line_a == nullptr || line_b == nullptr || line_a->get_input_wire() >= 3 || line_b->get_input_wire() >= 3) {
+      continue;
+    }
+    const uint8_t input_a = line_a->get_input_wire();
+    const uint8_t input_b = line_b->get_input_wire();
+    const float voltage_a = frame.phases[input_a].voltage_raw * line_a->get_calibration();
+    const float voltage_b = frame.phases[input_b].voltage_raw * line_b->get_calibration();
+    constexpr float two_pi = 6.28318530717958647692f;
+    const float angle_a =
+        input_a == 0 ? 0.0f : frame.phases[input_a].cycle_count_raw * two_pi / static_cast<float>(raw_frequency);
+    const float angle_b =
+        input_b == 0 ? 0.0f : frame.phases[input_b].cycle_count_raw * two_pi / static_cast<float>(raw_frequency);
+    const float voltage_sq = voltage_a * voltage_a + voltage_b * voltage_b -
+                             2.0f * voltage_a * voltage_b * std::cos(angle_a - angle_b);
+    virtual_line->get_voltage_sensor()->publish_state(std::sqrt(std::max(0.0f, voltage_sq)));
   }
 
   float total_power = 0.0f;

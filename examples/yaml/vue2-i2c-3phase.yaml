@@ -107,6 +107,12 @@ emporiavue:
   grid_export_power:
     filters: *throttle_avg
 
+  virtual_lines:
+    line_2_3:
+      lines: [2, 3]
+      voltage:
+        filters: [*throttle_avg, *pos]
+
   circuits:
     cir1:
       line: 2

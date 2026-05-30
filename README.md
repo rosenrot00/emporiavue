@@ -18,7 +18,7 @@ import/export, and more accurate handling of real-world wiring such as line-to-l
 
 | Version | Changes |
 |---|---|
-| 2026.05.1 | Initial public release with [Vue 2 I2C packages](#vue-2-i2c-packages), [runtime voltage calibration](#runtime-calibration), [internal metering filters](#internal-metering-filters), [stable circuit IDs and energy](#stable-circuit-ids-and-energy), [groups](#groups), [line-to-line circuit power](#line-to-line-circuits), [windowed phase detection](#phase-detection), [grid import/export](#grid-importexport), [diagnostics](#diagnostics), and [SAMD09 firmware management](#samd09-firmware-management). |
+| 2026.05.1 | Initial public release with [Vue 2 I2C packages](#vue-2-i2c-packages), [runtime voltage calibration](#runtime-calibration), [internal metering filters](#internal-metering-filters), [stable circuit IDs and energy](#stable-circuit-ids-and-energy), [groups](#groups), [line-to-line circuit power](#line-to-line-circuits), [virtual lines](#virtual-lines), [windowed phase detection](#phase-detection), [grid import/export](#grid-importexport), [diagnostics](#diagnostics), and [SAMD09 firmware management](#samd09-firmware-management). |
 
 ## Setup Examples
 
@@ -232,6 +232,12 @@ emporiavue:
 
   grid_export_power:
     filters: *throttle_avg
+
+  virtual_lines:
+    line_2_3:
+      lines: [2, 3]
+      voltage:
+        filters: [*throttle_avg, *pos]
 
   circuits:
     cir1:
@@ -494,6 +500,25 @@ emporiavue:
       filters:
         - multiply: -1
 ```
+
+### Virtual Lines
+
+Virtual lines publish derived line-to-line voltage sensors without using or reserving a physical CT port. They use the
+configured main line calibration values plus the measured phase offsets, so they work for both split-phase and
+three-phase line-to-line voltage display.
+
+```yaml
+emporiavue:
+  virtual_lines:
+    line_2_3:
+      lines: [2, 3]
+      voltage:
+        name: "Line 2-3 Voltage"
+        filters:
+          - throttle_average: 5s
+```
+
+If `name` is omitted, the component uses a stable default such as `Line 2-3 Voltage`.
 
 ### Phase Detection
 

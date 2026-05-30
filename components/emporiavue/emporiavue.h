@@ -27,6 +27,7 @@ namespace emporiavue {
 class MeteringPhaseConfig;
 class MeteringCTClampConfig;
 class MeteringGroupConfig;
+class MeteringVirtualLineConfig;
 class MeteringCalibrationNumber;
 
 class MeteringPowerFilters {
@@ -90,6 +91,9 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   }
   void set_metering_groups(std::vector<MeteringGroupConfig *> groups) {
     this->metering_groups_ = std::move(groups);
+  }
+  void set_metering_virtual_lines(std::vector<MeteringVirtualLineConfig *> virtual_lines) {
+    this->metering_virtual_lines_ = std::move(virtual_lines);
   }
   void set_backup_partition_name(const std::string &backup_partition_name) {
     this->backup_partition_name_ = backup_partition_name;
@@ -541,6 +545,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   std::vector<MeteringPhaseConfig *> metering_phases_{};
   std::vector<MeteringCTClampConfig *> metering_ct_clamps_{};
   std::vector<MeteringGroupConfig *> metering_groups_{};
+  std::vector<MeteringVirtualLineConfig *> metering_virtual_lines_{};
   std::string backup_partition_name_{"samd_bak"};
   const esp_partition_t *backup_partition_{nullptr};
   bool backup_active_{false};
@@ -728,6 +733,23 @@ class MeteringGroupConfig {
   sensor::Sensor *raw_power_sensor_{nullptr};
   sensor::Sensor *power_sensor_{nullptr};
   MeteringPowerFilters power_filters_{};
+};
+
+class MeteringVirtualLineConfig {
+ public:
+  void set_lines(MeteringPhaseConfig *line_a, MeteringPhaseConfig *line_b) {
+    this->line_a_ = line_a;
+    this->line_b_ = line_b;
+  }
+  const MeteringPhaseConfig *get_line_a() const { return this->line_a_; }
+  const MeteringPhaseConfig *get_line_b() const { return this->line_b_; }
+  void set_voltage_sensor(sensor::Sensor *sensor) { this->voltage_sensor_ = sensor; }
+  sensor::Sensor *get_voltage_sensor() const { return this->voltage_sensor_; }
+
+ protected:
+  MeteringPhaseConfig *line_a_{nullptr};
+  MeteringPhaseConfig *line_b_{nullptr};
+  sensor::Sensor *voltage_sensor_{nullptr};
 };
 
 class EmporiaVueBackupFirmwareButton : public button::Button, public Parented<EmporiaVueComponent> {
