@@ -1952,6 +1952,11 @@ bool EmporiaVueComponent::detect_current_firmware_by_swd_(FirmwareInfo *info, st
     return fail(message);
   }
 
+  const std::string prior_error = this->last_error_;
+  if (!this->resume_core_()) {
+    ESP_LOGW(TAG, "Failed to resume SAMD09 core after SWD firmware detection: %s", this->last_error_.c_str());
+    this->last_error_ = prior_error;
+  }
   this->release_pins_();
   ESP_LOGI(TAG, "SAMD09 SWD firmware detection complete: %s",
            info->kind == FirmwareKind::MANAGED ? "managed footer found" : "no managed footer");
