@@ -394,6 +394,10 @@ emporiavue:
 Firmware management is optional. It is available for reading, flashing, restoring, or testing SAMD09 images when you
 explicitly need it.
 
+> [!WARNING]
+> Flashing the SAMD09 changes the measurement controller firmware inside the Vue 2. Only use the flash buttons if you
+> understand the recovery path and are comfortable working with firmware-level changes.
+
 The Vue 2 I2C package adds a 64 KiB `samd_bak` data partition for SAMD firmware backups. When adding `samd_bak` to a
 device that is already flashed, update the ESP32 partition table once. ESPHome documents custom partition lists under
 `esp32.partitions`, and partition-table OTA needs `allow_partition_access: true` on the ESPHome OTA platform before
