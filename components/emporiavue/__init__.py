@@ -872,7 +872,7 @@ PHASE_FREQUENCY_SENSOR_SCHEMA = sensor.sensor_schema(
 PHASE_ANGLE_SENSOR_SCHEMA = sensor.sensor_schema(
     unit_of_measurement=UNIT_DEGREES,
     state_class=STATE_CLASS_MEASUREMENT,
-    accuracy_decimals=0,
+    accuracy_decimals=2,
 )
 
 POWER_SENSOR_SCHEMA = sensor.sensor_schema(
