@@ -29,8 +29,6 @@ packages:
       # Vue 3 is currently untested. To try it, swap the two files above for:
       # - packages/vue3-i2c.yaml
       # - packages/vue3-i2c-3phase.yaml
-      # Optional Vue 3 non-I2C GPIO helpers:
-      # - packages/vue3-gpios.yaml
     refresh: always
 
 esp32:
