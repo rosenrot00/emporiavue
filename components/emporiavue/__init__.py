@@ -88,7 +88,7 @@ CONF_AUTO_UPDATE_SAMD = "auto_update_samd"
 CONF_DIAGNOSTICS_INTERVAL = "diagnostics_interval"
 CONF_METERING_INTERVAL = "metering_interval"
 CONF_GRID_DEADBAND = "grid_deadband"
-CONF_MIN_APPARENT_POWER = "min_apparent_power"
+CONF_POWER_APPARENT_MIN = "power_apparent_min"
 CONF_PHASE_DETECTION = "phase_detection"
 CONF_MIN_POWER = "min_power"
 CONF_CONFIDENCE_RATIO = "confidence_ratio"
@@ -1271,7 +1271,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_DIAGNOSTICS_INTERVAL): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_METERING_INTERVAL, default="220ms"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_GRID_DEADBAND, default=2.0): cv.positive_float,
-        cv.Optional(CONF_MIN_APPARENT_POWER, default="20VA"): _validate_volt_amps,
+        cv.Optional(CONF_POWER_APPARENT_MIN, default="20VA"): _validate_volt_amps,
         cv.Optional(CONF_PHASE_DETECTION, default={}): PHASE_DETECTION_GLOBAL_SCHEMA,
         cv.Optional(CONF_TOTAL_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_RAW_TOTAL_POWER): POWER_SENSOR_SCHEMA,
@@ -1450,7 +1450,7 @@ async def to_code(config):
         cg.add(var.set_diagnostics_interval(diagnostics_interval))
     cg.add(var.set_metering_interval(config[CONF_METERING_INTERVAL]))
     cg.add(var.set_grid_deadband(config[CONF_GRID_DEADBAND]))
-    cg.add(var.set_min_apparent_power(config[CONF_MIN_APPARENT_POWER]))
+    cg.add(var.set_power_apparent_min(config[CONF_POWER_APPARENT_MIN]))
     phase_detection_config = config[CONF_PHASE_DETECTION]
     cg.add(var.set_phase_detection_confidence_ratio(phase_detection_config[CONF_CONFIDENCE_RATIO]))
     cg.add(var.set_phase_detection_update_interval(phase_detection_config[CONF_UPDATE_INTERVAL]))

@@ -77,7 +77,7 @@ void EmporiaVueComponent::dump_config() {
     ESP_LOGCONFIG(TAG, "  Metering interval: %" PRIu32 " ms", this->metering_interval_ms_);
   }
   ESP_LOGCONFIG(TAG, "  Grid deadband: %.1f W", this->grid_deadband_);
-  ESP_LOGCONFIG(TAG, "  Minimum apparent power: %.1f VA", this->min_apparent_power_);
+  ESP_LOGCONFIG(TAG, "  Apparent power minimum: %.1f VA", this->power_apparent_min_);
   ESP_LOGCONFIG(TAG, "  Phase detection confidence ratio: %.2f", this->phase_detection_confidence_ratio_);
   ESP_LOGCONFIG(TAG, "  Phase detection window: %" PRIu32 " ms", this->phase_detection_update_interval_ms_);
   const char *entity_prefix = this->entity_prefix_.empty() ? "(default)" : this->entity_prefix_.c_str();
@@ -1849,7 +1849,7 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
     if (ct_clamp->get_apparent_power_sensor() != nullptr || ct_clamp->get_power_factor_sensor() != nullptr) {
       float apparent_power = 0.0f;
       if (this->calculate_ct_apparent_power_(frame, ct_clamp, &apparent_power)) {
-        const bool above_threshold = apparent_power >= this->min_apparent_power_;
+        const bool above_threshold = apparent_power >= this->power_apparent_min_;
         if (ct_clamp->get_apparent_power_sensor() != nullptr) {
           ct_clamp->get_apparent_power_sensor()->publish_state(above_threshold ? apparent_power : 0.0f);
         }

@@ -181,7 +181,7 @@ time:
     lambda: 'return max(x, 0.0f);'
 
 emporiavue:
-  min_apparent_power: 20VA
+  power_apparent_min: 20VA
 
   phase_detection:
     min_power: 30W
@@ -468,7 +468,7 @@ For line-to-line circuits, the component uses the calculated line-to-line voltag
 
 ```yaml
 emporiavue:
-  min_apparent_power: 20VA
+  power_apparent_min: 20VA
 
   circuits:
     cir2:
@@ -482,7 +482,7 @@ emporiavue:
           - throttle_average: 5s
 ```
 
-`min_apparent_power` defaults to `20VA`. Below that threshold, apparent power and power factor publish `0` instead of
+`power_apparent_min` defaults to `20VA`. Below that threshold, apparent power and power factor publish `0` instead of
 showing noise-dominated standby values. Set it lower, higher, or to `0VA` if your installation needs a different cutoff.
 Power factor is published as a dimensionless magnitude between `0` and `1`; use the real power sensor for direction.
 

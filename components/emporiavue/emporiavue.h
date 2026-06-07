@@ -77,7 +77,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   }
   void set_metering_interval(uint32_t metering_interval_ms) { this->metering_interval_ms_ = metering_interval_ms; }
   void set_grid_deadband(float grid_deadband) { this->grid_deadband_ = grid_deadband; }
-  void set_min_apparent_power(float min_apparent_power) { this->min_apparent_power_ = min_apparent_power; }
+  void set_power_apparent_min(float power_apparent_min) { this->power_apparent_min_ = power_apparent_min; }
   void set_phase_detection_confidence_ratio(float confidence_ratio) {
     this->phase_detection_confidence_ratio_ = confidence_ratio;
   }
@@ -539,7 +539,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   bool last_metering_sequence_valid_{false};
   MeteringFrame last_metering_frame_{};
   float grid_deadband_{2.0f};
-  float min_apparent_power_{20.0f};
+  float power_apparent_min_{20.0f};
   float phase_detection_confidence_ratio_{1.5f};
   uint32_t phase_detection_update_interval_ms_{10000};
   sensor::Sensor *raw_total_power_sensor_{nullptr};
