@@ -1271,7 +1271,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_DIAGNOSTICS_INTERVAL): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_METERING_INTERVAL, default="220ms"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_GRID_DEADBAND, default=2.0): cv.positive_float,
-        cv.Optional(CONF_POWER_APPARENT_MIN, default="20VA"): _validate_volt_amps,
+        cv.Optional(CONF_POWER_APPARENT_MIN, default="5VA"): _validate_volt_amps,
         cv.Optional(CONF_PHASE_DETECTION, default={}): PHASE_DETECTION_GLOBAL_SCHEMA,
         cv.Optional(CONF_TOTAL_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_RAW_TOTAL_POWER): POWER_SENSOR_SCHEMA,

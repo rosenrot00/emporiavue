@@ -73,7 +73,7 @@ time:
     lambda: 'return max(x, 0.0f);'
 
 emporiavue:
-  power_apparent_min: 20VA
+  power_apparent_min: 5VA
 
   phase_detection:
     min_power: 30W

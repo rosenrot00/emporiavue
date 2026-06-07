@@ -1532,7 +1532,7 @@ bool EmporiaVueComponent::decode_i2c_metering_packet_(const I2CMeteringPacket &p
   candidate.timestamp_ms = millis();
   candidate.valid = true;
   if (packet.is_unread == 0) {
-    candidate.quality_flags |= 0x01;
+    candidate.quality_flags |= METERING_QUALITY_STALE_FRAME;
   }
 
   for (uint8_t phase = 0; phase < 3; phase++) {
@@ -1939,10 +1939,13 @@ void EmporiaVueComponent::refresh_metering_() {
     return;
   }
 
-  if (this->last_metering_sequence_valid_ &&
-      static_cast<uint8_t>(frame.sequence - this->last_metering_sequence_) > 1) {
-    ESP_LOGD(TAG, "SAMD09 metering skipped %u frame(s)",
-             static_cast<unsigned>(static_cast<uint8_t>(frame.sequence - this->last_metering_sequence_ - 1)));
+  if (this->last_metering_sequence_valid_) {
+    const uint8_t sequence_delta = static_cast<uint8_t>(frame.sequence - this->last_metering_sequence_);
+    if (sequence_delta > 1) {
+      frame.quality_flags |= METERING_QUALITY_MISSED_FRAME;
+      ESP_LOGD(TAG, "SAMD09 metering skipped %u frame(s)",
+               static_cast<unsigned>(static_cast<uint8_t>(sequence_delta - 1)));
+    }
   }
   this->last_metering_sequence_ = static_cast<uint8_t>(frame.sequence);
   this->last_metering_sequence_valid_ = true;

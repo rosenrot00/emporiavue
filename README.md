@@ -187,7 +187,7 @@ time:
     lambda: 'return max(x, 0.0f);'
 
 emporiavue:
-  power_apparent_min: 20VA
+  power_apparent_min: 5VA
 
   phase_detection:
     min_power: 30W
@@ -474,7 +474,7 @@ For line-to-line circuits, the component uses the calculated line-to-line voltag
 
 ```yaml
 emporiavue:
-  power_apparent_min: 20VA
+  power_apparent_min: 5VA
 
   circuits:
     cir2:
@@ -488,7 +488,7 @@ emporiavue:
           - throttle_average: 5s
 ```
 
-`power_apparent_min` defaults to `20VA`. Below that threshold, apparent power and power factor publish `0` instead of
+`power_apparent_min` defaults to `5VA`, matching the stock firmware's low-load cutoff. Below that threshold, apparent power and power factor publish `0` instead of
 showing noise-dominated standby values. Set it lower, higher, or to `0VA` if your installation needs a different cutoff.
 Power factor is published as a dimensionless magnitude between `0` and `1`; use the real power sensor for direction.
 
@@ -678,8 +678,8 @@ Useful diagnostic entities include:
 
 ### Vue GPIO Helpers
 
-Vue 2 has an optional non-I2C GPIO helper package. `packages/vue2-gpios.yaml` adds the D3 status LED on GPIO23 as an
-ESPHome `status_led` light named `D3_LED`.
+Vue 2 has an optional non-I2C GPIO helper package. `packages/vue2-gpios.yaml` drives the front-panel WiFi/status LED on
+GPIO23. The LED blinks while the node is connecting or reconnecting and stays on once the node has a network connection.
 
 ```yaml
 packages:
@@ -758,8 +758,8 @@ package sets `hardware: vue3`, `mode: i2c`, and the community-reported I2C pins 
 currently untested here, so treat these files as a validation starting point. The optional `packages/vue3-gpios.yaml`
 package adds non-I2C GPIO helpers for GPIO2 WiFi status and GPIO4 Ethernet status.
 
-The optional `packages/vue2-gpios.yaml` package adds the Vue 2 D3 status LED on GPIO23 using ESPHome's `status_led`
-light behavior.
+The optional `packages/vue2-gpios.yaml` package drives the Vue 2 GPIO23 WiFi/status LED. It blinks while connecting or
+reconnecting and stays on once the node has a network connection.
 
 The topology presets create Home Assistant configuration numbers for the main voltage calibration values. The initial
 value is `0.022`, matching the old `emporia_vue` component's documented starting point. If a number was changed before,
@@ -782,7 +782,7 @@ packages:
 
 For Vue 3, use the same pattern with `vue3-...` package names; see the commented alternative in the example YAML above.
 Add `packages/vue3-gpios.yaml` if you want the optional Vue 3 non-I2C GPIO status helpers.
-For Vue 2, add `packages/vue2-gpios.yaml` if you want the optional D3 status LED helper.
+For Vue 2, add `packages/vue2-gpios.yaml` if you want the optional GPIO23 WiFi/status LED helper.
 
 ## Acknowledgements
 

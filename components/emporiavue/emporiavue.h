@@ -216,6 +216,8 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   static constexpr uint16_t MANAGED_MODE_SPI = 2;
   static constexpr uint16_t STOCK_I2C_FRAME_SIZE = 284;
   static constexpr uint8_t MANAGED_I2C_DIAGNOSTIC_COMMAND = 0xF1;
+  static constexpr uint8_t METERING_QUALITY_STALE_FRAME = 0x01;
+  static constexpr uint8_t METERING_QUALITY_MISSED_FRAME = 0x02;
 
   struct BackupHeader {
     uint32_t magic;
@@ -539,7 +541,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   bool last_metering_sequence_valid_{false};
   MeteringFrame last_metering_frame_{};
   float grid_deadband_{2.0f};
-  float power_apparent_min_{20.0f};
+  float power_apparent_min_{5.0f};
   float phase_detection_confidence_ratio_{1.5f};
   uint32_t phase_detection_update_interval_ms_{10000};
   sensor::Sensor *raw_total_power_sensor_{nullptr};
