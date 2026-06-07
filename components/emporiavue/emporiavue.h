@@ -463,6 +463,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void start_i2c_diagnostics_();
   void stop_i2c_diagnostics_();
   bool read_i2c_metering_frame_(MeteringFrame *frame);
+  uint8_t calculate_i2c_metering_checksum_(const I2CMeteringPacket &packet) const;
   bool decode_i2c_metering_packet_(const I2CMeteringPacket &packet, MeteringFrame *frame) const;
   void publish_metering_frame_(const MeteringFrame &frame);
   void refresh_metering_();

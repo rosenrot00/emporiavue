@@ -16,6 +16,14 @@ static const char *const TAG = "emporiavue";
 static constexpr float VUE2_FREQUENCY_CONSTANT = 25310.0f;
 static constexpr float VUE3_FREQUENCY_CONSTANT = 19610.0f;
 
+static uint8_t metering_crc8_update(uint8_t crc, uint8_t value) {
+  crc ^= value;
+  for (uint8_t bit = 0; bit < 8; bit++) {
+    crc = (crc & 0x80) != 0 ? static_cast<uint8_t>((crc << 1) ^ 0x07) : static_cast<uint8_t>(crc << 1);
+  }
+  return crc;
+}
+
 void EmporiaVueComponent::setup() {
   this->inspect_backup_partition_();
   this->publish_bundled_firmware_version_();
@@ -1507,13 +1515,37 @@ void EmporiaVueComponent::stop_i2c_diagnostics_() {
 bool EmporiaVueComponent::read_i2c_metering_frame_(MeteringFrame *frame) {
   static_assert(sizeof(I2CMeteringPacket) == STOCK_I2C_FRAME_SIZE, "I2C metering packet size changed");
 
-  I2CMeteringPacket packet{};
-  const i2c::ErrorCode error = this->read(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
-  if (error != i2c::ERROR_OK) {
-    ESP_LOGD(TAG, "SAMD09 metering I2C read failed: i2c error %u", static_cast<unsigned>(error));
-    return false;
+  for (uint8_t attempt = 0; attempt < 2; attempt++) {
+    I2CMeteringPacket packet{};
+    const i2c::ErrorCode error = this->read(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
+    if (error != i2c::ERROR_OK) {
+      ESP_LOGD(TAG, "SAMD09 metering I2C read failed: i2c error %u", static_cast<unsigned>(error));
+      return false;
+    }
+
+    const uint8_t checksum = this->calculate_i2c_metering_checksum_(packet);
+    if (checksum != packet.checksum) {
+      ESP_LOGD(TAG, "SAMD09 metering I2C checksum mismatch: expected=0x%02x calculated=0x%02x%s",
+               packet.checksum, checksum, attempt == 0 ? "; retrying" : "");
+      if (attempt == 0) {
+        continue;
+      }
+      return false;
+    }
+
+    return this->decode_i2c_metering_packet_(packet, frame);
   }
-  return this->decode_i2c_metering_packet_(packet, frame);
+
+  return false;
+}
+
+uint8_t EmporiaVueComponent::calculate_i2c_metering_checksum_(const I2CMeteringPacket &packet) const {
+  const auto *bytes = reinterpret_cast<const uint8_t *>(&packet);
+  uint8_t crc = metering_crc8_update(0xDE, bytes[0]);
+  for (uint16_t index = 2; index < STOCK_I2C_FRAME_SIZE; index++) {
+    crc = metering_crc8_update(crc, bytes[index]);
+  }
+  return crc;
 }
 
 bool EmporiaVueComponent::decode_i2c_metering_packet_(const I2CMeteringPacket &packet, MeteringFrame *frame) const {
