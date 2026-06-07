@@ -107,7 +107,7 @@ CONF_GROUPS = "groups"
 CONF_VIRTUAL_LINES = "virtual_lines"
 CONF_LINES = "lines"
 CONF_LINE = "line"
-CONF_APPARENT_POWER = "apparent_power"
+CONF_POWER_APPARENT = "power_apparent"
 CONF_POWER_FACTOR = "power_factor"
 CONF_PHASE_ID = "phase_id"
 CONF_CALIBRATION_NUMBER = "calibration_number"
@@ -468,7 +468,7 @@ def _apply_raw_power_defaults(config):
                     main_config, CONF_CURRENT, _name_from_power_name(default_name, "Current")
                 )
                 main_config = _apply_optional_sensor_default_name(
-                    main_config, CONF_APPARENT_POWER, _name_from_power_name(default_name, "Apparent Power")
+                    main_config, CONF_POWER_APPARENT, _name_from_power_name(default_name, "Apparent Power")
                 )
                 main_config = _apply_optional_sensor_default_name(
                     main_config, CONF_POWER_FACTOR, _name_from_power_name(default_name, "Power Factor")
@@ -497,7 +497,7 @@ def _apply_raw_power_defaults(config):
                 )
                 circuits[circuit_key] = _apply_optional_sensor_default_name(
                     circuits[circuit_key],
-                    CONF_APPARENT_POWER,
+                    CONF_POWER_APPARENT,
                     _name_from_power_name(default_name, "Apparent Power"),
                 )
                 circuits[circuit_key] = _apply_optional_sensor_default_name(
@@ -531,7 +531,7 @@ def _apply_raw_power_defaults(config):
                     ct_config, CONF_CURRENT, _name_from_power_name(default_name, "Current")
                 )
                 ct_config = _apply_optional_sensor_default_name(
-                    ct_config, CONF_APPARENT_POWER, _name_from_power_name(default_name, "Apparent Power")
+                    ct_config, CONF_POWER_APPARENT, _name_from_power_name(default_name, "Apparent Power")
                 )
                 ct_config = _apply_optional_sensor_default_name(
                     ct_config, CONF_POWER_FACTOR, _name_from_power_name(default_name, "Power Factor")
@@ -982,7 +982,7 @@ METERING_MAIN_SCHEMA = cv.Schema(
         cv.Optional(CONF_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_RAW_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_CURRENT): CURRENT_SENSOR_SCHEMA,
-        cv.Optional(CONF_APPARENT_POWER): APPARENT_POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_POWER_APPARENT): APPARENT_POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_POWER_FACTOR): POWER_FACTOR_SENSOR_SCHEMA,
     }
 )
@@ -1061,7 +1061,7 @@ METERING_CIRCUIT_SCHEMA = cv.Schema(
         cv.Optional(CONF_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_RAW_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_CURRENT): CURRENT_SENSOR_SCHEMA,
-        cv.Optional(CONF_APPARENT_POWER): APPARENT_POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_POWER_APPARENT): APPARENT_POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_POWER_FACTOR): POWER_FACTOR_SENSOR_SCHEMA,
         cv.Optional(CONF_PHASE_DETECTION): _validate_phase_detection_sensor,
     }
@@ -1164,7 +1164,7 @@ METERING_CT_CLAMP_SCHEMA = cv.Schema(
         cv.Optional(CONF_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_RAW_POWER): POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_CURRENT): CURRENT_SENSOR_SCHEMA,
-        cv.Optional(CONF_APPARENT_POWER): APPARENT_POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_POWER_APPARENT): APPARENT_POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_POWER_FACTOR): POWER_FACTOR_SENSOR_SCHEMA,
     }
 )
@@ -1465,7 +1465,7 @@ async def to_code(config):
         if current_config := main_config.get(CONF_CURRENT):
             sens = await sensor.new_sensor(current_config)
             cg.add(ct_clamp_var.set_current_sensor(sens))
-        if apparent_power_config := main_config.get(CONF_APPARENT_POWER):
+        if apparent_power_config := main_config.get(CONF_POWER_APPARENT):
             sens = await sensor.new_sensor(apparent_power_config)
             cg.add(ct_clamp_var.set_apparent_power_sensor(sens))
         if power_factor_config := main_config.get(CONF_POWER_FACTOR):
@@ -1495,7 +1495,7 @@ async def to_code(config):
         if current_config := circuit_config.get(CONF_CURRENT):
             sens = await sensor.new_sensor(current_config)
             cg.add(ct_clamp_var.set_current_sensor(sens))
-        if apparent_power_config := circuit_config.get(CONF_APPARENT_POWER):
+        if apparent_power_config := circuit_config.get(CONF_POWER_APPARENT):
             sens = await sensor.new_sensor(apparent_power_config)
             cg.add(ct_clamp_var.set_apparent_power_sensor(sens))
         if power_factor_config := circuit_config.get(CONF_POWER_FACTOR):
@@ -1577,7 +1577,7 @@ async def to_code(config):
         if current_config := ct_config.get(CONF_CURRENT):
             sens = await sensor.new_sensor(current_config)
             cg.add(ct_clamp_var.set_current_sensor(sens))
-        if apparent_power_config := ct_config.get(CONF_APPARENT_POWER):
+        if apparent_power_config := ct_config.get(CONF_POWER_APPARENT):
             sens = await sensor.new_sensor(apparent_power_config)
             cg.add(ct_clamp_var.set_apparent_power_sensor(sens))
         if power_factor_config := ct_config.get(CONF_POWER_FACTOR):

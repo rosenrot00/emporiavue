@@ -220,7 +220,7 @@ emporiavue:
         filters: *throttle_avg
       current:
         filters: *throttle_avg
-      apparent_power:
+      power_apparent:
         filters: *throttle_avg
       power_factor:
         filters: *throttle_avg
@@ -436,8 +436,8 @@ Configured mains, circuits, and legacy `ct_clamps` can expose apparent power and
 SAMD09 RMS voltage and RMS current values:
 
 ```text
-apparent_power = voltage_rms * current_rms
-power_factor = real_power / apparent_power
+power_apparent = voltage_rms * current_rms
+power_factor = real_power / power_apparent
 ```
 
 For line-to-line circuits, the component uses the calculated line-to-line voltage as the voltage reference. This keeps
@@ -449,7 +449,7 @@ emporiavue:
 
   circuits:
     cir2:
-      apparent_power:
+      power_apparent:
         name: "Circuit 2 Apparent Power"
         filters:
           - throttle_average: 5s

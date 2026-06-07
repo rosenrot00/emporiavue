@@ -127,7 +127,7 @@ emporiavue:
         filters: *throttle_avg
       current:
         filters: *throttle_avg
-      apparent_power:
+      power_apparent:
         filters: *throttle_avg
       power_factor:
         filters: *throttle_avg
