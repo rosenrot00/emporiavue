@@ -1,0 +1,10 @@
+# Optional Emporia Vue 2 non-I2C GPIO helpers.
+#
+# GPIO23 drives the Vue 2 D3 status LED. This uses ESPHome's status LED light
+# behavior so warnings/errors blink with the normal ESPHome app-state logic.
+
+light:
+  - platform: status_led
+    id: d3_led
+    name: "D3_LED"
+    pin: GPIO23
