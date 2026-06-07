@@ -18,7 +18,7 @@ import/export, and more accurate handling of real-world wiring such as line-to-l
 
 | Version | Changes |
 |---|---|
-| 2026.05.1 | Initial public release with [Vue 2 and untested Vue 3 I2C packages](#vue-2-and-vue-3-i2c-packages), [runtime voltage calibration](#runtime-calibration), [internal metering filters](#internal-metering-filters), [stable circuit IDs and energy](#stable-circuit-ids-current-and-energy), [apparent power and power factor](#apparent-power-and-power-factor), [groups](#groups), [line-to-line circuit power](#line-to-line-circuits), [power split](#power-split), [virtual lines](#virtual-lines), [phase detection](#phase-detection), [grid import/export](#grid-importexport), [diagnostics](#diagnostics), and [SAMD09 firmware management](#samd09-firmware-management). |
+| 2026.05.1 | Initial public release with [Vue 2 and untested Vue 3 I2C packages](#vue-2-and-vue-3-i2c-packages), [runtime voltage calibration](#runtime-calibration), [internal metering filters](#internal-metering-filters), [stable circuit IDs and energy](#stable-circuit-ids-current-and-energy), [apparent power and power factor](#apparent-power-and-power-factor), [groups](#groups), [line-to-line circuit power](#line-to-line-circuits), [power split](#power-split), [virtual lines](#virtual-lines), [phase detection](#phase-detection), [grid import/export](#grid-importexport), [diagnostics](#diagnostics), [Vue 3 GPIO helpers](#vue-3-gpio-helpers), and [SAMD09 firmware management](#samd09-firmware-management). |
 
 ## Setup Examples
 
@@ -38,6 +38,7 @@ For Vue 3, use the matching untested packages:
 - `packages/vue3-i2c-1phase.yaml` for one measured line
 - `packages/vue3-i2c-2phase.yaml` for split-phase or two measured lines
 - `packages/vue3-i2c-3phase.yaml` for 3phase with neutral
+- `packages/vue3-gpios.yaml` optionally manages non-I2C Vue 3 GPIO helpers
 
 > [!WARNING]
 > Vue 3 packages have not been validated on hardware in this repository. They use the community-reported Vue 3 I2C pins
@@ -137,6 +138,8 @@ packages:
       # Vue 3 is currently untested. To try it, swap the two files above for:
       # - packages/vue3-i2c.yaml
       # - packages/vue3-i2c-3phase.yaml
+      # Optional Vue 3 non-I2C GPIO helpers:
+      # - packages/vue3-gpios.yaml
     refresh: always
 
 esp32:
@@ -670,6 +673,26 @@ Useful diagnostic entities include:
 - `SAMD DMA Transfer Errors`: DMA errors reported by the SAMD09.
 - `SAMD Last Sample Count`: sample count used for the last completed metering packet.
 
+### Vue 3 GPIO Helpers
+
+Vue 3 has an optional non-I2C GPIO helper package. `packages/vue3-gpios.yaml` defines GPIO2 as the WiFi status output
+and GPIO4 as the Ethernet status output. The active network transport's GPIO blinks while the node is connecting or
+reconnecting, then stays on once the node has a network connection. The inactive transport GPIO is kept off.
+
+```yaml
+packages:
+  emporiavue:
+    url: https://github.com/rosenrot00/emporiavue
+    ref: main
+    files:
+      - packages/vue3-i2c.yaml
+      - packages/vue3-i2c-3phase.yaml
+      - packages/vue3-gpios.yaml
+```
+
+Use this only on Vue 3 builds where those GPIOs match the board behavior. Vue 3 support is still hardware-unverified in
+this repository.
+
 ### SAMD09 Firmware Management
 
 SAMD09 firmware management is an advanced recovery and testing tool. Normal metering does not require pressing any
@@ -715,7 +738,8 @@ explicit in the filename so a future SPI transport can live next to it as `packa
 The Vue 3 package set mirrors the same structure with `packages/vue3-i2c.yaml`,
 `packages/vue3-i2c-1phase.yaml`, `packages/vue3-i2c-2phase.yaml`, and `packages/vue3-i2c-3phase.yaml`. The Vue 3 base
 package sets `hardware: vue3`, `mode: i2c`, and the community-reported I2C pins `SDA=GPIO5` and `SCL=GPIO18`. Vue 3 is
-currently untested here, so treat these files as a validation starting point.
+currently untested here, so treat these files as a validation starting point. The optional `packages/vue3-gpios.yaml`
+package adds non-I2C GPIO helpers for GPIO2 WiFi status and GPIO4 Ethernet status.
 
 The topology presets create Home Assistant configuration numbers for the main voltage calibration values. The initial
 value is `0.022`, matching the old `emporia_vue` component's documented starting point. If a number was changed before,
@@ -737,6 +761,7 @@ packages:
 ```
 
 For Vue 3, use the same pattern with `vue3-...` package names; see the commented alternative in the example YAML above.
+Add `packages/vue3-gpios.yaml` if you want the optional Vue 3 non-I2C GPIO status helpers.
 
 ## Acknowledgements
 
