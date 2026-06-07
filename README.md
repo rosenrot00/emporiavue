@@ -18,7 +18,7 @@ import/export, and more accurate handling of real-world wiring such as line-to-l
 
 | Version | Changes |
 |---|---|
-| 2026.05.1 | Initial public release with [Vue 2 I2C packages](#vue-2-i2c-packages), [runtime voltage calibration](#runtime-calibration), [internal metering filters](#internal-metering-filters), [stable circuit IDs and energy](#stable-circuit-ids-current-and-energy), [apparent power and power factor](#apparent-power-and-power-factor), [groups](#groups), [line-to-line circuit power](#line-to-line-circuits), [virtual lines](#virtual-lines), [phase detection](#phase-detection), [grid import/export](#grid-importexport), [diagnostics](#diagnostics), and [SAMD09 firmware management](#samd09-firmware-management). |
+| 2026.05.1 | Initial public release with [Vue 2 I2C packages](#vue-2-i2c-packages), [runtime voltage calibration](#runtime-calibration), [internal metering filters](#internal-metering-filters), [stable circuit IDs and energy](#stable-circuit-ids-current-and-energy), [apparent power and power factor](#apparent-power-and-power-factor), [groups](#groups), [line-to-line circuit power](#line-to-line-circuits), [power split](#power-split), [virtual lines](#virtual-lines), [phase detection](#phase-detection), [grid import/export](#grid-importexport), [diagnostics](#diagnostics), and [SAMD09 firmware management](#samd09-firmware-management). |
 
 ## Setup Examples
 
@@ -239,10 +239,17 @@ emporiavue:
         name: "Fridge, Steamer Power"
         filters: *throttle_avg
     cir6:
-      line: 3
+      line: [2, 3]
       power:
         name: "HVAC, Dishwasher Power"
         filters: *throttle_avg
+      power_split:
+        line_2:
+          name: "HVAC, Dishwasher L2 Share"
+          filters: *throttle_avg
+        line_3:
+          name: "HVAC, Dishwasher L3 Share"
+          filters: *throttle_avg
 
   groups:
     total_heat_pump_power:
@@ -521,6 +528,40 @@ emporiavue:
       filters:
         - multiply: -1
 ```
+
+### Power Split
+
+`power_split` is an optional display helper for line-to-line circuits. It publishes one share sensor for each line in the
+pair, using half of the circuit's measured line-to-line power. The real measured load remains the circuit `power` sensor.
+
+This is most useful in split-phase regions such as North America, where 240 V appliances are connected between two legs,
+and in any setup where a dashboard or Sankey chart should visually assign a line-to-line load to both involved lines. In a
+3phase installation it can also be useful for line-to-line loads, but it is still a presentation helper: it does not mean
+the component has separately measured conductor power on each line.
+
+```yaml
+emporiavue:
+  circuits:
+    cir2:
+      line: [1, 2]
+      power:
+        name: "Dryer Power"
+        filters:
+          - throttle_average: 5s
+      power_split:
+        line_1:
+          name: "Dryer L1 Share"
+          filters:
+            - throttle_average: 5s
+        line_2:
+          name: "Dryer L2 Share"
+          filters:
+            - throttle_average: 5s
+```
+
+For the common case, `power_split: true` creates both share sensors with default names derived from the circuit power name.
+If the circuit uses an internal filter, for example `filters: [{ multiply: -1 }]`, the split sensors use the corrected
+power too.
 
 ### Virtual Lines
 

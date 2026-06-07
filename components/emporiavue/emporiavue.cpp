@@ -120,6 +120,8 @@ void EmporiaVueComponent::dump_config() {
     LOG_SENSOR("    ", "Current", ct_clamp->get_current_sensor());
     LOG_SENSOR("    ", "Apparent power", ct_clamp->get_apparent_power_sensor());
     LOG_SENSOR("    ", "Power factor", ct_clamp->get_power_factor_sensor());
+    LOG_SENSOR("    ", "Power split line A", ct_clamp->get_power_split_line_a_sensor());
+    LOG_SENSOR("    ", "Power split line B", ct_clamp->get_power_split_line_b_sensor());
     LOG_TEXT_SENSOR("    ", "Phase detection", ct_clamp->get_phase_detection_sensor());
   }
   for (auto *group : this->metering_groups_) {
@@ -1826,6 +1828,15 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
       }
       if (ct_clamp->get_power_sensor() != nullptr) {
         ct_clamp->get_power_sensor()->publish_state(power);
+      }
+      if (ct_clamp->is_line_pair()) {
+        const float split_power = power * 0.5f;
+        if (ct_clamp->get_power_split_line_a_sensor() != nullptr) {
+          ct_clamp->get_power_split_line_a_sensor()->publish_state(split_power);
+        }
+        if (ct_clamp->get_power_split_line_b_sensor() != nullptr) {
+          ct_clamp->get_power_split_line_b_sensor()->publish_state(split_power);
+        }
       }
     }
     if (ct_clamp->get_current_sensor() != nullptr) {

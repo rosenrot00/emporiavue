@@ -663,6 +663,10 @@ class MeteringCTClampConfig {
   sensor::Sensor *get_apparent_power_sensor() const { return this->apparent_power_sensor_; }
   void set_power_factor_sensor(sensor::Sensor *sensor) { this->power_factor_sensor_ = sensor; }
   sensor::Sensor *get_power_factor_sensor() const { return this->power_factor_sensor_; }
+  void set_power_split_line_a_sensor(sensor::Sensor *sensor) { this->power_split_line_a_sensor_ = sensor; }
+  sensor::Sensor *get_power_split_line_a_sensor() const { return this->power_split_line_a_sensor_; }
+  void set_power_split_line_b_sensor(sensor::Sensor *sensor) { this->power_split_line_b_sensor_ = sensor; }
+  sensor::Sensor *get_power_split_line_b_sensor() const { return this->power_split_line_b_sensor_; }
   void add_power_multiply_filter(float multiplier) { this->power_filters_.add_multiply_filter(multiplier); }
   void add_power_lambda_filter(std::function<float(float)> filter) {
     this->power_filters_.add_lambda_filter(std::move(filter));
@@ -706,6 +710,8 @@ class MeteringCTClampConfig {
   sensor::Sensor *current_sensor_{nullptr};
   sensor::Sensor *apparent_power_sensor_{nullptr};
   sensor::Sensor *power_factor_sensor_{nullptr};
+  sensor::Sensor *power_split_line_a_sensor_{nullptr};
+  sensor::Sensor *power_split_line_b_sensor_{nullptr};
   MeteringPowerFilters power_filters_{};
   text_sensor::TextSensor *phase_detection_sensor_{nullptr};
   std::string phase_detection_name_{};

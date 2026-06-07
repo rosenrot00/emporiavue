@@ -146,10 +146,17 @@ emporiavue:
         name: "Fridge, Steamer Power"
         filters: *throttle_avg
     cir6:
-      line: 3
+      line: [2, 3]
       power:
         name: "HVAC, Dishwasher Power"
         filters: *throttle_avg
+      power_split:
+        line_2:
+          name: "HVAC, Dishwasher L2 Share"
+          filters: *throttle_avg
+        line_3:
+          name: "HVAC, Dishwasher L3 Share"
+          filters: *throttle_avg
 
   groups:
     total_heat_pump_power:

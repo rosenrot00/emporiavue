@@ -2,7 +2,7 @@
 
 These examples are copy/paste starting points for common and advanced Emporia Vue 2 I2C setups.
 
-- `vue2-i2c-3phase.yaml`: compact 3phase setup with neutral.
+- `vue2-i2c-3phase.yaml`: compact 3phase setup with neutral, including a line-to-line `power_split` example.
 - `vue2-i2c-3phase-no-neutral.yaml`: advanced 3phase setup without neutral in the measured panel, using one measured line as the Vue voltage reference and `line: [1, 3]` for line-to-line power.
 
 Always review line assignments, CT direction, filters, and electrical safety before using an example on real hardware.

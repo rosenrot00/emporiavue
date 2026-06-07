@@ -109,6 +109,7 @@ CONF_LINES = "lines"
 CONF_LINE = "line"
 CONF_POWER_APPARENT = "power_apparent"
 CONF_POWER_FACTOR = "power_factor"
+CONF_POWER_SPLIT = "power_split"
 CONF_PHASE_ID = "phase_id"
 CONF_CALIBRATION_NUMBER = "calibration_number"
 CONF_MAIN_CLAMP = "main_clamp"
@@ -377,6 +378,65 @@ def _name_from_power_name(power_name, replacement):
     return f"{power_name} {replacement}"
 
 
+def _power_split_line_key(line_number):
+    return f"line_{line_number}"
+
+
+def _apply_power_split_defaults(circuit_key, circuit_config, default_name):
+    if CONF_POWER_SPLIT not in circuit_config:
+        return circuit_config
+
+    line_config = circuit_config.get(CONF_LINE)
+    if not isinstance(line_config, list) or len(line_config) != 2:
+        raise cv.Invalid(f"circuits.{circuit_key}.power_split needs line: [line_a, line_b]")
+
+    power_split_config = circuit_config[CONF_POWER_SPLIT]
+    if power_split_config is False or power_split_config is None:
+        circuit_config = dict(circuit_config)
+        circuit_config.pop(CONF_POWER_SPLIT, None)
+        return circuit_config
+    if power_split_config is True:
+        power_split_config = {}
+    elif not isinstance(power_split_config, dict):
+        raise cv.Invalid(f"circuits.{circuit_key}.power_split must be true or a mapping")
+    else:
+        power_split_config = dict(power_split_config)
+
+    allowed_keys = [_power_split_line_key(line_number) for line_number in line_config]
+    unknown_keys = [key for key in power_split_config if key not in allowed_keys]
+    if unknown_keys:
+        allowed = ", ".join(allowed_keys)
+        raise cv.Invalid(
+            f"circuits.{circuit_key}.power_split only supports {allowed} for line: {line_config}"
+        )
+
+    if not power_split_config:
+        requested_keys = allowed_keys
+    else:
+        requested_keys = list(power_split_config.keys())
+
+    normalized = {}
+    for line_key in requested_keys:
+        line_number = int(line_key.rsplit("_", 1)[1])
+        sensor_config = power_split_config.get(line_key)
+        if sensor_config is None:
+            sensor_config = {}
+        elif not isinstance(sensor_config, dict):
+            raise cv.Invalid(f"circuits.{circuit_key}.power_split.{line_key} must be a mapping")
+        else:
+            sensor_config = dict(sensor_config)
+
+        if CONF_NAME not in sensor_config and CONF_ID not in sensor_config:
+            sensor_config[CONF_NAME] = _name_from_power_name(
+                default_name, f"Line {line_number} Share"
+            )
+        normalized[line_key] = sensor_config
+
+    circuit_config = dict(circuit_config)
+    circuit_config[CONF_POWER_SPLIT] = normalized
+    return circuit_config
+
+
 def _apply_optional_sensor_default_name(parent_config, key, default_name):
     if key not in parent_config:
         return parent_config
@@ -480,12 +540,7 @@ def _apply_raw_power_defaults(config):
         circuits = dict(config[CONF_CIRCUITS])
         for circuit_key, circuit_config in list(circuits.items()):
             if isinstance(circuit_config, dict):
-                if CONF_NAME in circuit_config:
-                    default_name = circuit_config[CONF_NAME]
-                elif circuit_key.startswith("cir"):
-                    default_name = f"Circuit {circuit_key.removeprefix('cir')} Power"
-                else:
-                    default_name = f"{circuit_key.replace('_', ' ').title()} Power"
+                default_name = _circuit_default_power_name(circuit_key, circuit_config)
                 circuits[circuit_key] = _split_power_sensor_config(
                     circuit_config,
                     circuit_key,
@@ -504,6 +559,9 @@ def _apply_raw_power_defaults(config):
                     circuits[circuit_key],
                     CONF_POWER_FACTOR,
                     _name_from_power_name(default_name, "Power Factor"),
+                )
+                circuits[circuit_key] = _apply_power_split_defaults(
+                    circuit_key, circuits[circuit_key], default_name
                 )
         config[CONF_CIRCUITS] = circuits
 
@@ -845,6 +903,14 @@ POWER_FACTOR_SENSOR_SCHEMA = sensor.sensor_schema(
     accuracy_decimals=2,
 )
 
+POWER_SPLIT_SENSOR_SCHEMA = cv.Schema(
+    {
+        cv.Optional("line_1"): POWER_SENSOR_SCHEMA,
+        cv.Optional("line_2"): POWER_SENSOR_SCHEMA,
+        cv.Optional("line_3"): POWER_SENSOR_SCHEMA,
+    }
+)
+
 
 def _validate_watts(value):
     if isinstance(value, str):
@@ -1063,6 +1129,7 @@ METERING_CIRCUIT_SCHEMA = cv.Schema(
         cv.Optional(CONF_CURRENT): CURRENT_SENSOR_SCHEMA,
         cv.Optional(CONF_POWER_APPARENT): APPARENT_POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_POWER_FACTOR): POWER_FACTOR_SENSOR_SCHEMA,
+        cv.Optional(CONF_POWER_SPLIT): POWER_SPLIT_SENSOR_SCHEMA,
         cv.Optional(CONF_PHASE_DETECTION): _validate_phase_detection_sensor,
     }
 )
@@ -1125,6 +1192,22 @@ def _validate_metering_topology(config):
             raise cv.Invalid(
                 f"circuits.{circuit_key}.phase_detection is only supported for single-line circuits"
             )
+        if CONF_POWER_SPLIT in circuit_config:
+            if not isinstance(circuit_config[CONF_LINE], list):
+                raise cv.Invalid(
+                    f"circuits.{circuit_key}.power_split is only supported for line-to-line circuits"
+                )
+            allowed_keys = {
+                _power_split_line_key(line_number)
+                for line_number in circuit_config[CONF_LINE]
+            }
+            for line_key in circuit_config[CONF_POWER_SPLIT]:
+                if line_key not in allowed_keys:
+                    allowed = ", ".join(sorted(allowed_keys))
+                    raise cv.Invalid(
+                        f"circuits.{circuit_key}.power_split.{line_key} does not match line: "
+                        f"{circuit_config[CONF_LINE]}; use {allowed}"
+                    )
         for line_number in _metering_line_numbers(circuit_config[CONF_LINE]):
             line_key = f"line_{line_number}"
             if line_key not in mains:
@@ -1501,6 +1584,15 @@ async def to_code(config):
         if power_factor_config := circuit_config.get(CONF_POWER_FACTOR):
             sens = await sensor.new_sensor(power_factor_config)
             cg.add(ct_clamp_var.set_power_factor_sensor(sens))
+        if power_split_config := circuit_config.get(CONF_POWER_SPLIT):
+            line_a_key = _power_split_line_key(line_config[0])
+            line_b_key = _power_split_line_key(line_config[1])
+            if line_a_config := power_split_config.get(line_a_key):
+                sens = await sensor.new_sensor(line_a_config)
+                cg.add(ct_clamp_var.set_power_split_line_a_sensor(sens))
+            if line_b_config := power_split_config.get(line_b_key):
+                sens = await sensor.new_sensor(line_b_config)
+                cg.add(ct_clamp_var.set_power_split_line_b_sensor(sens))
         if phase_detection_sensor_config := circuit_config.get(CONF_PHASE_DETECTION):
             phase_detection_text_sensor_config = dict(phase_detection_sensor_config)
             phase_detection_text_sensor_config.pop(CONF_MIN_POWER, None)
