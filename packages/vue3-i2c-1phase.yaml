@@ -1,0 +1,59 @@
+# Emporia Vue 3 single-phase metering topology.
+#
+# Include this together with packages/vue3-i2c.yaml. Vue 3 support is currently
+# untested in this repository; verify line and circuit mapping against real
+# hardware before relying on the readings.
+
+emporiavue:
+  mains:
+    line_1:
+      voltage_input: BLACK
+      main_clamp: A
+      calibration: 0.022
+      voltage:
+        id: line_1_voltage
+        name: "Line 1 Voltage"
+      frequency:
+        id: line_1_frequency
+        name: "Line 1 Frequency"
+      power:
+        id: line_1_power
+        name: "Line 1 Power"
+  total_power:
+    id: total_power
+    name: "Total Power"
+  grid_import_power:
+    id: grid_import_w
+    name: "Grid Import Power"
+  grid_export_power:
+    id: grid_export_w
+    name: "Grid Export Power"
+  # Override circuits.<id>.line in the main node YAML if needed. Add
+  # circuits.<id>.power there only for circuits that should be visible in Home
+  # Assistant. The component automatically keeps every configured circuit
+  # available as a stable internal power ID for energy and group calculations.
+  circuits:
+    cir1:
+      input: "1"
+      line: 1
+      name: "Circuit 1 Power"
+    cir2:
+      input: "2"
+      line: 1
+      name: "Circuit 2 Power"
+    cir3:
+      input: "3"
+      line: 1
+      name: "Circuit 3 Power"
+    cir4:
+      input: "4"
+      line: 1
+      name: "Circuit 4 Power"
+    cir5:
+      input: "5"
+      line: 1
+      name: "Circuit 5 Power"
+    cir6:
+      input: "6"
+      line: 1
+      name: "Circuit 6 Power"

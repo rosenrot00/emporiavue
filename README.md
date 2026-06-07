@@ -11,26 +11,37 @@ import/export, and more accurate handling of real-world wiring such as line-to-l
 > - Vue 2 accuracy: I am looking for someone who can run accuracy measurements with the adjusted SAMD09 firmware.
 > - Vue 2 SAMD09 firmware: ideas, review, and testing around firmware improvements are welcome, including a possible
 >   SPI transport.
-> - Vue 3: support is not available yet; if you have a Vue 3 and want to help test or map the YAML settings, please get
->   in touch.
+> - Vue 3: YAML packages are available but untested; if you have a Vue 3 and can validate pins, channel order, and
+>   readings, please get in touch.
 
 ## Version History
 
 | Version | Changes |
 |---|---|
-| 2026.05.1 | Initial public release with [Vue 2 I2C packages](#vue-2-i2c-packages), [runtime voltage calibration](#runtime-calibration), [internal metering filters](#internal-metering-filters), [stable circuit IDs and energy](#stable-circuit-ids-current-and-energy), [apparent power and power factor](#apparent-power-and-power-factor), [groups](#groups), [line-to-line circuit power](#line-to-line-circuits), [power split](#power-split), [virtual lines](#virtual-lines), [phase detection](#phase-detection), [grid import/export](#grid-importexport), [diagnostics](#diagnostics), and [SAMD09 firmware management](#samd09-firmware-management). |
+| 2026.05.1 | Initial public release with [Vue 2 and untested Vue 3 I2C packages](#vue-2-and-vue-3-i2c-packages), [runtime voltage calibration](#runtime-calibration), [internal metering filters](#internal-metering-filters), [stable circuit IDs and energy](#stable-circuit-ids-current-and-energy), [apparent power and power factor](#apparent-power-and-power-factor), [groups](#groups), [line-to-line circuit power](#line-to-line-circuits), [power split](#power-split), [virtual lines](#virtual-lines), [phase detection](#phase-detection), [grid import/export](#grid-importexport), [diagnostics](#diagnostics), and [SAMD09 firmware management](#samd09-firmware-management). |
 
 ## Setup Examples
 
-Use the Vue 2 I2C base package plus exactly one topology package. Start with the topology that matches how the Vue
-voltage inputs are wired, then override only the circuit names, line assignments, filters, and groups that differ in
-your panel. Full copy/paste YAML files are collected in [`examples/yaml`](examples/yaml/).
+Use the Vue I2C base package plus exactly one topology package. Start with the topology that matches how the Vue voltage
+inputs are wired, then override only the circuit names, line assignments, filters, and groups that differ in your panel.
+Full copy/paste YAML files are collected in [`examples/yaml`](examples/yaml/).
 
-For most users the choice is just:
+For Vue 2, the choice is:
 
 - `packages/vue2-i2c-1phase.yaml` for one measured line
 - `packages/vue2-i2c-2phase.yaml` for split-phase or two measured lines
 - `packages/vue2-i2c-3phase.yaml` for 3phase with neutral
+
+For Vue 3, use the matching untested packages:
+
+- `packages/vue3-i2c.yaml` as the base package
+- `packages/vue3-i2c-1phase.yaml` for one measured line
+- `packages/vue3-i2c-2phase.yaml` for split-phase or two measured lines
+- `packages/vue3-i2c-3phase.yaml` for 3phase with neutral
+
+> [!WARNING]
+> Vue 3 packages have not been validated on hardware in this repository. They use the community-reported Vue 3 I2C pins
+> `SDA=GPIO5` and `SCL=GPIO18`, but channel order, CT mapping, and reading accuracy still need real-device testing.
 
 ### 3phase With Neutral
 
@@ -75,6 +86,24 @@ packages:
     files:
       - packages/vue2-i2c.yaml
       - packages/vue2-i2c-1phase.yaml
+```
+
+### Vue 3 Untested
+
+Vue 3 uses the same package pattern, but swaps the base package and topology package names. The known I2C pin change is
+handled by `packages/vue3-i2c.yaml`.
+
+```yaml
+packages:
+  emporiavue:
+    url: https://github.com/rosenrot00/emporiavue
+    ref: main
+    files:
+      - packages/vue3-i2c.yaml
+      # Pick exactly one topology package:
+      # - packages/vue3-i2c-1phase.yaml
+      # - packages/vue3-i2c-2phase.yaml
+      - packages/vue3-i2c-3phase.yaml
 ```
 
 ### 3phase Without Neutral
@@ -345,11 +374,11 @@ sensor:
 
 ## Feature Details
 
-### Vue 2 I2C Packages
+### Vue 2 And Vue 3 I2C Packages
 
-The base package sets up the Vue 2 I2C transport and firmware controls. Add exactly one topology package for your
-installation: single-phase, two-phase, or three-phase. The topology package adds the usual line and circuit defaults, so
-your node YAML only has to override the parts that are different in your panel.
+The base package sets up the Vue I2C transport. Add exactly one topology package for your installation: single-phase,
+two-phase, or three-phase. The topology package adds the usual line and circuit defaults, so your node YAML only has to
+override the parts that are different in your panel.
 
 ```yaml
 packages:
@@ -362,6 +391,21 @@ packages:
       # - packages/vue2-i2c-1phase.yaml
       # - packages/vue2-i2c-2phase.yaml
       - packages/vue2-i2c-3phase.yaml
+```
+
+Vue 3 uses the same structure with `vue3-...` package names. These packages currently need hardware validation.
+
+```yaml
+packages:
+  emporiavue:
+    url: https://github.com/rosenrot00/emporiavue
+    ref: main
+    files:
+      - packages/vue3-i2c.yaml
+      # Pick exactly one topology package:
+      # - packages/vue3-i2c-1phase.yaml
+      # - packages/vue3-i2c-2phase.yaml
+      - packages/vue3-i2c-3phase.yaml
 ```
 
 ### Runtime Calibration
@@ -655,6 +699,7 @@ SAMD flash button.
 > [!WARNING]
 > Flashing the SAMD09 changes the measurement controller firmware inside the Vue 2. Only use the flash buttons if you
 > understand the recovery path and are comfortable working with firmware-level changes.
+> The bundled SAMD firmware image is for Vue 2, not for the untested Vue 3 packages.
 
 The Vue 2 I2C package adds a 64 KiB `samd_bak` data partition for SAMD firmware backups. When adding `samd_bak` to a
 device that is already flashed, update the ESP32 partition table once. ESPHome documents custom partition lists under
@@ -679,14 +724,19 @@ emporiavue:
       url: "https://raw.githubusercontent.com/rosenrot00/emporiavue/main/firmware/samd09/images/i2c/vue2-i2c-v1.0.bin"
 ```
 
-## Vue 2 I2C Packages
+## I2C Package Files
 
-The repository currently includes the base `packages/vue2-i2c.yaml` package and three topology presets:
+The repository includes the Vue 2 base `packages/vue2-i2c.yaml` package and three topology presets:
 `packages/vue2-i2c-1phase.yaml`, `packages/vue2-i2c-2phase.yaml`, and `packages/vue2-i2c-3phase.yaml`. The base package
 sets `hardware: vue2` and `mode: i2c`, adds a 64 KiB `samd_bak` data partition, and enables the firmware version
 entities plus the backup, update, and restore buttons. It also uses the component's default `metering_interval: 220ms`
 I2C read path that decodes the stock-compatible frame into the component's internal metering frame. The transport is
 explicit in the filename so a future SPI transport can live next to it as `packages/vue2-spi.yaml`.
+
+The Vue 3 package set mirrors the same structure with `packages/vue3-i2c.yaml`,
+`packages/vue3-i2c-1phase.yaml`, `packages/vue3-i2c-2phase.yaml`, and `packages/vue3-i2c-3phase.yaml`. The Vue 3 base
+package sets `hardware: vue3`, `mode: i2c`, and the community-reported I2C pins `SDA=GPIO5` and `SCL=GPIO18`. Vue 3 is
+currently untested here, so treat these files as a validation starting point.
 
 The topology presets create Home Assistant configuration numbers for the main voltage calibration values. The initial
 value is `0.022`, matching the old `emporia_vue` component's documented starting point. If a number was changed before,
@@ -705,6 +755,21 @@ packages:
       # - packages/vue2-i2c-1phase.yaml
       # - packages/vue2-i2c-2phase.yaml
       - packages/vue2-i2c-3phase.yaml
+```
+
+For Vue 3, use the same pattern with `vue3-...` package names:
+
+```yaml
+packages:
+  emporiavue:
+    url: https://github.com/rosenrot00/emporiavue
+    ref: main
+    files:
+      - packages/vue3-i2c.yaml
+      # Pick exactly one topology package:
+      # - packages/vue3-i2c-1phase.yaml
+      # - packages/vue3-i2c-2phase.yaml
+      - packages/vue3-i2c-3phase.yaml
 ```
 
 ## Acknowledgements
