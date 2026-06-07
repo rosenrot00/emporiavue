@@ -91,20 +91,8 @@ packages:
 ### Vue 3 Untested
 
 Vue 3 uses the same package pattern, but swaps the base package and topology package names. The known I2C pin change is
-handled by `packages/vue3-i2c.yaml`.
-
-```yaml
-packages:
-  emporiavue:
-    url: https://github.com/rosenrot00/emporiavue
-    ref: main
-    files:
-      - packages/vue3-i2c.yaml
-      # Pick exactly one topology package:
-      # - packages/vue3-i2c-1phase.yaml
-      # - packages/vue3-i2c-2phase.yaml
-      - packages/vue3-i2c-3phase.yaml
-```
+handled by `packages/vue3-i2c.yaml`. The full example YAML below includes the Vue 3 package names as commented
+alternatives.
 
 ### 3phase Without Neutral
 
@@ -146,6 +134,9 @@ packages:
       # - packages/vue2-i2c-1phase.yaml
       # - packages/vue2-i2c-2phase.yaml
       - packages/vue2-i2c-3phase.yaml
+      # Vue 3 is currently untested. To try it, swap the two files above for:
+      # - packages/vue3-i2c.yaml
+      # - packages/vue3-i2c-3phase.yaml
     refresh: always
 
 esp32:
@@ -393,20 +384,8 @@ packages:
       - packages/vue2-i2c-3phase.yaml
 ```
 
-Vue 3 uses the same structure with `vue3-...` package names. These packages currently need hardware validation.
-
-```yaml
-packages:
-  emporiavue:
-    url: https://github.com/rosenrot00/emporiavue
-    ref: main
-    files:
-      - packages/vue3-i2c.yaml
-      # Pick exactly one topology package:
-      # - packages/vue3-i2c-1phase.yaml
-      # - packages/vue3-i2c-2phase.yaml
-      - packages/vue3-i2c-3phase.yaml
-```
+Vue 3 uses the same structure with `vue3-...` package names. These packages currently need hardware validation, and the
+full example YAML includes the Vue 3 package names as commented alternatives.
 
 ### Runtime Calibration
 
@@ -757,20 +736,7 @@ packages:
       - packages/vue2-i2c-3phase.yaml
 ```
 
-For Vue 3, use the same pattern with `vue3-...` package names:
-
-```yaml
-packages:
-  emporiavue:
-    url: https://github.com/rosenrot00/emporiavue
-    ref: main
-    files:
-      - packages/vue3-i2c.yaml
-      # Pick exactly one topology package:
-      # - packages/vue3-i2c-1phase.yaml
-      # - packages/vue3-i2c-2phase.yaml
-      - packages/vue3-i2c-3phase.yaml
-```
+For Vue 3, use the same pattern with `vue3-...` package names; see the commented alternative in the example YAML above.
 
 ## Acknowledgements
 

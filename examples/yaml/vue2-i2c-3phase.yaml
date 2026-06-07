@@ -24,6 +24,9 @@ packages:
     files:
       - packages/vue2-i2c.yaml
       - packages/vue2-i2c-3phase.yaml
+      # Vue 3 is currently untested. To try it, swap the two files above for:
+      # - packages/vue3-i2c.yaml
+      # - packages/vue3-i2c-3phase.yaml
     refresh: always
 
 esp32:
