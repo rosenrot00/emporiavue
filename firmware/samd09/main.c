@@ -291,6 +291,26 @@ uint8_t SensorSequence = 0;
 #define ADC_INPUTCTRL_SCAN8_DIFF_GAIN2 0x1270000UL
 #define ADC_CTRLB_DIV8_12BIT_DIFF      0x101
 
+static uint8_t calculate_esp_checksum(const struct SensorReadingType* sensor_reading, uint8_t is_unread)
+{
+	uint8_t eor_value = 0xDE;
+	const uint8_t* eor_byte = (const uint8_t *) &EORTable;
+	const uint8_t* next_sensor_byte = (const uint8_t*) sensor_reading;
+
+	eor_value = eor_value ^ is_unread;
+	eor_value = *(eor_byte + eor_value);
+
+	next_sensor_byte = next_sensor_byte + 2; // Skip is_unread and checksum bytes.
+	for (int i = 0; i < ESPpacketlength - 2; i++)
+	{
+		eor_value = eor_value ^ *next_sensor_byte;
+		eor_value = *(eor_byte + eor_value);
+		next_sensor_byte++;
+	}
+
+	return eor_value;
+}
+
 struct __attribute__((__packed__)) ManagedDiagnosticType
 {
 	uint16_t hardware_id;
@@ -752,7 +772,11 @@ void irq_handler_sercom1(void) //We've configured sercom to use IRQ sources "Dat
 				if (ESPbyteIndex > ESPpacketlength)
 					DiagI2cOversizeReads++;
 				if (temp != 0)
+				{
 					SensorReadings[ESPReadBufferIndex].is_unread = 0; //Save 0 to first byte in the Sensordata packet
+					SensorReadings[ESPReadBufferIndex].checksum = calculate_esp_checksum(&SensorReadings[ESPReadBufferIndex], 0);
+					__asm__ __volatile__("dmb sy");
+				}
 			}
 			else if (ESPbyteIndex > 0)
 				DiagI2cPartialReads++;
@@ -1009,22 +1033,8 @@ void Check_and_sendESPpacket()
 		SensorReading->unknown = 0x52;
 		SensorReading->sequence_num = ++SensorSequence;
 
-
-		//Calculate the header's checksum byte
-		uint8_t EORvalue = 0x1D;
-		uint8_t* NextSensorbyte = (uint8_t*) SensorReading;
-			const uint8_t* EORbyte = (const uint8_t *) &EORTable;
-
-		NextSensorbyte = NextSensorbyte + 2; //Skip first 2 bytes
-		for (int i = 0; i < ESPpacketlength-2; i++)
-		{
-			EORvalue = EORvalue ^ *NextSensorbyte;
-			EORvalue = *(EORbyte + EORvalue);
-			NextSensorbyte++;
-		}
-
-		SensorReading->checksum = EORvalue;
 		SensorReading->is_unread = 3;
+		SensorReading->checksum = calculate_esp_checksum(SensorReading, SensorReading->is_unread);
 		__asm__ __volatile__("dmb sy");
 		uint8_t previous_active = ActiveSensorReadingIndex;
 		ActiveSensorReadingIndex = BuildSensorReadingIndex;
