@@ -1512,7 +1512,7 @@ void EmporiaVueComponent::stop_i2c_diagnostics_() {
   this->diagnostics_started_ = false;
 }
 
-bool EmporiaVueComponent::read_i2c_metering_frame_(MeteringFrame *frame) {
+EmporiaVueComponent::I2CMeteringReadResult EmporiaVueComponent::read_i2c_metering_frame_(MeteringFrame *frame) {
   static_assert(sizeof(I2CMeteringPacket) == STOCK_I2C_FRAME_SIZE, "I2C metering packet size changed");
 
   for (uint8_t attempt = 0; attempt < 2; attempt++) {
@@ -1520,7 +1520,7 @@ bool EmporiaVueComponent::read_i2c_metering_frame_(MeteringFrame *frame) {
     const i2c::ErrorCode error = this->read(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
     if (error != i2c::ERROR_OK) {
       ESP_LOGD(TAG, "SAMD09 metering I2C read failed: i2c error %u", static_cast<unsigned>(error));
-      return false;
+      return I2CMeteringReadResult::ERROR;
     }
 
     const uint8_t checksum = this->calculate_i2c_metering_checksum_(packet);
@@ -1530,13 +1530,18 @@ bool EmporiaVueComponent::read_i2c_metering_frame_(MeteringFrame *frame) {
       if (attempt == 0) {
         continue;
       }
-      return false;
+      return I2CMeteringReadResult::ERROR;
     }
 
-    return this->decode_i2c_metering_packet_(packet, frame);
+    if (packet.is_unread == 0) {
+      return I2CMeteringReadResult::STALE_FRAME;
+    }
+
+    return this->decode_i2c_metering_packet_(packet, frame) ? I2CMeteringReadResult::VALID_FRAME
+                                                            : I2CMeteringReadResult::ERROR;
   }
 
-  return false;
+  return I2CMeteringReadResult::ERROR;
 }
 
 uint8_t EmporiaVueComponent::calculate_i2c_metering_checksum_(const I2CMeteringPacket &packet) const {
@@ -1563,9 +1568,6 @@ bool EmporiaVueComponent::decode_i2c_metering_packet_(const I2CMeteringPacket &p
   candidate.sequence = packet.sequence_num;
   candidate.timestamp_ms = millis();
   candidate.valid = true;
-  if (packet.is_unread == 0) {
-    candidate.quality_flags |= METERING_QUALITY_STALE_FRAME;
-  }
 
   for (uint8_t phase = 0; phase < 3; phase++) {
     candidate.phases[phase].voltage_raw = packet.voltage[phase];
@@ -1967,7 +1969,8 @@ void EmporiaVueComponent::refresh_metering_() {
   }
 
   MeteringFrame frame{};
-  if (!this->read_i2c_metering_frame_(&frame)) {
+  const I2CMeteringReadResult result = this->read_i2c_metering_frame_(&frame);
+  if (result != I2CMeteringReadResult::VALID_FRAME) {
     return;
   }
 

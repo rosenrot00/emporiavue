@@ -216,8 +216,13 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   static constexpr uint16_t MANAGED_MODE_SPI = 2;
   static constexpr uint16_t STOCK_I2C_FRAME_SIZE = 284;
   static constexpr uint8_t MANAGED_I2C_DIAGNOSTIC_COMMAND = 0xF1;
-  static constexpr uint8_t METERING_QUALITY_STALE_FRAME = 0x01;
-  static constexpr uint8_t METERING_QUALITY_MISSED_FRAME = 0x02;
+  static constexpr uint8_t METERING_QUALITY_MISSED_FRAME = 0x01;
+
+  enum class I2CMeteringReadResult : uint8_t {
+    VALID_FRAME,
+    STALE_FRAME,
+    ERROR,
+  };
 
   struct BackupHeader {
     uint32_t magic;
@@ -462,7 +467,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void publish_i2c_diagnostics_(const ManagedI2CDiagnostic &diagnostic);
   void start_i2c_diagnostics_();
   void stop_i2c_diagnostics_();
-  bool read_i2c_metering_frame_(MeteringFrame *frame);
+  I2CMeteringReadResult read_i2c_metering_frame_(MeteringFrame *frame);
   uint8_t calculate_i2c_metering_checksum_(const I2CMeteringPacket &packet) const;
   bool decode_i2c_metering_packet_(const I2CMeteringPacket &packet, MeteringFrame *frame) const;
   void publish_metering_frame_(const MeteringFrame &frame);
