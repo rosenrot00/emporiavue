@@ -1541,7 +1541,7 @@ bool EmporiaVueComponent::read_i2c_metering_frame_(MeteringFrame *frame) {
 
 uint8_t EmporiaVueComponent::calculate_i2c_metering_checksum_(const I2CMeteringPacket &packet) const {
   const auto *bytes = reinterpret_cast<const uint8_t *>(&packet);
-  uint8_t crc = metering_crc8_update(0xDE, bytes[0]);
+  uint8_t crc = 0x1D;
   for (uint16_t index = 2; index < STOCK_I2C_FRAME_SIZE; index++) {
     crc = metering_crc8_update(crc, bytes[index]);
   }
