@@ -1,0 +1,1715 @@
+from pathlib import Path
+import urllib.request
+
+import esphome.codegen as cg
+import esphome.config_validation as cv
+from esphome import pins
+from esphome.components import button, i2c, number, sensor, text_sensor
+from esphome.const import (
+    CONF_CALIBRATION,
+    CONF_CURRENT,
+    CONF_ID,
+    CONF_INPUT,
+    CONF_INITIAL_VALUE,
+    CONF_NAME,
+    CONF_PHASE_ANGLE,
+    CONF_POWER,
+    CONF_RESET_PIN,
+    CONF_VOLTAGE,
+    CONF_FREQUENCY,
+    DEVICE_CLASS_CURRENT,
+    DEVICE_CLASS_FREQUENCY,
+    DEVICE_CLASS_POWER,
+    DEVICE_CLASS_VOLTAGE,
+    ENTITY_CATEGORY_CONFIG,
+    ENTITY_CATEGORY_DIAGNOSTIC,
+    STATE_CLASS_MEASUREMENT,
+    UNIT_AMPERE,
+    UNIT_DEGREES,
+    UNIT_HERTZ,
+    UNIT_VOLT,
+    UNIT_WATT,
+)
+
+DEPENDENCIES = ["esp32", "i2c"]
+AUTO_LOAD = ["button", "number", "sensor", "text_sensor"]
+
+emporiavue_ns = cg.esphome_ns.namespace("emporiavue")
+EmporiaVueComponent = emporiavue_ns.class_(
+    "EmporiaVueComponent", cg.Component, i2c.I2CDevice
+)
+EmporiaVueBackupFirmwareButton = emporiavue_ns.class_(
+    "EmporiaVueBackupFirmwareButton", button.Button
+)
+EmporiaVueInstallFirmwareButton = emporiavue_ns.class_(
+    "EmporiaVueInstallFirmwareButton", button.Button
+)
+EmporiaVueRestoreFirmwareButton = emporiavue_ns.class_(
+    "EmporiaVueRestoreFirmwareButton", button.Button
+)
+EmporiaVueFlashExternalFirmwareButton = emporiavue_ns.class_(
+    "EmporiaVueFlashExternalFirmwareButton", button.Button
+)
+MeteringPhaseConfig = emporiavue_ns.class_("MeteringPhaseConfig")
+MeteringCTClampConfig = emporiavue_ns.class_("MeteringCTClampConfig")
+MeteringGroupConfig = emporiavue_ns.class_("MeteringGroupConfig")
+MeteringVirtualLineConfig = emporiavue_ns.class_("MeteringVirtualLineConfig")
+MeteringCalibrationNumber = emporiavue_ns.class_(
+    "MeteringCalibrationNumber", number.Number
+)
+
+CONF_SWCLK_PIN = "swclk_pin"
+CONF_SWDIO_PIN = "swdio_pin"
+CONF_BACKUP_FIRMWARE_BUTTON = "backup_firmware_button"
+CONF_INSTALL_FIRMWARE_BUTTON = "install_firmware_button"
+CONF_RESTORE_FIRMWARE_BUTTON = "restore_firmware_button"
+CONF_EXTERNAL_SAMD_FIRMWARE = "external_samd_firmware"
+CONF_BUTTON = "button"
+CONF_EXTERNAL_FIRMWARE_ID = "id"
+CONF_URL = "url"
+CONF_TOKEN = "token"
+CONF_DIAG_SAMPLE_BLOCKS = "diag_sample_blocks"
+CONF_DIAG_PACKETS_BUILT = "diag_packets_built"
+CONF_DIAG_PACKETS_READ = "diag_packets_read"
+CONF_DIAG_DMA_TRANSFER_ERRORS = "diag_dma_transfer_errors"
+CONF_DIAG_PACKET_OVERRUNS = "diag_packet_overruns"
+CONF_DIAG_I2C_PARTIAL_READS = "diag_i2c_partial_reads"
+CONF_DIAG_LAST_SAMPLE_COUNT = "diag_last_sample_count"
+CONF_FIRMWARE_VERSION = "firmware_version"
+CONF_BUNDLED_FIRMWARE_VERSION = "bundled_firmware_version"
+CONF_BACKUP_PARTITION = "backup_partition"
+CONF_HARDWARE = "hardware"
+CONF_CONNECT_UNDER_RESET = "connect_under_reset"
+CONF_RESET_RELEASE_TIME = "reset_release_time"
+CONF_CLOCK_DELAY = "clock_delay"
+CONF_MODE = "mode"
+CONF_ENTITY_PREFIX = "entity_prefix"
+CONF_AUTO_UPDATE_SAMD = "auto_update_samd"
+CONF_DIAGNOSTICS_INTERVAL = "diagnostics_interval"
+CONF_METERING_INTERVAL = "metering_interval"
+CONF_GRID_DEADBAND = "grid_deadband"
+CONF_POWER_APPARENT_MIN = "power_apparent_min"
+CONF_PHASE_DETECTION = "phase_detection"
+CONF_MIN_POWER = "min_power"
+CONF_CONFIDENCE_RATIO = "confidence_ratio"
+CONF_UPDATE_INTERVAL = "update_interval"
+CONF_ENTITY_CATEGORY = "entity_category"
+CONF_TOTAL_POWER = "total_power"
+CONF_GRID_IMPORT_POWER = "grid_import_power"
+CONF_GRID_EXPORT_POWER = "grid_export_power"
+CONF_RAW_POWER = "raw_power"
+CONF_RAW_TOTAL_POWER = "raw_total_power"
+CONF_RAW_GRID_IMPORT_POWER = "raw_grid_import_power"
+CONF_RAW_GRID_EXPORT_POWER = "raw_grid_export_power"
+CONF_MAINS = "mains"
+CONF_CIRCUITS = "circuits"
+CONF_GROUPS = "groups"
+CONF_VIRTUAL_LINES = "virtual_lines"
+CONF_LINES = "lines"
+CONF_LINE = "line"
+CONF_POWER_APPARENT = "power_apparent"
+CONF_POWER_FACTOR = "power_factor"
+CONF_POWER_SPLIT = "power_split"
+CONF_PHASE_ID = "phase_id"
+CONF_CALIBRATION_NUMBER = "calibration_number"
+CONF_MAIN_CLAMP = "main_clamp"
+CONF_CT_ID = "ct_id"
+CONF_VOLTAGE_INPUT = "voltage_input"
+CONF_PHASES = "phases"
+CONF_CT_CLAMPS = "ct_clamps"
+CONF_INTERNAL = "internal"
+CONF_FILTERS = "filters"
+CONF_MULTIPLY = "multiply"
+CONF_LAMBDA = "lambda"
+
+HARDWARE_CUSTOM = "custom"
+HARDWARE_VUE2 = "vue2"
+HARDWARE_VUE3 = "vue3"
+MODE_I2C = "i2c"
+MODE_SPI = "spi"
+
+HARDWARE_IDS = {
+    HARDWARE_CUSTOM: 0,
+    HARDWARE_VUE2: 2,
+    HARDWARE_VUE3: 3,
+}
+
+MODE_IDS = {
+    MODE_I2C: 0,
+    MODE_SPI: 1,
+}
+
+PHASE_INPUTS = {
+    "BLACK": 0,
+    "RED": 1,
+    "BLUE": 2,
+}
+
+CT_INPUTS = {
+    "A": 0,
+    "B": 1,
+    "C": 2,
+    "1": 3,
+    "2": 4,
+    "3": 5,
+    "4": 6,
+    "5": 7,
+    "6": 8,
+    "7": 9,
+    "8": 10,
+    "9": 11,
+    "10": 12,
+    "11": 13,
+    "12": 14,
+    "13": 15,
+    "14": 16,
+    "15": 17,
+    "16": 18,
+}
+
+BRANCH_CT_INPUTS = {key: value for key, value in CT_INPUTS.items() if key not in {"A", "B", "C"}}
+
+MAIN_PHASE_DEFAULTS = {
+    "line_1": {
+        "label": "Line 1",
+    },
+    "line_2": {
+        "label": "Line 2",
+    },
+    "line_3": {
+        "label": "Line 3",
+    },
+}
+
+EXTERNAL_SAMD_FIRMWARE_HEADER = Path(__file__).with_name("external_samd_firmware.h")
+
+CORE_ENTITY_NAMES = {
+    CONF_FIRMWARE_VERSION: "SAMD Firmware Version",
+    CONF_BUNDLED_FIRMWARE_VERSION: "SAMD Bundled Firmware Version",
+    CONF_BACKUP_FIRMWARE_BUTTON: "Read SAMD Firmware",
+    CONF_INSTALL_FIRMWARE_BUTTON: "Flash SAMD Bundled Firmware",
+    CONF_RESTORE_FIRMWARE_BUTTON: "Flash SAMD Backup Firmware",
+}
+
+DIAGNOSTIC_ENTITY_NAMES = {
+    CONF_DIAG_SAMPLE_BLOCKS: "SAMD Sample Blocks",
+    CONF_DIAG_PACKETS_BUILT: "SAMD Packets Built",
+    CONF_DIAG_PACKETS_READ: "SAMD Packets Read",
+    CONF_DIAG_DMA_TRANSFER_ERRORS: "SAMD DMA Transfer Errors",
+    CONF_DIAG_PACKET_OVERRUNS: "SAMD Packet Overruns",
+    CONF_DIAG_I2C_PARTIAL_READS: "SAMD I2C Partial Reads",
+    CONF_DIAG_LAST_SAMPLE_COUNT: "SAMD Last Sample Count",
+}
+
+def _prefixed_entity_name(prefix, name):
+    if not prefix:
+        return name
+    full_prefix = f"{prefix} "
+    if name == prefix or name.startswith(full_prefix):
+        return name
+    return f"{full_prefix}{name}"
+
+
+def _apply_entity_name_defaults(config):
+    config = dict(config)
+    prefix = config.get(CONF_ENTITY_PREFIX, "")
+    if not prefix:
+        return config
+
+    for key, default_name in CORE_ENTITY_NAMES.items():
+        entity_config = config.get(key)
+        if entity_config is None:
+            entity_config = {}
+        elif not isinstance(entity_config, dict):
+            continue
+        else:
+            entity_config = dict(entity_config)
+
+        if entity_config.get(CONF_NAME, default_name) == default_name:
+            entity_config[CONF_NAME] = _prefixed_entity_name(prefix, default_name)
+
+        config[key] = entity_config
+
+    for key, default_name in DIAGNOSTIC_ENTITY_NAMES.items():
+        entity_config = config.get(key)
+        if entity_config is None or not isinstance(entity_config, dict):
+            continue
+
+        entity_config = dict(entity_config)
+        if entity_config.get(CONF_NAME, default_name) == default_name:
+            entity_config[CONF_NAME] = _prefixed_entity_name(prefix, default_name)
+
+        config[key] = entity_config
+    return config
+
+
+def _apply_diagnostics_defaults(config):
+    config = dict(config)
+    if CONF_DIAGNOSTICS_INTERVAL not in config:
+        return config
+
+    for key, default_name in DIAGNOSTIC_ENTITY_NAMES.items():
+        entity_config = config.get(key)
+        if entity_config is None:
+            entity_config = {}
+        elif not isinstance(entity_config, dict):
+            continue
+        else:
+            entity_config = dict(entity_config)
+
+        entity_config.setdefault(CONF_NAME, default_name)
+        config[key] = entity_config
+    return config
+
+
+def _apply_mains_defaults(config):
+    config = dict(config)
+    if CONF_MAINS not in config:
+        return config
+
+    prefix = config.get(CONF_ENTITY_PREFIX, "")
+    mains = config[CONF_MAINS]
+    if not isinstance(mains, dict):
+        return config
+
+    normalized_mains = dict(mains)
+    for phase_key, defaults in MAIN_PHASE_DEFAULTS.items():
+        if phase_key not in normalized_mains:
+            continue
+        phase_config = normalized_mains[phase_key]
+        if phase_config is None:
+            phase_config = {}
+        elif not isinstance(phase_config, dict):
+            raise cv.Invalid(f"mains.{phase_key} must be a mapping")
+        else:
+            phase_config = dict(phase_config)
+
+        calibration_number_config = phase_config.get(CONF_CALIBRATION_NUMBER)
+        default_name = f"{defaults['label']} Calibration"
+        if calibration_number_config is None:
+            calibration_number_config = {CONF_NAME: default_name}
+            name_is_default = True
+        elif not isinstance(calibration_number_config, dict):
+            raise cv.Invalid(f"mains.{phase_key}.calibration_number must be a mapping")
+        else:
+            calibration_number_config = dict(calibration_number_config)
+            name_is_default = calibration_number_config.get(CONF_NAME) in (None, default_name)
+
+        if calibration_number_config.get(CONF_NAME) is None:
+            calibration_number_config[CONF_NAME] = default_name
+        if prefix and name_is_default:
+            calibration_number_config[CONF_NAME] = _prefixed_entity_name(prefix, default_name)
+        if CONF_INITIAL_VALUE not in calibration_number_config and CONF_CALIBRATION in phase_config:
+            calibration_number_config[CONF_INITIAL_VALUE] = phase_config[CONF_CALIBRATION]
+        calibration_number_config.setdefault(CONF_MODE, "BOX")
+        phase_config[CONF_CALIBRATION_NUMBER] = calibration_number_config
+        normalized_mains[phase_key] = phase_config
+
+    config[CONF_MAINS] = normalized_mains
+    return config
+
+
+def _circuit_default_power_name(circuit_key, circuit_config):
+    power_config = circuit_config.get(CONF_POWER)
+    if isinstance(power_config, dict) and power_config.get(CONF_NAME):
+        return power_config[CONF_NAME]
+    if CONF_NAME in circuit_config:
+        return circuit_config[CONF_NAME]
+    if circuit_key.startswith("cir"):
+        return f"Circuit {circuit_key.removeprefix('cir')} Power"
+    return f"{circuit_key.replace('_', ' ').title()} Power"
+
+
+def _circuit_default_phase_name(circuit_key, circuit_config):
+    power_name = _circuit_default_power_name(circuit_key, circuit_config)
+    if power_name.endswith(" Power"):
+        return f"{power_name[:-6]} Phase"
+    if power_name.endswith(" power"):
+        return f"{power_name[:-6]} phase"
+    return f"{power_name} Phase"
+
+
+def _virtual_line_default_voltage_name(virtual_line_key, virtual_line_config):
+    lines = virtual_line_config.get(CONF_LINES)
+    if isinstance(lines, list) and len(lines) == 2:
+        try:
+            return f"Line {int(lines[0])}-{int(lines[1])} Voltage"
+        except (TypeError, ValueError):
+            pass
+    return f"{virtual_line_key.replace('_', ' ').title()} Voltage"
+
+
+def _split_power_sensor_config(parent_config, raw_id, always_create_raw=False, default_power_name=None):
+    power_config = parent_config.get(CONF_POWER)
+    raw_config = parent_config.get(CONF_RAW_POWER)
+    if power_config is None and raw_config is None and not always_create_raw:
+        return parent_config
+    if power_config is not None and not isinstance(power_config, dict):
+        raise cv.Invalid("power must be a mapping")
+    if raw_config is not None and not isinstance(raw_config, dict):
+        raise cv.Invalid("raw_power must be a mapping")
+
+    parent_config = dict(parent_config)
+    power_config = dict(power_config) if power_config is not None else None
+    raw_config = dict(raw_config) if raw_config is not None else {}
+
+    if power_config is not None:
+        raw_config.setdefault(CONF_ID, power_config.pop(CONF_ID, raw_id))
+        if default_power_name and CONF_NAME not in power_config and CONF_ID not in power_config:
+            power_config[CONF_NAME] = default_power_name
+    else:
+        raw_config.setdefault(CONF_ID, raw_id)
+    raw_config.setdefault(CONF_INTERNAL, True)
+    parent_config[CONF_RAW_POWER] = raw_config
+
+    if power_config is not None:
+        if power_config:
+            parent_config[CONF_POWER] = power_config
+        else:
+            parent_config.pop(CONF_POWER, None)
+    return parent_config
+
+
+def _name_from_power_name(power_name, replacement):
+    if power_name.endswith(" Power"):
+        return f"{power_name[:-6]} {replacement}"
+    if power_name.endswith(" power"):
+        return f"{power_name[:-6]} {replacement.lower()}"
+    return f"{power_name} {replacement}"
+
+
+def _power_split_line_key(line_number):
+    return f"line_{line_number}"
+
+
+def _apply_power_split_defaults(circuit_key, circuit_config, default_name):
+    if CONF_POWER_SPLIT not in circuit_config:
+        return circuit_config
+
+    line_config = circuit_config.get(CONF_LINE)
+    if not isinstance(line_config, list) or len(line_config) != 2:
+        raise cv.Invalid(f"circuits.{circuit_key}.power_split needs line: [line_a, line_b]")
+
+    power_split_config = circuit_config[CONF_POWER_SPLIT]
+    if power_split_config is False or power_split_config is None:
+        circuit_config = dict(circuit_config)
+        circuit_config.pop(CONF_POWER_SPLIT, None)
+        return circuit_config
+    if power_split_config is True:
+        power_split_config = {}
+    elif not isinstance(power_split_config, dict):
+        raise cv.Invalid(f"circuits.{circuit_key}.power_split must be true or a mapping")
+    else:
+        power_split_config = dict(power_split_config)
+
+    allowed_keys = [_power_split_line_key(line_number) for line_number in line_config]
+    unknown_keys = [key for key in power_split_config if key not in allowed_keys]
+    if unknown_keys:
+        allowed = ", ".join(allowed_keys)
+        raise cv.Invalid(
+            f"circuits.{circuit_key}.power_split only supports {allowed} for line: {line_config}"
+        )
+
+    if not power_split_config:
+        requested_keys = allowed_keys
+    else:
+        requested_keys = list(power_split_config.keys())
+
+    normalized = {}
+    for line_key in requested_keys:
+        line_number = int(line_key.rsplit("_", 1)[1])
+        sensor_config = power_split_config.get(line_key)
+        if sensor_config is None:
+            sensor_config = {}
+        elif not isinstance(sensor_config, dict):
+            raise cv.Invalid(f"circuits.{circuit_key}.power_split.{line_key} must be a mapping")
+        else:
+            sensor_config = dict(sensor_config)
+
+        if CONF_NAME not in sensor_config and CONF_ID not in sensor_config:
+            sensor_config[CONF_NAME] = _name_from_power_name(
+                default_name, f"Line {line_number} Share"
+            )
+        normalized[line_key] = sensor_config
+
+    circuit_config = dict(circuit_config)
+    circuit_config[CONF_POWER_SPLIT] = normalized
+    return circuit_config
+
+
+def _apply_optional_sensor_default_name(parent_config, key, default_name):
+    if key not in parent_config:
+        return parent_config
+
+    sensor_config = parent_config[key]
+    if sensor_config is None:
+        sensor_config = {}
+    elif not isinstance(sensor_config, dict):
+        raise cv.Invalid(f"{key} must be a mapping")
+    else:
+        sensor_config = dict(sensor_config)
+
+    if CONF_NAME not in sensor_config and CONF_ID not in sensor_config:
+        sensor_config[CONF_NAME] = default_name
+
+    parent_config = dict(parent_config)
+    parent_config[key] = sensor_config
+    return parent_config
+
+
+def _parse_group_source(source):
+    if not isinstance(source, str):
+        raise cv.Invalid("Group source must be a string")
+
+    sign = 1.0
+    source = source.strip()
+    if not source:
+        raise cv.Invalid("Group source must not be empty")
+    if source[0] in "+-":
+        if source[0] == "-":
+            sign = -1.0
+        source = source[1:].strip()
+    if not source:
+        raise cv.Invalid("Group source sign needs a source name")
+
+    return sign, source
+
+
+def _split_top_power_sensor_config(config, visible_key, raw_key, raw_id):
+    power_config = config.get(visible_key)
+    if power_config is None:
+        return config
+    if not isinstance(power_config, dict):
+        raise cv.Invalid(f"{visible_key} must be a mapping")
+
+    config = dict(config)
+    power_config = dict(power_config)
+    raw_config = config.get(raw_key)
+    if raw_config is None:
+        raw_config = {}
+    elif not isinstance(raw_config, dict):
+        raise cv.Invalid(f"{raw_key} must be a mapping")
+    else:
+        raw_config = dict(raw_config)
+
+    raw_config.setdefault(CONF_ID, power_config.pop(CONF_ID, raw_id))
+    raw_config.setdefault(CONF_INTERNAL, True)
+    config[raw_key] = raw_config
+
+    if power_config:
+        config[visible_key] = power_config
+    else:
+        config.pop(visible_key, None)
+    return config
+
+
+def _apply_raw_power_defaults(config):
+    config = dict(config)
+
+    config = _split_top_power_sensor_config(
+        config, CONF_TOTAL_POWER, CONF_RAW_TOTAL_POWER, CONF_TOTAL_POWER
+    )
+    config = _split_top_power_sensor_config(
+        config, CONF_GRID_IMPORT_POWER, CONF_RAW_GRID_IMPORT_POWER, "grid_import_w"
+    )
+    config = _split_top_power_sensor_config(
+        config, CONF_GRID_EXPORT_POWER, CONF_RAW_GRID_EXPORT_POWER, "grid_export_w"
+    )
+
+    if CONF_MAINS in config and isinstance(config[CONF_MAINS], dict):
+        mains = dict(config[CONF_MAINS])
+        for main_key, main_config in list(mains.items()):
+            if isinstance(main_config, dict):
+                default_name = f"{main_key.replace('_', ' ').title()} Power"
+                main_config = _split_power_sensor_config(
+                    main_config, f"{main_key}_power", default_power_name=default_name
+                )
+                main_config = _apply_optional_sensor_default_name(
+                    main_config, CONF_CURRENT, _name_from_power_name(default_name, "Current")
+                )
+                main_config = _apply_optional_sensor_default_name(
+                    main_config, CONF_POWER_APPARENT, _name_from_power_name(default_name, "Apparent Power")
+                )
+                main_config = _apply_optional_sensor_default_name(
+                    main_config, CONF_POWER_FACTOR, _name_from_power_name(default_name, "Power Factor")
+                )
+                mains[main_key] = main_config
+        config[CONF_MAINS] = mains
+
+    if CONF_CIRCUITS in config and isinstance(config[CONF_CIRCUITS], dict):
+        circuits = dict(config[CONF_CIRCUITS])
+        for circuit_key, circuit_config in list(circuits.items()):
+            if isinstance(circuit_config, dict):
+                default_name = _circuit_default_power_name(circuit_key, circuit_config)
+                circuits[circuit_key] = _split_power_sensor_config(
+                    circuit_config,
+                    circuit_key,
+                    always_create_raw=True,
+                    default_power_name=default_name,
+                )
+                circuits[circuit_key] = _apply_optional_sensor_default_name(
+                    circuits[circuit_key], CONF_CURRENT, _name_from_power_name(default_name, "Current")
+                )
+                circuits[circuit_key] = _apply_optional_sensor_default_name(
+                    circuits[circuit_key],
+                    CONF_POWER_APPARENT,
+                    _name_from_power_name(default_name, "Apparent Power"),
+                )
+                circuits[circuit_key] = _apply_optional_sensor_default_name(
+                    circuits[circuit_key],
+                    CONF_POWER_FACTOR,
+                    _name_from_power_name(default_name, "Power Factor"),
+                )
+                circuits[circuit_key] = _apply_power_split_defaults(
+                    circuit_key, circuits[circuit_key], default_name
+                )
+        config[CONF_CIRCUITS] = circuits
+
+    if CONF_GROUPS in config and isinstance(config[CONF_GROUPS], dict):
+        groups = dict(config[CONF_GROUPS])
+        for group_key, group_config in list(groups.items()):
+            if isinstance(group_config, dict):
+                default_name = f"{group_key.replace('_', ' ').title()} Power"
+                groups[group_key] = _split_power_sensor_config(
+                    group_config, group_key, default_power_name=default_name
+                )
+        config[CONF_GROUPS] = groups
+
+    if CONF_CT_CLAMPS in config and isinstance(config[CONF_CT_CLAMPS], list):
+        ct_clamps = []
+        for index, ct_config in enumerate(config[CONF_CT_CLAMPS]):
+            if isinstance(ct_config, dict):
+                default_name = ct_config.get(CONF_NAME, f"CT {ct_config.get(CONF_INPUT, index + 1)} Power")
+                ct_config = _split_power_sensor_config(
+                    ct_config,
+                    f"ct_{index}_power",
+                    default_power_name=default_name,
+                )
+                ct_config = _apply_optional_sensor_default_name(
+                    ct_config, CONF_CURRENT, _name_from_power_name(default_name, "Current")
+                )
+                ct_config = _apply_optional_sensor_default_name(
+                    ct_config, CONF_POWER_APPARENT, _name_from_power_name(default_name, "Apparent Power")
+                )
+                ct_config = _apply_optional_sensor_default_name(
+                    ct_config, CONF_POWER_FACTOR, _name_from_power_name(default_name, "Power Factor")
+                )
+                ct_clamps.append(ct_config)
+            else:
+                ct_clamps.append(ct_config)
+        config[CONF_CT_CLAMPS] = ct_clamps
+
+    return config
+
+
+def _apply_virtual_line_defaults(config):
+    config = dict(config)
+    if CONF_VIRTUAL_LINES not in config or not isinstance(config[CONF_VIRTUAL_LINES], dict):
+        return config
+
+    prefix = config.get(CONF_ENTITY_PREFIX, "")
+    virtual_lines = dict(config[CONF_VIRTUAL_LINES])
+    for virtual_line_key, virtual_line_config in list(virtual_lines.items()):
+        if virtual_line_config is None:
+            virtual_line_config = {}
+        elif not isinstance(virtual_line_config, dict):
+            continue
+        else:
+            virtual_line_config = dict(virtual_line_config)
+
+        voltage_config = virtual_line_config.get(CONF_VOLTAGE)
+        if voltage_config is None:
+            voltage_config = {}
+        elif not isinstance(voltage_config, dict):
+            raise cv.Invalid(f"virtual_lines.{virtual_line_key}.voltage must be a mapping")
+        else:
+            voltage_config = dict(voltage_config)
+
+        default_name = _virtual_line_default_voltage_name(virtual_line_key, virtual_line_config)
+        name_is_default = voltage_config.get(CONF_NAME) in (None, default_name)
+        if voltage_config.get(CONF_NAME) is None:
+            voltage_config[CONF_NAME] = default_name
+        if prefix and name_is_default:
+            voltage_config[CONF_NAME] = _prefixed_entity_name(prefix, default_name)
+
+        virtual_line_config[CONF_VOLTAGE] = voltage_config
+        virtual_lines[virtual_line_key] = virtual_line_config
+
+    config[CONF_VIRTUAL_LINES] = virtual_lines
+    return config
+
+
+def _apply_phase_detection_defaults(config):
+    config = dict(config)
+    if CONF_CIRCUITS not in config or not isinstance(config[CONF_CIRCUITS], dict):
+        return config
+
+    prefix = config.get(CONF_ENTITY_PREFIX, "")
+    circuits = dict(config[CONF_CIRCUITS])
+    for circuit_key, circuit_config in list(circuits.items()):
+        if not isinstance(circuit_config, dict) or CONF_PHASE_DETECTION not in circuit_config:
+            continue
+
+        phase_detection_config = circuit_config[CONF_PHASE_DETECTION]
+        if phase_detection_config is False or phase_detection_config is None:
+            circuit_config = dict(circuit_config)
+            circuit_config.pop(CONF_PHASE_DETECTION, None)
+            circuits[circuit_key] = circuit_config
+            continue
+        if phase_detection_config is True:
+            phase_detection_config = {}
+        elif not isinstance(phase_detection_config, dict):
+            raise cv.Invalid(f"circuits.{circuit_key}.phase_detection must be true or a mapping")
+        else:
+            phase_detection_config = dict(phase_detection_config)
+
+        default_name = _circuit_default_phase_name(circuit_key, circuit_config)
+        name_is_default = phase_detection_config.get(CONF_NAME) in (None, default_name)
+        if phase_detection_config.get(CONF_NAME) is None:
+            phase_detection_config[CONF_NAME] = default_name
+        if prefix and name_is_default:
+            phase_detection_config[CONF_NAME] = _prefixed_entity_name(prefix, default_name)
+        phase_detection_config[CONF_ENTITY_CATEGORY] = ENTITY_CATEGORY_DIAGNOSTIC
+
+        circuit_config = dict(circuit_config)
+        circuit_config[CONF_PHASE_DETECTION] = phase_detection_config
+        circuits[circuit_key] = circuit_config
+
+    config[CONF_CIRCUITS] = circuits
+    return config
+
+
+def _apply_external_firmware_defaults(config):
+    config = dict(config)
+    if CONF_EXTERNAL_SAMD_FIRMWARE not in config:
+        return config
+
+    prefix = config.get(CONF_ENTITY_PREFIX, "")
+    raw_entries = config[CONF_EXTERNAL_SAMD_FIRMWARE]
+    if isinstance(raw_entries, dict):
+        entries = [dict(raw_entries)]
+    elif isinstance(raw_entries, list):
+        entries = [dict(entry) for entry in raw_entries]
+    else:
+        return config
+
+    seen_ids = set()
+    normalized_entries = []
+    for index, entry in enumerate(entries):
+        firmware_id = entry.get(CONF_EXTERNAL_FIRMWARE_ID)
+        if firmware_id is None:
+            if len(entries) == 1:
+                firmware_id = "external"
+            else:
+                raise cv.Invalid("external_samd_firmware entries need an id when multiple firmwares are configured")
+        firmware_id = str(firmware_id)
+        if firmware_id in seen_ids:
+            raise cv.Invalid(f"duplicate external_samd_firmware id: {firmware_id}")
+        seen_ids.add(firmware_id)
+        entry[CONF_EXTERNAL_FIRMWARE_ID] = firmware_id
+
+        button_config = entry.get(CONF_BUTTON)
+        if firmware_id == "external":
+            firmware_name = "External"
+        else:
+            firmware_name = firmware_id.replace("_", " ").replace("-", " ").title()
+        default_name = f"Flash SAMD {firmware_name} Firmware"
+
+        if button_config is None:
+            button_config = {CONF_NAME: default_name}
+            name_is_default = True
+        elif not isinstance(button_config, dict):
+            raise cv.Invalid("external_samd_firmware button must be a mapping")
+        else:
+            button_config = dict(button_config)
+            name_is_default = button_config.get(CONF_NAME) in (None, default_name)
+
+        if button_config.get(CONF_NAME) is None:
+            button_config[CONF_NAME] = default_name
+        if prefix and name_is_default:
+            button_config[CONF_NAME] = _prefixed_entity_name(prefix, default_name)
+
+        entry[CONF_BUTTON] = button_config
+        normalized_entries.append(entry)
+
+    config[CONF_EXTERNAL_SAMD_FIRMWARE] = normalized_entries
+    return config
+
+
+def _apply_hardware_defaults(config):
+    config = dict(config)
+    if config.get(CONF_HARDWARE) == HARDWARE_VUE2:
+        config.setdefault(CONF_SWDIO_PIN, "GPIO13")
+        config.setdefault(CONF_SWCLK_PIN, "GPIO14")
+        config.setdefault(CONF_RESET_PIN, "GPIO26")
+        config.setdefault(CONF_CONNECT_UNDER_RESET, True)
+        config.setdefault(CONF_RESET_RELEASE_TIME, "1ms")
+        config.setdefault(CONF_CLOCK_DELAY, 2)
+    return config
+
+
+def _apply_defaults(config):
+    return _apply_entity_name_defaults(
+        _apply_diagnostics_defaults(
+            _apply_phase_detection_defaults(
+                _apply_virtual_line_defaults(
+                    _apply_raw_power_defaults(
+                        _apply_mains_defaults(_apply_external_firmware_defaults(_apply_hardware_defaults(config)))
+                    )
+                )
+            )
+        )
+    )
+
+
+def _download_external_samd_firmware(url, token=None):
+    headers = {"User-Agent": "ESPHome emporiavue"}
+    if token:
+        token = token.strip()
+        headers["Authorization"] = token if " " in token else f"Bearer {token}"
+    request = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            data = response.read()
+    except Exception as err:
+        raise cv.Invalid(f"external_samd_firmware download failed: {err}") from err
+
+    if not data:
+        raise cv.Invalid("external_samd_firmware URL returned an empty file")
+    return data
+
+
+def _external_samd_firmware_header(firmwares=None):
+    if not firmwares:
+        return """#pragma once
+
+#include <cstdint>
+
+namespace esphome {
+namespace emporiavue {
+
+static constexpr uint8_t EXTERNAL_SAMD_FIRMWARE_COUNT = 0;
+static constexpr uint8_t EXTERNAL_SAMD_FIRMWARE_0[1] = {0x00};
+static constexpr uint32_t EXTERNAL_SAMD_FIRMWARE_SIZES[1] = {0UL};
+static constexpr const uint8_t *EXTERNAL_SAMD_FIRMWARE_IMAGES[1] = {EXTERNAL_SAMD_FIRMWARE_0};
+
+}  // namespace emporiavue
+}  // namespace esphome
+"""
+
+    arrays = []
+    sizes = []
+    images = []
+    for index, firmware in enumerate(firmwares):
+        data = firmware["data"]
+        rows = []
+        for offset in range(0, len(data), 12):
+            chunk = data[offset : offset + 12]
+            rows.append("    " + ", ".join(f"0x{byte:02x}" for byte in chunk) + ",")
+        body = "\n".join(rows)
+        arrays.append(
+            f"""static constexpr uint8_t EXTERNAL_SAMD_FIRMWARE_{index}[{len(data)}] = {{
+{body}
+}};"""
+        )
+        sizes.append(f"{len(data)}UL")
+        images.append(f"EXTERNAL_SAMD_FIRMWARE_{index}")
+    array_body = "\n\n".join(arrays)
+    size_body = ", ".join(sizes)
+    image_body = ", ".join(images)
+    return f"""#pragma once
+
+#include <cstdint>
+
+namespace esphome {{
+namespace emporiavue {{
+
+static constexpr uint8_t EXTERNAL_SAMD_FIRMWARE_COUNT = {len(firmwares)};
+{array_body}
+
+static constexpr uint32_t EXTERNAL_SAMD_FIRMWARE_SIZES[EXTERNAL_SAMD_FIRMWARE_COUNT] = {{{size_body}}};
+static constexpr const uint8_t *EXTERNAL_SAMD_FIRMWARE_IMAGES[EXTERNAL_SAMD_FIRMWARE_COUNT] = {{{image_body}}};
+
+}}  // namespace emporiavue
+}}  // namespace esphome
+"""
+
+
+def _write_external_samd_firmware_header(firmwares=None):
+    try:
+        EXTERNAL_SAMD_FIRMWARE_HEADER.write_text(
+            _external_samd_firmware_header(firmwares), encoding="utf-8"
+        )
+    except OSError as err:
+        raise cv.Invalid(f"external_samd_firmware header generation failed: {err}") from err
+
+
+CALIBRATION_NUMBER_SCHEMA = number.number_schema(
+    MeteringCalibrationNumber,
+    icon="mdi:tune",
+    entity_category=ENTITY_CATEGORY_CONFIG,
+).extend(
+    {
+        cv.Optional(CONF_INITIAL_VALUE): cv.positive_float,
+    }
+)
+
+
+PHASE_VOLTAGE_SENSOR_SCHEMA = sensor.sensor_schema(
+    unit_of_measurement=UNIT_VOLT,
+    device_class=DEVICE_CLASS_VOLTAGE,
+    state_class=STATE_CLASS_MEASUREMENT,
+    accuracy_decimals=1,
+)
+
+PHASE_FREQUENCY_SENSOR_SCHEMA = sensor.sensor_schema(
+    unit_of_measurement=UNIT_HERTZ,
+    device_class=DEVICE_CLASS_FREQUENCY,
+    state_class=STATE_CLASS_MEASUREMENT,
+    accuracy_decimals=1,
+)
+
+PHASE_ANGLE_SENSOR_SCHEMA = sensor.sensor_schema(
+    unit_of_measurement=UNIT_DEGREES,
+    state_class=STATE_CLASS_MEASUREMENT,
+    accuracy_decimals=2,
+)
+
+POWER_SENSOR_SCHEMA = sensor.sensor_schema(
+    unit_of_measurement=UNIT_WATT,
+    device_class=DEVICE_CLASS_POWER,
+    state_class=STATE_CLASS_MEASUREMENT,
+    accuracy_decimals=1,
+)
+
+CURRENT_SENSOR_SCHEMA = sensor.sensor_schema(
+    unit_of_measurement=UNIT_AMPERE,
+    device_class=DEVICE_CLASS_CURRENT,
+    state_class=STATE_CLASS_MEASUREMENT,
+    accuracy_decimals=2,
+)
+
+APPARENT_POWER_SENSOR_SCHEMA = sensor.sensor_schema(
+    unit_of_measurement="VA",
+    device_class="apparent_power",
+    state_class=STATE_CLASS_MEASUREMENT,
+    accuracy_decimals=1,
+)
+
+POWER_FACTOR_SENSOR_SCHEMA = sensor.sensor_schema(
+    icon="mdi:cosine-wave",
+    device_class="power_factor",
+    state_class=STATE_CLASS_MEASUREMENT,
+    accuracy_decimals=2,
+)
+
+POWER_SPLIT_SENSOR_SCHEMA = cv.Schema(
+    {
+        cv.Optional("line_1"): POWER_SENSOR_SCHEMA,
+        cv.Optional("line_2"): POWER_SENSOR_SCHEMA,
+        cv.Optional("line_3"): POWER_SENSOR_SCHEMA,
+    }
+)
+
+
+def _validate_watts(value):
+    if isinstance(value, str):
+        normalized = value.strip().lower().replace(" ", "")
+        multiplier = 1.0
+        if normalized.endswith("kw"):
+            normalized = normalized[:-2]
+            multiplier = 1000.0
+        elif normalized.endswith("w"):
+            normalized = normalized[:-1]
+        try:
+            value = float(normalized) * multiplier
+        except ValueError as err:
+            raise cv.Invalid("power value must be a number, W, or kW value") from err
+    value = cv.float_(value)
+    if value <= 0:
+        raise cv.Invalid("power value must be positive")
+    return value
+
+
+def _validate_volt_amps(value):
+    if isinstance(value, str):
+        normalized = value.strip().lower().replace(" ", "")
+        multiplier = 1.0
+        if normalized.endswith("kva"):
+            normalized = normalized[:-3]
+            multiplier = 1000.0
+        elif normalized.endswith("va"):
+            normalized = normalized[:-2]
+        try:
+            value = float(normalized) * multiplier
+        except ValueError as err:
+            raise cv.Invalid("apparent power value must be a number, VA, or kVA value") from err
+    value = cv.float_(value)
+    if value < 0:
+        raise cv.Invalid("apparent power value must not be negative")
+    return value
+
+
+def _validate_confidence_ratio(value):
+    value = cv.float_(value)
+    if value <= 1.0:
+        raise cv.Invalid("confidence_ratio must be greater than 1.0")
+    return value
+
+INTERNAL_POWER_FILTER_SCHEMA = cv.ensure_list(
+    cv.Any(
+        cv.Schema({cv.Required(CONF_MULTIPLY): cv.float_}),
+        cv.Schema({cv.Required(CONF_LAMBDA): cv.returning_lambda}),
+    )
+)
+
+PHASE_DETECTION_GLOBAL_SCHEMA = cv.Schema(
+    {
+        cv.Optional(CONF_MIN_POWER, default=30.0): _validate_watts,
+        cv.Optional(CONF_CONFIDENCE_RATIO, default=1.5): _validate_confidence_ratio,
+        cv.Optional(CONF_UPDATE_INTERVAL, default="10s"): cv.positive_time_period_milliseconds,
+    }
+)
+
+PHASE_DETECTION_SENSOR_SCHEMA = text_sensor.text_sensor_schema(
+    icon="mdi:transmission-tower",
+    entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+).extend(
+    {
+        cv.Optional(CONF_MIN_POWER): _validate_watts,
+    }
+)
+
+
+def _validate_phase_detection_sensor(value):
+    if value is True:
+        value = {}
+    elif value is False or value is None:
+        return None
+    elif not isinstance(value, dict):
+        raise cv.Invalid("phase_detection must be true or a mapping")
+    return PHASE_DETECTION_SENSOR_SCHEMA(value)
+
+
+def _validate_metering_phases(value):
+    phases = cv.Schema(
+        cv.ensure_list(
+            {
+                cv.Required(CONF_ID): cv.declare_id(MeteringPhaseConfig),
+                cv.Required(CONF_INPUT): cv.one_of(*PHASE_INPUTS.keys(), upper=True),
+                cv.Optional(CONF_CALIBRATION, default=0.022): cv.positive_float,
+                cv.Optional(CONF_CALIBRATION_NUMBER): CALIBRATION_NUMBER_SCHEMA,
+                cv.Optional(CONF_VOLTAGE): PHASE_VOLTAGE_SENSOR_SCHEMA,
+                cv.Optional(CONF_FREQUENCY): PHASE_FREQUENCY_SENSOR_SCHEMA,
+                cv.Optional(CONF_PHASE_ANGLE): PHASE_ANGLE_SENSOR_SCHEMA,
+            }
+        )
+    )(value)
+
+    if len(phases) > 3:
+        raise cv.Invalid("No more than 3 metering phases are supported")
+
+    inputs = [phase[CONF_INPUT] for phase in phases]
+    if len(inputs) != len(set(inputs)):
+        raise cv.Invalid("Only one metering phase entry per input color is allowed")
+
+    for index, phase in enumerate(phases):
+        input_wire = phase[CONF_INPUT]
+        if CONF_CALIBRATION_NUMBER in phase:
+            calibration_number_config = dict(phase[CONF_CALIBRATION_NUMBER])
+            calibration_number_config.setdefault(CONF_INITIAL_VALUE, phase[CONF_CALIBRATION])
+            phase[CONF_CALIBRATION_NUMBER] = calibration_number_config
+        if input_wire == "BLACK" and CONF_PHASE_ANGLE in phase:
+            raise cv.Invalid(
+                "Phase angle is not supported for the black wire, only for red and blue",
+                path=[index, CONF_PHASE_ANGLE],
+            )
+        if input_wire in {"RED", "BLUE"} and CONF_FREQUENCY in phase:
+            raise cv.Invalid(
+                "Frequency is not supported for red and blue, only for the black wire",
+                path=[index, CONF_FREQUENCY],
+            )
+
+    return phases
+
+
+METERING_MAIN_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.declare_id(MeteringPhaseConfig),
+        cv.GenerateID(CONF_CT_ID): cv.declare_id(MeteringCTClampConfig),
+        cv.Required(CONF_VOLTAGE_INPUT): cv.one_of(*PHASE_INPUTS.keys(), upper=True),
+        cv.Required(CONF_MAIN_CLAMP): cv.one_of("A", "B", "C", upper=True),
+        cv.Required(CONF_CALIBRATION): cv.positive_float,
+        cv.Optional(CONF_CALIBRATION_NUMBER): CALIBRATION_NUMBER_SCHEMA,
+        cv.Optional(CONF_VOLTAGE): PHASE_VOLTAGE_SENSOR_SCHEMA,
+        cv.Optional(CONF_FREQUENCY): PHASE_FREQUENCY_SENSOR_SCHEMA,
+        cv.Optional(CONF_PHASE_ANGLE): PHASE_ANGLE_SENSOR_SCHEMA,
+        cv.Optional(CONF_FILTERS): INTERNAL_POWER_FILTER_SCHEMA,
+        cv.Optional(CONF_POWER): POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_RAW_POWER): POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_CURRENT): CURRENT_SENSOR_SCHEMA,
+        cv.Optional(CONF_POWER_APPARENT): APPARENT_POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_POWER_FACTOR): POWER_FACTOR_SENSOR_SCHEMA,
+    }
+)
+
+
+def _validate_metering_line(value):
+    if not isinstance(value, list):
+        return cv.int_range(min=1, max=3)(value)
+
+    lines = [cv.int_range(min=1, max=3)(line) for line in value]
+    if len(lines) != 2:
+        raise cv.Invalid("Line-to-line circuits need exactly two line numbers")
+    if lines[0] == lines[1]:
+        raise cv.Invalid("Line-to-line circuits need two different line numbers")
+    return lines
+
+
+def _validate_virtual_line_lines(value):
+    if not isinstance(value, list):
+        raise cv.Invalid("virtual_lines entries need lines: [line_a, line_b]")
+
+    lines = [cv.int_range(min=1, max=3)(line) for line in value]
+    if len(lines) != 2:
+        raise cv.Invalid("virtual_lines entries need exactly two line numbers")
+    if lines[0] == lines[1]:
+        raise cv.Invalid("virtual_lines entries need two different line numbers")
+    return lines
+
+
+def _metering_line_numbers(value):
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+def _validate_mains(value):
+    mains = cv.Schema(
+        {
+            cv.Optional("line_1"): METERING_MAIN_SCHEMA,
+            cv.Optional("line_2"): METERING_MAIN_SCHEMA,
+            cv.Optional("line_3"): METERING_MAIN_SCHEMA,
+        }
+    )(value)
+
+    inputs = [phase_config[CONF_VOLTAGE_INPUT] for phase_config in mains.values()]
+    if len(inputs) != len(set(inputs)):
+        raise cv.Invalid("Only one main phase entry per voltage input color is allowed")
+
+    clamps = [phase_config[CONF_MAIN_CLAMP] for phase_config in mains.values()]
+    if len(clamps) != len(set(clamps)):
+        raise cv.Invalid("Only one main phase entry per main CT clamp is allowed")
+
+    for phase_key, phase_config in mains.items():
+        input_wire = phase_config[CONF_VOLTAGE_INPUT]
+        if input_wire == "BLACK" and CONF_PHASE_ANGLE in phase_config:
+            raise cv.Invalid(
+                "Phase angle is not supported for the black wire, only for red and blue",
+                path=[phase_key, CONF_PHASE_ANGLE],
+            )
+        if input_wire in {"RED", "BLUE"} and CONF_FREQUENCY in phase_config:
+            raise cv.Invalid(
+                "Frequency is not supported for red or blue, only for the black wire",
+                path=[phase_key, CONF_FREQUENCY],
+            )
+
+    return mains
+
+
+METERING_CIRCUIT_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(CONF_CT_ID): cv.declare_id(MeteringCTClampConfig),
+        cv.Required(CONF_INPUT): cv.one_of(*BRANCH_CT_INPUTS.keys(), upper=True),
+        cv.Required(CONF_LINE): _validate_metering_line,
+        cv.Optional(CONF_NAME): cv.string_strict,
+        cv.Optional(CONF_FILTERS): INTERNAL_POWER_FILTER_SCHEMA,
+        cv.Optional(CONF_POWER): POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_RAW_POWER): POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_CURRENT): CURRENT_SENSOR_SCHEMA,
+        cv.Optional(CONF_POWER_APPARENT): APPARENT_POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_POWER_FACTOR): POWER_FACTOR_SENSOR_SCHEMA,
+        cv.Optional(CONF_POWER_SPLIT): POWER_SPLIT_SENSOR_SCHEMA,
+        cv.Optional(CONF_PHASE_DETECTION): _validate_phase_detection_sensor,
+    }
+)
+
+
+def _validate_circuits(value):
+    circuits = cv.Schema({cv.string_strict: METERING_CIRCUIT_SCHEMA})(value)
+
+    inputs = [circuit_config[CONF_INPUT] for circuit_config in circuits.values()]
+    if len(inputs) != len(set(inputs)):
+        raise cv.Invalid("Only one circuit entry per branch CT input is allowed")
+
+    return circuits
+
+
+METERING_GROUP_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.declare_id(MeteringGroupConfig),
+        cv.Required(CONF_CIRCUITS): cv.ensure_list(cv.string_strict),
+        cv.Optional(CONF_FILTERS): INTERNAL_POWER_FILTER_SCHEMA,
+        cv.Optional(CONF_POWER): POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_RAW_POWER): POWER_SENSOR_SCHEMA,
+    }
+)
+
+
+def _validate_groups(value):
+    groups = cv.Schema({cv.string_strict: METERING_GROUP_SCHEMA})(value)
+
+    for group_key, group_config in groups.items():
+        sources = group_config[CONF_CIRCUITS]
+        if not sources:
+            raise cv.Invalid("Group needs at least one source", path=[group_key, CONF_CIRCUITS])
+        parsed_sources = [_parse_group_source(source)[1] for source in sources]
+        if len(parsed_sources) != len(set(parsed_sources)):
+            raise cv.Invalid("Group sources must be unique", path=[group_key, CONF_CIRCUITS])
+
+    return groups
+
+
+METERING_VIRTUAL_LINE_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.declare_id(MeteringVirtualLineConfig),
+        cv.Required(CONF_LINES): _validate_virtual_line_lines,
+        cv.Required(CONF_VOLTAGE): PHASE_VOLTAGE_SENSOR_SCHEMA,
+    }
+)
+
+
+def _validate_virtual_lines(value):
+    return cv.Schema({cv.string_strict: METERING_VIRTUAL_LINE_SCHEMA})(value)
+
+
+def _validate_metering_topology(config):
+    circuits = config.get(CONF_CIRCUITS, {})
+    mains = config.get(CONF_MAINS, {})
+
+    for circuit_key, circuit_config in circuits.items():
+        if CONF_PHASE_DETECTION in circuit_config and isinstance(circuit_config[CONF_LINE], list):
+            raise cv.Invalid(
+                f"circuits.{circuit_key}.phase_detection is only supported for single-line circuits"
+            )
+        if CONF_POWER_SPLIT in circuit_config:
+            if not isinstance(circuit_config[CONF_LINE], list):
+                raise cv.Invalid(
+                    f"circuits.{circuit_key}.power_split is only supported for line-to-line circuits"
+                )
+            allowed_keys = {
+                _power_split_line_key(line_number)
+                for line_number in circuit_config[CONF_LINE]
+            }
+            for line_key in circuit_config[CONF_POWER_SPLIT]:
+                if line_key not in allowed_keys:
+                    allowed = ", ".join(sorted(allowed_keys))
+                    raise cv.Invalid(
+                        f"circuits.{circuit_key}.power_split.{line_key} does not match line: "
+                        f"{circuit_config[CONF_LINE]}; use {allowed}"
+                    )
+        for line_number in _metering_line_numbers(circuit_config[CONF_LINE]):
+            line_key = f"line_{line_number}"
+            if line_key not in mains:
+                raise cv.Invalid(
+                    f"circuits.{circuit_key}.line references {line_key}, but mains.{line_key} is not configured"
+                )
+
+    for group_key, group_config in config.get(CONF_GROUPS, {}).items():
+        for source in group_config[CONF_CIRCUITS]:
+            _, source_key = _parse_group_source(source)
+            if source_key == CONF_TOTAL_POWER:
+                continue
+            if source_key not in circuits:
+                raise cv.Invalid(
+                    f"groups.{group_key}.circuits references {source_key}, but circuits.{source_key} is not configured"
+                )
+
+    for virtual_line_key, virtual_line_config in config.get(CONF_VIRTUAL_LINES, {}).items():
+        for line_number in virtual_line_config[CONF_LINES]:
+            line_key = f"line_{line_number}"
+            if line_key not in mains:
+                raise cv.Invalid(
+                    f"virtual_lines.{virtual_line_key}.lines references {line_key}, "
+                    f"but mains.{line_key} is not configured"
+                )
+
+    return config
+
+
+METERING_CT_CLAMP_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.declare_id(MeteringCTClampConfig),
+        cv.Required(CONF_PHASE_ID): cv.use_id(MeteringPhaseConfig),
+        cv.Required(CONF_INPUT): cv.one_of(*CT_INPUTS.keys(), upper=True),
+        cv.Optional(CONF_NAME): cv.string_strict,
+        cv.Optional(CONF_FILTERS): INTERNAL_POWER_FILTER_SCHEMA,
+        cv.Optional(CONF_POWER): POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_RAW_POWER): POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_CURRENT): CURRENT_SENSOR_SCHEMA,
+        cv.Optional(CONF_POWER_APPARENT): APPARENT_POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_POWER_FACTOR): POWER_FACTOR_SENSOR_SCHEMA,
+    }
+)
+
+
+EMPORIAVUE_SCHEMA = cv.Schema(
+    {
+        cv.GenerateID(): cv.declare_id(EmporiaVueComponent),
+        cv.Optional(CONF_HARDWARE, default=HARDWARE_CUSTOM): cv.one_of(
+            HARDWARE_CUSTOM, HARDWARE_VUE2, HARDWARE_VUE3, lower=True
+        ),
+        cv.Optional(CONF_SWDIO_PIN, default="GPIO13"): pins.internal_gpio_input_pullup_pin_schema,
+        cv.Optional(CONF_SWCLK_PIN, default="GPIO14"): pins.internal_gpio_output_pin_schema,
+        cv.Optional(CONF_RESET_PIN): pins.internal_gpio_output_pin_schema,
+        cv.Optional(CONF_CONNECT_UNDER_RESET, default=False): cv.boolean,
+        cv.Optional(CONF_RESET_RELEASE_TIME, default="50ms"): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_CLOCK_DELAY, default=2): cv.int_range(min=0, max=50),
+        cv.Optional(CONF_MODE, default=MODE_I2C): cv.one_of(MODE_I2C, MODE_SPI, lower=True),
+        cv.Optional(CONF_ENTITY_PREFIX): cv.string_strict,
+        cv.Optional(CONF_AUTO_UPDATE_SAMD, default=False): cv.boolean,
+        cv.Optional(CONF_DIAGNOSTICS_INTERVAL): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_METERING_INTERVAL, default="220ms"): cv.positive_time_period_milliseconds,
+        cv.Optional(CONF_GRID_DEADBAND, default=2.0): cv.positive_float,
+        cv.Optional(CONF_POWER_APPARENT_MIN, default="5VA"): _validate_volt_amps,
+        cv.Optional(CONF_PHASE_DETECTION, default={}): PHASE_DETECTION_GLOBAL_SCHEMA,
+        cv.Optional(CONF_TOTAL_POWER): POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_RAW_TOTAL_POWER): POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_GRID_IMPORT_POWER): POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_RAW_GRID_IMPORT_POWER): POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_GRID_EXPORT_POWER): POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_RAW_GRID_EXPORT_POWER): POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_MAINS): _validate_mains,
+        cv.Optional(CONF_CIRCUITS): _validate_circuits,
+        cv.Optional(CONF_GROUPS): _validate_groups,
+        cv.Optional(CONF_VIRTUAL_LINES): _validate_virtual_lines,
+        cv.Optional(CONF_PHASES): _validate_metering_phases,
+        cv.Optional(CONF_CT_CLAMPS): cv.ensure_list(METERING_CT_CLAMP_SCHEMA),
+        cv.Optional(CONF_BACKUP_PARTITION, default="samd_bak"): cv.string_strict,
+        cv.Optional(CONF_EXTERNAL_SAMD_FIRMWARE): cv.ensure_list(
+            cv.Schema(
+                {
+                    cv.Required(CONF_EXTERNAL_FIRMWARE_ID): cv.string_strict,
+                    cv.Required(CONF_URL): cv.string_strict,
+                    cv.Optional(CONF_TOKEN): cv.string_strict,
+                    cv.Required(CONF_BUTTON): button.button_schema(
+                        EmporiaVueFlashExternalFirmwareButton,
+                        icon="mdi:web",
+                        entity_category=ENTITY_CATEGORY_CONFIG,
+                    ),
+                }
+            )
+        ),
+        cv.Optional(
+            CONF_FIRMWARE_VERSION,
+            default={CONF_NAME: "SAMD Firmware Version"},
+        ): text_sensor.text_sensor_schema(
+            icon="mdi:chip",
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(
+            CONF_BUNDLED_FIRMWARE_VERSION,
+            default={CONF_NAME: "SAMD Bundled Firmware Version"},
+        ): text_sensor.text_sensor_schema(
+            icon="mdi:package-variant",
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(
+            CONF_DIAG_SAMPLE_BLOCKS,
+        ): sensor.sensor_schema(
+            icon="mdi:counter",
+            state_class=STATE_CLASS_MEASUREMENT,
+            accuracy_decimals=0,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(
+            CONF_DIAG_PACKETS_BUILT,
+        ): sensor.sensor_schema(
+            icon="mdi:counter",
+            state_class=STATE_CLASS_MEASUREMENT,
+            accuracy_decimals=0,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(
+            CONF_DIAG_PACKETS_READ,
+        ): sensor.sensor_schema(
+            icon="mdi:counter",
+            state_class=STATE_CLASS_MEASUREMENT,
+            accuracy_decimals=0,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(
+            CONF_DIAG_DMA_TRANSFER_ERRORS,
+        ): sensor.sensor_schema(
+            icon="mdi:alert-circle-outline",
+            state_class=STATE_CLASS_MEASUREMENT,
+            accuracy_decimals=0,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(
+            CONF_DIAG_PACKET_OVERRUNS,
+        ): sensor.sensor_schema(
+            icon="mdi:alert-circle-outline",
+            state_class=STATE_CLASS_MEASUREMENT,
+            accuracy_decimals=0,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(
+            CONF_DIAG_I2C_PARTIAL_READS,
+        ): sensor.sensor_schema(
+            icon="mdi:alert-circle-outline",
+            state_class=STATE_CLASS_MEASUREMENT,
+            accuracy_decimals=0,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(
+            CONF_DIAG_LAST_SAMPLE_COUNT,
+        ): sensor.sensor_schema(
+            icon="mdi:counter",
+            state_class=STATE_CLASS_MEASUREMENT,
+            accuracy_decimals=0,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(
+            CONF_BACKUP_FIRMWARE_BUTTON,
+            default={CONF_NAME: "Read SAMD Firmware"},
+        ): button.button_schema(
+            EmporiaVueBackupFirmwareButton,
+            icon="mdi:content-save",
+            entity_category=ENTITY_CATEGORY_CONFIG,
+        ),
+        cv.Optional(
+            CONF_INSTALL_FIRMWARE_BUTTON,
+            default={CONF_NAME: "Flash SAMD Bundled Firmware"},
+        ): button.button_schema(
+            EmporiaVueInstallFirmwareButton,
+            icon="mdi:package-variant-closed",
+            entity_category=ENTITY_CATEGORY_CONFIG,
+        ),
+        cv.Optional(
+            CONF_RESTORE_FIRMWARE_BUTTON,
+            default={CONF_NAME: "Flash SAMD Backup Firmware"},
+        ): button.button_schema(
+            EmporiaVueRestoreFirmwareButton,
+            icon="mdi:backup-restore",
+            entity_category=ENTITY_CATEGORY_CONFIG,
+        ),
+    }
+).extend(cv.COMPONENT_SCHEMA).extend(i2c.i2c_device_schema(0x64))
+
+CONFIG_SCHEMA = cv.All(_apply_defaults, EMPORIAVUE_SCHEMA, _validate_metering_topology)
+
+
+async def _add_internal_power_filters(var, filters):
+    for filter_config in filters or []:
+        if CONF_MULTIPLY in filter_config:
+            cg.add(var.add_power_multiply_filter(filter_config[CONF_MULTIPLY]))
+        elif CONF_LAMBDA in filter_config:
+            lambda_ = await cg.process_lambda(
+                filter_config[CONF_LAMBDA],
+                [(cg.float_, "x")],
+                return_type=cg.float_,
+            )
+            cg.add(var.add_power_lambda_filter(lambda_))
+
+
+async def to_code(config):
+    external_firmwares = []
+    for external_firmware_config in config.get(CONF_EXTERNAL_SAMD_FIRMWARE, []):
+        external_firmwares.append(
+            {
+                CONF_EXTERNAL_FIRMWARE_ID: external_firmware_config[CONF_EXTERNAL_FIRMWARE_ID],
+                "data": _download_external_samd_firmware(
+                    external_firmware_config[CONF_URL],
+                    external_firmware_config.get(CONF_TOKEN),
+                ),
+            }
+        )
+    _write_external_samd_firmware_header(external_firmwares)
+
+    var = cg.new_Pvariable(config[CONF_ID])
+    await cg.register_component(var, config)
+    await i2c.register_i2c_device(var, config)
+    cg.add(var.set_hardware_id(HARDWARE_IDS[config[CONF_HARDWARE]]))
+
+    swdio_pin = await cg.gpio_pin_expression(config[CONF_SWDIO_PIN])
+    cg.add(var.set_swdio_pin(swdio_pin))
+    swclk_pin = await cg.gpio_pin_expression(config[CONF_SWCLK_PIN])
+    cg.add(var.set_swclk_pin(swclk_pin))
+    if reset_pin_config := config.get(CONF_RESET_PIN):
+        reset_pin = await cg.gpio_pin_expression(reset_pin_config)
+        cg.add(var.set_reset_pin(reset_pin))
+
+    cg.add(var.set_connect_under_reset(config[CONF_CONNECT_UNDER_RESET]))
+    cg.add(var.set_reset_release_time(config[CONF_RESET_RELEASE_TIME]))
+    cg.add(var.set_clock_delay_us(config[CONF_CLOCK_DELAY]))
+    cg.add(var.set_runtime_mode(MODE_IDS[config[CONF_MODE]]))
+    cg.add(var.set_entity_prefix(config.get(CONF_ENTITY_PREFIX, "")))
+    cg.add(var.set_auto_update_samd(config[CONF_AUTO_UPDATE_SAMD]))
+    if diagnostics_interval := config.get(CONF_DIAGNOSTICS_INTERVAL):
+        cg.add(var.set_diagnostics_interval(diagnostics_interval))
+    cg.add(var.set_metering_interval(config[CONF_METERING_INTERVAL]))
+    cg.add(var.set_grid_deadband(config[CONF_GRID_DEADBAND]))
+    cg.add(var.set_power_apparent_min(config[CONF_POWER_APPARENT_MIN]))
+    phase_detection_config = config[CONF_PHASE_DETECTION]
+    cg.add(var.set_phase_detection_confidence_ratio(phase_detection_config[CONF_CONFIDENCE_RATIO]))
+    cg.add(var.set_phase_detection_update_interval(phase_detection_config[CONF_UPDATE_INTERVAL]))
+    cg.add(var.set_backup_partition_name(config[CONF_BACKUP_PARTITION]))
+    if raw_total_power_config := config.get(CONF_RAW_TOTAL_POWER):
+        sens = await sensor.new_sensor(raw_total_power_config)
+        cg.add(var.set_raw_total_power_sensor(sens))
+    if total_power_config := config.get(CONF_TOTAL_POWER):
+        sens = await sensor.new_sensor(total_power_config)
+        cg.add(var.set_total_power_sensor(sens))
+    if raw_grid_import_power_config := config.get(CONF_RAW_GRID_IMPORT_POWER):
+        sens = await sensor.new_sensor(raw_grid_import_power_config)
+        cg.add(var.set_raw_grid_import_power_sensor(sens))
+    if grid_import_power_config := config.get(CONF_GRID_IMPORT_POWER):
+        sens = await sensor.new_sensor(grid_import_power_config)
+        cg.add(var.set_grid_import_power_sensor(sens))
+    if raw_grid_export_power_config := config.get(CONF_RAW_GRID_EXPORT_POWER):
+        sens = await sensor.new_sensor(raw_grid_export_power_config)
+        cg.add(var.set_raw_grid_export_power_sensor(sens))
+    if grid_export_power_config := config.get(CONF_GRID_EXPORT_POWER):
+        sens = await sensor.new_sensor(grid_export_power_config)
+        cg.add(var.set_grid_export_power_sensor(sens))
+    if firmware_version_config := config.get(CONF_FIRMWARE_VERSION):
+        sens = await text_sensor.new_text_sensor(firmware_version_config)
+        cg.add(var.set_firmware_version_sensor(sens))
+    if bundled_firmware_version_config := config.get(CONF_BUNDLED_FIRMWARE_VERSION):
+        sens = await text_sensor.new_text_sensor(bundled_firmware_version_config)
+        cg.add(var.set_bundled_firmware_version_sensor(sens))
+    if diag_sample_blocks_config := config.get(CONF_DIAG_SAMPLE_BLOCKS):
+        sens = await sensor.new_sensor(diag_sample_blocks_config)
+        cg.add(var.set_diag_sample_blocks_sensor(sens))
+    if diag_packets_built_config := config.get(CONF_DIAG_PACKETS_BUILT):
+        sens = await sensor.new_sensor(diag_packets_built_config)
+        cg.add(var.set_diag_packets_built_sensor(sens))
+    if diag_packets_read_config := config.get(CONF_DIAG_PACKETS_READ):
+        sens = await sensor.new_sensor(diag_packets_read_config)
+        cg.add(var.set_diag_packets_read_sensor(sens))
+    if diag_dma_transfer_errors_config := config.get(CONF_DIAG_DMA_TRANSFER_ERRORS):
+        sens = await sensor.new_sensor(diag_dma_transfer_errors_config)
+        cg.add(var.set_diag_dma_transfer_errors_sensor(sens))
+    if diag_packet_overruns_config := config.get(CONF_DIAG_PACKET_OVERRUNS):
+        sens = await sensor.new_sensor(diag_packet_overruns_config)
+        cg.add(var.set_diag_packet_overruns_sensor(sens))
+    if diag_i2c_partial_reads_config := config.get(CONF_DIAG_I2C_PARTIAL_READS):
+        sens = await sensor.new_sensor(diag_i2c_partial_reads_config)
+        cg.add(var.set_diag_i2c_partial_reads_sensor(sens))
+    if diag_last_sample_count_config := config.get(CONF_DIAG_LAST_SAMPLE_COUNT):
+        sens = await sensor.new_sensor(diag_last_sample_count_config)
+        cg.add(var.set_diag_last_sample_count_sensor(sens))
+
+    phases = []
+    ct_clamps = []
+    main_phase_vars_by_line = {}
+    circuit_ct_clamps_by_key = {}
+    for phase_key, main_config in config.get(CONF_MAINS, {}).items():
+        phase_var = cg.new_Pvariable(main_config[CONF_ID], MeteringPhaseConfig())
+        cg.add(phase_var.set_input_wire(PHASE_INPUTS[main_config[CONF_VOLTAGE_INPUT]]))
+        cg.add(phase_var.set_calibration(main_config[CONF_CALIBRATION]))
+        line_number = int(phase_key.rsplit("_", 1)[1])
+        main_phase_vars_by_line[line_number] = phase_var
+
+        if calibration_number_config := main_config.get(CONF_CALIBRATION_NUMBER):
+            cal_num = await number.new_number(
+                calibration_number_config,
+                min_value=0.001,
+                max_value=0.1,
+                step=0.000001,
+            )
+            cg.add(cal_num.set_initial_value(calibration_number_config[CONF_INITIAL_VALUE]))
+            await cg.register_parented(cal_num, phase_var)
+            cg.add(phase_var.set_calibration_number(cal_num))
+
+        if voltage_config := main_config.get(CONF_VOLTAGE):
+            sens = await sensor.new_sensor(voltage_config)
+            cg.add(phase_var.set_voltage_sensor(sens))
+        if frequency_config := main_config.get(CONF_FREQUENCY):
+            sens = await sensor.new_sensor(frequency_config)
+            cg.add(phase_var.set_frequency_sensor(sens))
+        if phase_angle_config := main_config.get(CONF_PHASE_ANGLE):
+            sens = await sensor.new_sensor(phase_angle_config)
+            cg.add(phase_var.set_phase_angle_sensor(sens))
+
+        phases.append(phase_var)
+
+        ct_clamp_var = cg.new_Pvariable(main_config[CONF_CT_ID], MeteringCTClampConfig())
+        cg.add(ct_clamp_var.set_phase(phase_var))
+        cg.add(ct_clamp_var.set_input_port(CT_INPUTS[main_config[CONF_MAIN_CLAMP]]))
+        await _add_internal_power_filters(ct_clamp_var, main_config.get(CONF_FILTERS))
+        if raw_power_config := main_config.get(CONF_RAW_POWER):
+            sens = await sensor.new_sensor(raw_power_config)
+            cg.add(ct_clamp_var.set_raw_power_sensor(sens))
+        if power_config := main_config.get(CONF_POWER):
+            sens = await sensor.new_sensor(power_config)
+            cg.add(ct_clamp_var.set_power_sensor(sens))
+        if current_config := main_config.get(CONF_CURRENT):
+            sens = await sensor.new_sensor(current_config)
+            cg.add(ct_clamp_var.set_current_sensor(sens))
+        if apparent_power_config := main_config.get(CONF_POWER_APPARENT):
+            sens = await sensor.new_sensor(apparent_power_config)
+            cg.add(ct_clamp_var.set_apparent_power_sensor(sens))
+        if power_factor_config := main_config.get(CONF_POWER_FACTOR):
+            sens = await sensor.new_sensor(power_factor_config)
+            cg.add(ct_clamp_var.set_power_factor_sensor(sens))
+        ct_clamps.append(ct_clamp_var)
+
+    for circuit_key, circuit_config in config.get(CONF_CIRCUITS, {}).items():
+        ct_clamp_var = cg.new_Pvariable(circuit_config[CONF_CT_ID], MeteringCTClampConfig())
+        line_config = circuit_config[CONF_LINE]
+        if isinstance(line_config, list):
+            phase_a_var = main_phase_vars_by_line[line_config[0]]
+            phase_b_var = main_phase_vars_by_line[line_config[1]]
+            cg.add(ct_clamp_var.set_line_pair(phase_a_var, phase_b_var))
+        else:
+            phase_var = main_phase_vars_by_line[line_config]
+            cg.add(ct_clamp_var.set_phase(phase_var))
+        cg.add(ct_clamp_var.set_input_port(BRANCH_CT_INPUTS[circuit_config[CONF_INPUT]]))
+        await _add_internal_power_filters(ct_clamp_var, circuit_config.get(CONF_FILTERS))
+
+        if raw_power_config := circuit_config.get(CONF_RAW_POWER):
+            sens = await sensor.new_sensor(raw_power_config)
+            cg.add(ct_clamp_var.set_raw_power_sensor(sens))
+        if power_config := circuit_config.get(CONF_POWER):
+            sens = await sensor.new_sensor(power_config)
+            cg.add(ct_clamp_var.set_power_sensor(sens))
+        if current_config := circuit_config.get(CONF_CURRENT):
+            sens = await sensor.new_sensor(current_config)
+            cg.add(ct_clamp_var.set_current_sensor(sens))
+        if apparent_power_config := circuit_config.get(CONF_POWER_APPARENT):
+            sens = await sensor.new_sensor(apparent_power_config)
+            cg.add(ct_clamp_var.set_apparent_power_sensor(sens))
+        if power_factor_config := circuit_config.get(CONF_POWER_FACTOR):
+            sens = await sensor.new_sensor(power_factor_config)
+            cg.add(ct_clamp_var.set_power_factor_sensor(sens))
+        if power_split_config := circuit_config.get(CONF_POWER_SPLIT):
+            line_a_key = _power_split_line_key(line_config[0])
+            line_b_key = _power_split_line_key(line_config[1])
+            if line_a_config := power_split_config.get(line_a_key):
+                sens = await sensor.new_sensor(line_a_config)
+                cg.add(ct_clamp_var.set_power_split_line_a_sensor(sens))
+            if line_b_config := power_split_config.get(line_b_key):
+                sens = await sensor.new_sensor(line_b_config)
+                cg.add(ct_clamp_var.set_power_split_line_b_sensor(sens))
+        if phase_detection_sensor_config := circuit_config.get(CONF_PHASE_DETECTION):
+            phase_detection_text_sensor_config = dict(phase_detection_sensor_config)
+            phase_detection_text_sensor_config.pop(CONF_MIN_POWER, None)
+            sens = await text_sensor.new_text_sensor(phase_detection_text_sensor_config)
+            cg.add(ct_clamp_var.set_phase_detection_sensor(sens))
+            cg.add(ct_clamp_var.set_phase_detection_name(phase_detection_sensor_config[CONF_NAME]))
+            cg.add(
+                ct_clamp_var.set_phase_detection_min_power(
+                    phase_detection_sensor_config.get(
+                        CONF_MIN_POWER, phase_detection_config[CONF_MIN_POWER]
+                    )
+                )
+            )
+            for line_number, phase_var in sorted(main_phase_vars_by_line.items()):
+                cg.add(ct_clamp_var.add_phase_detection_candidate(phase_var, line_number))
+
+        ct_clamps.append(ct_clamp_var)
+        circuit_ct_clamps_by_key[circuit_key] = ct_clamp_var
+
+    virtual_lines = []
+    for virtual_line_config in config.get(CONF_VIRTUAL_LINES, {}).values():
+        virtual_line_var = cg.new_Pvariable(virtual_line_config[CONF_ID], MeteringVirtualLineConfig())
+        line_a, line_b = virtual_line_config[CONF_LINES]
+        cg.add(virtual_line_var.set_lines(main_phase_vars_by_line[line_a], main_phase_vars_by_line[line_b]))
+        voltage_sensor = await sensor.new_sensor(virtual_line_config[CONF_VOLTAGE])
+        cg.add(virtual_line_var.set_voltage_sensor(voltage_sensor))
+        virtual_lines.append(virtual_line_var)
+    if virtual_lines:
+        cg.add(var.set_metering_virtual_lines(virtual_lines))
+
+    for phase_config in config.get(CONF_PHASES, []):
+        phase_var = cg.new_Pvariable(phase_config[CONF_ID], MeteringPhaseConfig())
+        cg.add(phase_var.set_input_wire(PHASE_INPUTS[phase_config[CONF_INPUT]]))
+        cg.add(phase_var.set_calibration(phase_config[CONF_CALIBRATION]))
+
+        if calibration_number_config := phase_config.get(CONF_CALIBRATION_NUMBER):
+            cal_num = await number.new_number(
+                calibration_number_config,
+                min_value=0.001,
+                max_value=0.1,
+                step=0.000001,
+            )
+            cg.add(cal_num.set_initial_value(calibration_number_config[CONF_INITIAL_VALUE]))
+            await cg.register_parented(cal_num, phase_var)
+            cg.add(phase_var.set_calibration_number(cal_num))
+
+        if voltage_config := phase_config.get(CONF_VOLTAGE):
+            sens = await sensor.new_sensor(voltage_config)
+            cg.add(phase_var.set_voltage_sensor(sens))
+        if frequency_config := phase_config.get(CONF_FREQUENCY):
+            sens = await sensor.new_sensor(frequency_config)
+            cg.add(phase_var.set_frequency_sensor(sens))
+        if phase_angle_config := phase_config.get(CONF_PHASE_ANGLE):
+            sens = await sensor.new_sensor(phase_angle_config)
+            cg.add(phase_var.set_phase_angle_sensor(sens))
+
+        phases.append(phase_var)
+    if phases:
+        cg.add(var.set_metering_phases(phases))
+
+    for ct_config in config.get(CONF_CT_CLAMPS, []):
+        ct_clamp_var = cg.new_Pvariable(ct_config[CONF_ID], MeteringCTClampConfig())
+        phase_var = await cg.get_variable(ct_config[CONF_PHASE_ID])
+        cg.add(ct_clamp_var.set_phase(phase_var))
+        cg.add(ct_clamp_var.set_input_port(CT_INPUTS[ct_config[CONF_INPUT]]))
+        await _add_internal_power_filters(ct_clamp_var, ct_config.get(CONF_FILTERS))
+
+        if raw_power_config := ct_config.get(CONF_RAW_POWER):
+            sens = await sensor.new_sensor(raw_power_config)
+            cg.add(ct_clamp_var.set_raw_power_sensor(sens))
+        if power_config := ct_config.get(CONF_POWER):
+            sens = await sensor.new_sensor(power_config)
+            cg.add(ct_clamp_var.set_power_sensor(sens))
+        if current_config := ct_config.get(CONF_CURRENT):
+            sens = await sensor.new_sensor(current_config)
+            cg.add(ct_clamp_var.set_current_sensor(sens))
+        if apparent_power_config := ct_config.get(CONF_POWER_APPARENT):
+            sens = await sensor.new_sensor(apparent_power_config)
+            cg.add(ct_clamp_var.set_apparent_power_sensor(sens))
+        if power_factor_config := ct_config.get(CONF_POWER_FACTOR):
+            sens = await sensor.new_sensor(power_factor_config)
+            cg.add(ct_clamp_var.set_power_factor_sensor(sens))
+
+        ct_clamps.append(ct_clamp_var)
+    if ct_clamps:
+        cg.add(var.set_metering_ct_clamps(ct_clamps))
+
+    groups = []
+    for group_config in config.get(CONF_GROUPS, {}).values():
+        group_var = cg.new_Pvariable(group_config[CONF_ID], MeteringGroupConfig())
+        for source in group_config[CONF_CIRCUITS]:
+            sign, source_key = _parse_group_source(source)
+            if source_key == CONF_TOTAL_POWER:
+                cg.add(group_var.add_total_power_term(sign))
+            else:
+                cg.add(group_var.add_ct_clamp_term(circuit_ct_clamps_by_key[source_key], sign))
+        await _add_internal_power_filters(group_var, group_config.get(CONF_FILTERS))
+        if raw_power_config := group_config.get(CONF_RAW_POWER):
+            sens = await sensor.new_sensor(raw_power_config)
+            cg.add(group_var.set_raw_power_sensor(sens))
+        if power_config := group_config.get(CONF_POWER):
+            sens = await sensor.new_sensor(power_config)
+            cg.add(group_var.set_power_sensor(sens))
+        groups.append(group_var)
+    if groups:
+        cg.add(var.set_metering_groups(groups))
+
+    if backup_firmware_button_config := config.get(CONF_BACKUP_FIRMWARE_BUTTON):
+        btn = await button.new_button(backup_firmware_button_config)
+        await cg.register_parented(btn, var)
+    if install_firmware_button_config := config.get(CONF_INSTALL_FIRMWARE_BUTTON):
+        btn = await button.new_button(install_firmware_button_config)
+        await cg.register_parented(btn, var)
+    if restore_firmware_button_config := config.get(CONF_RESTORE_FIRMWARE_BUTTON):
+        btn = await button.new_button(restore_firmware_button_config)
+        await cg.register_parented(btn, var)
+    for index, external_firmware_config in enumerate(config.get(CONF_EXTERNAL_SAMD_FIRMWARE, [])):
+        btn = await button.new_button(external_firmware_config[CONF_BUTTON])
+        cg.add(btn.set_firmware_index(index))
+        await cg.register_parented(btn, var)

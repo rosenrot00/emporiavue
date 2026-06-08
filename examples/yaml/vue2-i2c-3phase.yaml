@@ -1,0 +1,218 @@
+# Compact Emporia Vue 2 I2C 3phase setup with neutral.
+#
+# This is a copy/paste starting point. Keep one topology package enabled, then
+# adjust circuit names, line assignments, filters, groups, and energy sensors
+# for your panel.
+
+esphome:
+  name: emporiavue2
+  friendly_name: vue2
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/rosenrot00/emporiavue.git
+      ref: main
+    components:
+      - emporiavue
+    refresh: always
+
+packages:
+  emporiavue:
+    url: https://github.com/rosenrot00/emporiavue.git
+    ref: main
+    files:
+      - packages/vue2-i2c.yaml
+      - packages/vue2-i2c-3phase.yaml
+      # Optional Vue 2 non-I2C GPIO helpers:
+      # - packages/vue2-gpios.yaml
+      # Vue 3 is currently untested. To try it, swap the two files above for:
+      # - packages/vue3-i2c.yaml
+      # - packages/vue3-i2c-3phase.yaml
+    refresh: always
+
+esp32:
+  board: esp32dev
+  cpu_frequency: 160MHz
+  framework:
+    type: esp-idf
+    version: recommended
+
+api:
+  encryption:
+    key: !secret ha_enc_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+    allow_partition_access: true
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  fast_connect: true
+
+logger:
+  logs:
+    sensor: INFO
+
+preferences:
+  flash_write_interval: never
+
+time:
+  - platform: sntp
+    id: my_time
+    timezone: "Europe/Vienna"
+
+.defaultfilters:
+  - &throttle_avg
+    throttle_average: 5s
+  - &throttle_time
+    throttle: 60s
+  - &pos
+    lambda: 'return max(x, 0.0f);'
+
+emporiavue:
+  power_apparent_min: 5VA
+
+  phase_detection:
+    min_power: 30W
+    confidence_ratio: 1.5
+    update_interval: 10s
+
+  mains:
+    line_1:
+      voltage:
+        filters: [*throttle_avg, *pos]
+      frequency:
+        filters: [*throttle_avg, *pos]
+      power:
+        filters: *throttle_avg
+
+    line_2:
+      voltage:
+        filters: [*throttle_avg, *pos]
+      phase_angle:
+        filters: [*throttle_avg, *pos]
+      power:
+        filters: *throttle_avg
+
+    line_3:
+      voltage:
+        filters: [*throttle_avg, *pos]
+      phase_angle:
+        filters: [*throttle_avg, *pos]
+      power:
+        filters: *throttle_avg
+
+  total_power:
+    filters: *throttle_avg
+
+  grid_import_power:
+    filters: *throttle_avg
+
+  grid_export_power:
+    filters: *throttle_avg
+
+  virtual_lines:
+    line_2_3:
+      lines: [2, 3]
+      voltage:
+        filters: [*throttle_avg, *pos]
+
+  circuits:
+    cir1:
+      line: 2
+      power:
+        name: "Livingroom Power"
+        filters: [*pos, *throttle_avg]
+    cir2:
+      line: 3
+      power:
+        filters: *throttle_avg
+      current:
+        filters: *throttle_avg
+      power_apparent:
+        filters: *throttle_avg
+      power_factor:
+        filters: *throttle_avg
+    cir3:
+      line: 1
+      phase_detection: true
+      power:
+        filters: *throttle_avg
+    cir4:
+      line: 2
+      power:
+        filters: *throttle_avg
+    cir5:
+      line: 3
+      power:
+        name: "Fridge, Steamer Power"
+        filters: *throttle_avg
+    cir6:
+      line: 3
+      power:
+        name: "HVAC, Dishwasher Power"
+        filters: *throttle_avg
+
+  groups:
+    total_heat_pump_power:
+      circuits: [cir2, cir3, cir4]
+      power:
+        name: "Heat Pump Power"
+        filters: *throttle_avg
+
+sensor:
+  - platform: total_daily_energy
+    name: "Today’s Total Energy"
+    power_id: total_power
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total
+    accuracy_decimals: 2
+    restore: true
+    filters:
+      - multiply: 0.001
+      - *throttle_time
+
+  - platform: total_daily_energy
+    id: grid_import_today
+    name: "Today’s Grid Import Energy"
+    power_id: grid_import_w
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    restore: true
+    method: left
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.001
+      - *throttle_time
+
+  - platform: total_daily_energy
+    id: grid_export_today
+    name: "Today’s Grid Export Energy"
+    power_id: grid_export_w
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    restore: true
+    method: left
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.001
+      - *throttle_time
+
+  - platform: total_daily_energy
+    name: "Today’s Heat Pump Energy"
+    power_id: total_heat_pump_power
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    restore: true
+    method: left
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.001
+      - *throttle_time

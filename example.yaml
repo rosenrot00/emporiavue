@@ -1,0 +1,20 @@
+esphome:
+  name: emporiavue-test
+  friendly_name: EmporiaVue SAMD Test
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+  level: DEBUG
+
+external_components:
+  - source:
+      type: local
+      path: ./components
+    components: [emporiavue]
+
+packages:
+  emporiavue_vue2_i2c: !include packages/vue2-i2c.yaml

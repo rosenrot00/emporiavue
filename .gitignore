@@ -1,0 +1,12 @@
+# ESPHome / PlatformIO build output
+/.esphome/
+/.pio/
+/build/
+/firmware/samd09/build/
+
+# Local secrets
+/secrets.yaml
+
+# Python cache
+__pycache__/
+*.py[cod]

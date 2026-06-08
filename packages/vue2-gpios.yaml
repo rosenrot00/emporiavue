@@ -1,0 +1,33 @@
+# Optional Emporia Vue 2 non-I2C GPIO helpers.
+#
+# GPIO23 drives the Vue 2 WiFi/status LED. It blinks while the node is
+# connecting or reconnecting and stays on once the node has a network
+# connection, matching the Vue 2 front-panel WiFi LED behavior.
+
+output:
+  - platform: gpio
+    id: vue2_gpio23_wifi_status_led
+    pin: GPIO23
+
+interval:
+  - interval: 250ms
+    then:
+      - lambda: |-
+          #ifdef USE_NETWORK
+          const bool connected = esphome::network::is_connected();
+          #else
+          const bool connected = false;
+          #endif
+
+          static bool blink_state = false;
+          blink_state = connected ? true : !blink_state;
+
+          #ifdef USE_WIFI
+          if (blink_state) {
+            id(vue2_gpio23_wifi_status_led).turn_on();
+          } else {
+            id(vue2_gpio23_wifi_status_led).turn_off();
+          }
+          #else
+          id(vue2_gpio23_wifi_status_led).turn_off();
+          #endif
