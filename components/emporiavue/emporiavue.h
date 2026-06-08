@@ -216,7 +216,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   static constexpr uint16_t MANAGED_MODE_SPI = 2;
   static constexpr uint16_t STOCK_I2C_FRAME_SIZE = 284;
   static constexpr uint8_t MANAGED_I2C_DIAGNOSTIC_COMMAND = 0xF1;
-  static constexpr uint8_t METERING_QUALITY_MISSED_FRAME = 0x01;
 
   enum class I2CMeteringReadResult : uint8_t {
     VALID_FRAME,

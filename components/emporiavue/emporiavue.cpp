@@ -1977,9 +1977,9 @@ void EmporiaVueComponent::refresh_metering_() {
   if (this->last_metering_sequence_valid_) {
     const uint8_t sequence_delta = static_cast<uint8_t>(frame.sequence - this->last_metering_sequence_);
     if (sequence_delta > 1) {
-      frame.quality_flags |= METERING_QUALITY_MISSED_FRAME;
-      ESP_LOGD(TAG, "SAMD09 metering skipped %u frame(s)",
-               static_cast<unsigned>(static_cast<uint8_t>(sequence_delta - 1)));
+      ESP_LOGD(TAG, "SAMD09 metering detected %u missing reading(s): previous seq=%u current seq=%" PRIu32,
+               static_cast<unsigned>(static_cast<uint8_t>(sequence_delta - 1)),
+               static_cast<unsigned>(this->last_metering_sequence_), frame.sequence);
     }
   }
   this->last_metering_sequence_ = static_cast<uint8_t>(frame.sequence);
