@@ -1,4 +1,4 @@
-# Advanced Emporia Vue 2 I2C 3phase setup without neutral in the measured panel.
+# Advanced Emporia Vue 2 3phase setup without neutral in the measured panel.
 #
 # WARNING: This is not a generic recommendation to rewire the Vue voltage
 # reference. Only use this pattern if the installation has been electrically
@@ -30,7 +30,7 @@ packages:
     ref: main
     files:
       - packages/vue2-i2c.yaml
-      - packages/vue2-i2c-3phase.yaml
+      - packages/vue2-3phase.yaml
     refresh: always
 
 esp32:

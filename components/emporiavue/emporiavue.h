@@ -1,7 +1,9 @@
 #pragma once
 
 #include "esphome/components/button/button.h"
+#ifdef USE_I2C
 #include "esphome/components/i2c/i2c.h"
+#endif
 #include "esphome/components/number/number.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/text_sensor/text_sensor.h"
@@ -12,17 +14,30 @@
 
 #include <esp_partition.h>
 #include <mbedtls/sha256.h>
+#ifdef USE_ESP32
+#include <driver/spi_slave.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#include <freertos/task.h>
+#endif
 
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cmath>
 #include <functional>
+#include <limits>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace esphome {
 namespace emporiavue {
+
+static constexpr const char *TAG = "emporiavue";
+static constexpr float VUE2_STOCK_CYCLE_TIMEBASE_HZ = 25310.0f;
+static constexpr float VUE3_STOCK_CYCLE_TIMEBASE_HZ = 19610.0f;
+static constexpr uint8_t SPI_RX_QUEUE_SIZE = 16;
 
 class MeteringPhaseConfig;
 class MeteringCTClampConfig;
@@ -48,11 +63,43 @@ class MeteringPowerFilters {
   std::vector<std::function<float(float)>> filters_{};
 };
 
-class EmporiaVueComponent : public Component, public i2c::I2CDevice {
+class MeteringPowerOutput {
+ public:
+  enum Direction : uint8_t {
+    DIRECTION_SIGNED = 0,
+    DIRECTION_POSITIVE = 1,
+    DIRECTION_NEGATIVE = 2,
+  };
+
+  MeteringPowerOutput(uint8_t direction, sensor::Sensor *raw_power_sensor, sensor::Sensor *power_sensor)
+      : direction_(direction), raw_power_sensor_(raw_power_sensor), power_sensor_(power_sensor) {}
+
+  uint8_t get_direction() const { return this->direction_; }
+  sensor::Sensor *get_raw_power_sensor() const { return this->raw_power_sensor_; }
+  sensor::Sensor *get_power_sensor() const { return this->power_sensor_; }
+
+ protected:
+  uint8_t direction_{DIRECTION_SIGNED};
+  sensor::Sensor *raw_power_sensor_{nullptr};
+  sensor::Sensor *power_sensor_{nullptr};
+};
+
+class EmporiaVueComponent : public Component
+#ifdef USE_I2C
+                             ,
+                             public i2c::I2CDevice
+#endif
+{
  public:
   enum class RuntimeMode : uint8_t {
     I2C = 0,
     SPI = 1,
+  };
+
+  enum class MeteringTransport : uint8_t {
+    UNKNOWN = 0,
+    I2C = 1,
+    SPI = 2,
   };
 
   void setup() override;
@@ -63,6 +110,11 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void set_swdio_pin(InternalGPIOPin *pin) { this->swdio_pin_ = pin; }
   void set_swclk_pin(InternalGPIOPin *pin) { this->swclk_pin_ = pin; }
   void set_reset_pin(InternalGPIOPin *pin) { this->reset_pin_ = pin; }
+  void set_spi_clk_pin(uint8_t pin) { this->spi_clk_pin_ = pin; }
+  void set_spi_data_pin(uint8_t pin) { this->spi_data_pin_ = pin; }
+  void set_spi_frame_pin(uint8_t pin) { this->spi_frame_pin_ = pin; }
+  void set_spi_main_current_delay(uint8_t delay) { this->spi_main_current_delay_ = delay; }
+  void set_spi_mux_current_delay(uint8_t delay) { this->spi_mux_current_delay_ = delay; }
   void set_hardware_id(uint16_t hardware_id) { this->hardware_id_ = hardware_id; }
   void set_connect_under_reset(bool connect_under_reset) { this->connect_under_reset_ = connect_under_reset; }
   void set_reset_release_time(uint32_t reset_release_time) { this->reset_release_time_ms_ = reset_release_time; }
@@ -76,7 +128,6 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
     this->diagnostics_interval_ms_ = diagnostics_interval_ms;
   }
   void set_metering_interval(uint32_t metering_interval_ms) { this->metering_interval_ms_ = metering_interval_ms; }
-  void set_grid_deadband(float grid_deadband) { this->grid_deadband_ = grid_deadband; }
   void set_power_apparent_min(float power_apparent_min) { this->power_apparent_min_ = power_apparent_min; }
   void set_phase_detection_confidence_ratio(float confidence_ratio) {
     this->phase_detection_confidence_ratio_ = confidence_ratio;
@@ -99,27 +150,16 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void set_backup_partition_name(const std::string &backup_partition_name) {
     this->backup_partition_name_ = backup_partition_name;
   }
-  void set_raw_total_power_sensor(sensor::Sensor *sensor) { this->raw_total_power_sensor_ = sensor; }
-  void set_total_power_sensor(sensor::Sensor *sensor) { this->total_power_sensor_ = sensor; }
-  void set_raw_grid_import_power_sensor(sensor::Sensor *sensor) { this->raw_grid_import_power_sensor_ = sensor; }
-  void set_grid_import_power_sensor(sensor::Sensor *sensor) { this->grid_import_power_sensor_ = sensor; }
-  void set_raw_grid_export_power_sensor(sensor::Sensor *sensor) { this->raw_grid_export_power_sensor_ = sensor; }
-  void set_grid_export_power_sensor(sensor::Sensor *sensor) { this->grid_export_power_sensor_ = sensor; }
   void set_firmware_version_sensor(text_sensor::TextSensor *sensor) { this->firmware_version_sensor_ = sensor; }
   void set_bundled_firmware_version_sensor(text_sensor::TextSensor *sensor) {
     this->bundled_firmware_version_sensor_ = sensor;
   }
-  void set_diag_sample_blocks_sensor(sensor::Sensor *sensor) { this->diag_sample_blocks_sensor_ = sensor; }
-  void set_diag_packets_built_sensor(sensor::Sensor *sensor) { this->diag_packets_built_sensor_ = sensor; }
-  void set_diag_packets_read_sensor(sensor::Sensor *sensor) { this->diag_packets_read_sensor_ = sensor; }
-  void set_diag_dma_transfer_errors_sensor(sensor::Sensor *sensor) {
-    this->diag_dma_transfer_errors_sensor_ = sensor;
-  }
-  void set_diag_packet_overruns_sensor(sensor::Sensor *sensor) { this->diag_packet_overruns_sensor_ = sensor; }
-  void set_diag_i2c_partial_reads_sensor(sensor::Sensor *sensor) {
-    this->diag_i2c_partial_reads_sensor_ = sensor;
-  }
-  void set_diag_last_sample_count_sensor(sensor::Sensor *sensor) { this->diag_last_sample_count_sensor_ = sensor; }
+  void set_diag_frame_errors_sensor(sensor::Sensor *sensor) { this->diag_frame_errors_sensor_ = sensor; }
+  void set_diag_transfer_errors_sensor(sensor::Sensor *sensor) { this->diag_transfer_errors_sensor_ = sensor; }
+  void set_diag_frame_overruns_sensor(sensor::Sensor *sensor) { this->diag_frame_overruns_sensor_ = sensor; }
+  void set_diag_recoveries_sensor(sensor::Sensor *sensor) { this->diag_recoveries_sensor_ = sensor; }
+  void set_diag_last_frame_samples_sensor(sensor::Sensor *sensor) { this->diag_last_frame_samples_sensor_ = sensor; }
+  void set_diag_sample_rate_sensor(sensor::Sensor *sensor) { this->diag_sample_rate_sensor_ = sensor; }
 
   void backup_firmware();
   void install_firmware();
@@ -310,6 +350,8 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   struct MeteringPhase {
     uint16_t voltage_raw{0};
     uint16_t cycle_count_raw{0};
+    float frequency_hz{std::numeric_limits<float>::quiet_NaN()};
+    float phase_angle_degrees{std::numeric_limits<float>::quiet_NaN()};
     uint8_t quality_flags{0};
   };
 
@@ -321,12 +363,45 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
 
   struct MeteringFrame {
     uint16_t schema_version{1};
+    MeteringTransport transport{MeteringTransport::UNKNOWN};
     uint32_t sequence{0};
     uint32_t timestamp_ms{0};
     bool valid{false};
     uint8_t quality_flags{0};
     MeteringPhase phases[3]{};
     MeteringClamp clamps[19]{};
+  };
+
+  struct MeteringCTMeasurement {
+    bool has_power{false};
+    float power{0.0f};
+    bool has_voltage{false};
+    float voltage{0.0f};
+    bool has_current{false};
+    float current{0.0f};
+    bool has_apparent_power{false};
+    float apparent_power{0.0f};
+    bool has_power_factor{false};
+    float power_factor{0.0f};
+  };
+
+  struct SpiRawScan {
+    int16_t value[8]{};
+    uint32_t sample_counter{0};
+    uint8_t mux_index{0};
+  };
+
+  struct SpiMeteringAccumulator {
+    int32_t current_sum[19]{};
+    int64_t voltage_square_sum[3]{};
+    int32_t voltage_sum[3]{};
+    int64_t current_square_sum[19]{};
+    int64_t raw_power_sum[19][3]{};
+    float cycle_sum[3]{};
+    uint16_t cycle_count[3]{};
+    uint16_t line1_period_count{0};
+    uint32_t sample_count{0};
+    uint32_t mux_sample_count[16]{};
   };
 
   enum MemSize : uint8_t {
@@ -464,15 +539,41 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void refresh_i2c_diagnostics_();
   void publish_firmware_info_from_diagnostic_(const ManagedI2CDiagnostic &diagnostic);
   void publish_i2c_diagnostics_(const ManagedI2CDiagnostic &diagnostic);
+  void publish_spi_diagnostics_();
   void start_i2c_diagnostics_();
   void stop_i2c_diagnostics_();
   I2CMeteringReadResult read_i2c_metering_frame_(MeteringFrame *frame);
   uint8_t calculate_i2c_metering_checksum_(const I2CMeteringPacket &packet) const;
   bool decode_i2c_metering_packet_(const I2CMeteringPacket &packet, MeteringFrame *frame) const;
+  void submit_metering_frame_(const MeteringFrame &frame);
   void publish_metering_frame_(const MeteringFrame &frame);
   void refresh_metering_();
   void start_metering_();
   void stop_metering_();
+  void setup_spi_receiver_(bool reset_statistics = true);
+  bool stop_spi_receiver_(bool release_driver = true);
+  void restart_spi_receiver_();
+  void process_spi_receiver_();
+#ifdef USE_ESP32
+  void process_spi_transaction_(spi_slave_transaction_t *transaction);
+  void spi_rx_task_();
+  static void spi_rx_task_trampoline_(void *arg);
+#endif
+  bool queue_spi_receive_(uint8_t index);
+  bool validate_spi_frame_(const uint8_t *frame, uint32_t *sequence, uint32_t *flags, uint32_t *sample_counter,
+                           uint16_t *sample_period_ticks) const;
+  void reset_spi_metering_state_();
+  void decode_spi_raw_frame_(const uint8_t *frame, uint32_t sequence, uint32_t flags, uint32_t sample_counter);
+  void process_spi_raw_scan_(const SpiRawScan &scan);
+  void finish_spi_metering_window_(uint32_t sequence, uint32_t flags);
+  uint32_t spi_metering_target_samples_() const;
+  uint16_t spi_metering_target_periods_(float period_samples) const;
+  static int16_t sanitize_spi_adc_offset_(int32_t average);
+  static uint16_t scale_spi_rms_(uint64_t sum, uint32_t numerator, uint32_t denominator);
+  static int32_t scale_spi_power_(int64_t raw, uint32_t multiplier, uint32_t denominator);
+  void publish_queued_spi_metering_();
+  void start_firmware_mode_mismatch_log_();
+  void stop_firmware_mode_mismatch_log_();
   bool firmware_mode_matches_runtime_() const;
   void publish_firmware_mode_mismatch_();
   void probe_runtime_i2c_after_firmware_update_();
@@ -491,6 +592,7 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   uint32_t bundled_firmware_mode_id_() const;
   uint32_t bundled_firmware_version_() const;
   uint32_t bundled_firmware_size_() const;
+  const uint8_t *bundled_firmware_data_() const;
   bool external_firmware_available_(uint8_t index) const;
   uint32_t external_firmware_size_(uint8_t index) const;
   const uint8_t *external_firmware_data_(uint8_t index) const;
@@ -511,24 +613,35 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   void fail_backup_(const std::string &error);
   void finish_backup_success_();
   bool calculate_ct_power_(const MeteringFrame &frame, const MeteringCTClampConfig *ct_clamp, float *power) const;
+  bool calculate_phase_voltage_(const MeteringFrame &frame, const MeteringPhaseConfig *phase, float *voltage) const;
+  bool calculate_line_to_line_voltage_(const MeteringFrame &frame, const MeteringPhaseConfig *line_a,
+                                       const MeteringPhaseConfig *line_b, float *voltage) const;
   bool calculate_ct_voltage_(const MeteringFrame &frame, const MeteringCTClampConfig *ct_clamp, float *voltage) const;
   bool calculate_ct_current_(const MeteringFrame &frame, const MeteringCTClampConfig *ct_clamp, float *current) const;
   bool calculate_ct_apparent_power_(const MeteringFrame &frame, const MeteringCTClampConfig *ct_clamp,
                                     float *apparent_power) const;
+  bool calculate_ct_measurement_(const MeteringFrame &frame, const MeteringCTClampConfig *ct_clamp,
+                                 MeteringCTMeasurement *measurement) const;
+  bool calculate_group_power_(const MeteringFrame &frame, const MeteringGroupConfig *group, float *group_power,
+                              uint8_t depth = 0) const;
+  static float apply_power_direction_(float power, uint8_t direction);
+  static void publish_power_outputs_(const std::vector<MeteringPowerOutput> &outputs, float power);
   void update_phase_detection_(const MeteringFrame &frame, MeteringCTClampConfig *ct_clamp);
 
   InternalGPIOPin *swdio_pin_{nullptr};
   InternalGPIOPin *swclk_pin_{nullptr};
   InternalGPIOPin *reset_pin_{nullptr};
+  uint8_t spi_clk_pin_{22};
+  uint8_t spi_data_pin_{21};
+  uint8_t spi_frame_pin_{13};
   text_sensor::TextSensor *firmware_version_sensor_{nullptr};
   text_sensor::TextSensor *bundled_firmware_version_sensor_{nullptr};
-  sensor::Sensor *diag_sample_blocks_sensor_{nullptr};
-  sensor::Sensor *diag_packets_built_sensor_{nullptr};
-  sensor::Sensor *diag_packets_read_sensor_{nullptr};
-  sensor::Sensor *diag_dma_transfer_errors_sensor_{nullptr};
-  sensor::Sensor *diag_packet_overruns_sensor_{nullptr};
-  sensor::Sensor *diag_i2c_partial_reads_sensor_{nullptr};
-  sensor::Sensor *diag_last_sample_count_sensor_{nullptr};
+  sensor::Sensor *diag_frame_errors_sensor_{nullptr};
+  sensor::Sensor *diag_transfer_errors_sensor_{nullptr};
+  sensor::Sensor *diag_frame_overruns_sensor_{nullptr};
+  sensor::Sensor *diag_recoveries_sensor_{nullptr};
+  sensor::Sensor *diag_last_frame_samples_sensor_{nullptr};
+  sensor::Sensor *diag_sample_rate_sensor_{nullptr};
 
   uint16_t hardware_id_{0};
   bool connect_under_reset_{false};
@@ -540,21 +653,77 @@ class EmporiaVueComponent : public Component, public i2c::I2CDevice {
   bool auto_update_samd_{false};
   uint32_t diagnostics_interval_ms_{0};
   bool diagnostics_started_{false};
+  bool firmware_mode_mismatch_log_started_{false};
   uint32_t metering_interval_ms_{0};
   bool metering_started_{false};
-  uint8_t last_metering_sequence_{0};
+  uint32_t last_metering_sequence_{0};
+  MeteringTransport last_metering_transport_{MeteringTransport::UNKNOWN};
   bool last_metering_sequence_valid_{false};
   MeteringFrame last_metering_frame_{};
-  float grid_deadband_{2.0f};
+  bool spi_receiver_started_{false};
+#ifdef USE_ESP32
+  spi_host_device_t spi_host_{SPI2_HOST};
+  spi_slave_transaction_t spi_transactions_[SPI_RX_QUEUE_SIZE]{};
+  uint8_t *spi_rx_buffers_[SPI_RX_QUEUE_SIZE]{};
+  QueueHandle_t spi_metering_queue_{nullptr};
+  TaskHandle_t spi_rx_task_handle_{nullptr};
+  volatile bool spi_rx_task_stop_{false};
+#endif
+  SpiMeteringAccumulator spi_metering_accumulator_{};
+  bool spi_metering_window_synced_{false};
+  SpiRawScan spi_raw_scan_ring_[6]{};
+  uint8_t spi_raw_scan_ring_index_{0};
+  uint8_t spi_raw_scan_ring_count_{0};
+  bool spi_expected_sample_counter_valid_{false};
+  uint32_t spi_expected_sample_counter_{0};
+  uint8_t spi_main_current_delay_{2};
+  uint8_t spi_mux_current_delay_{4};
+  int16_t spi_adc_offsets_[22]{};
+  int32_t spi_adc_offset_estimate_q8_[22]{};
+  uint8_t spi_offset_warmup_windows_{0};
+  bool spi_last_cross_sample_valid_[3]{};
+  float spi_last_cross_sample_[3]{};
+  bool spi_line1_period_valid_{false};
+  float spi_line1_period_samples_{0.0f};
+  bool spi_last_voltage_sample_valid_[3]{};
+  int32_t spi_last_voltage_difference_[3]{};
+  uint32_t spi_last_voltage_sample_counter_[3]{};
+  bool spi_pending_cross_sample_valid_[3]{};
+  float spi_pending_cross_sample_[3]{};
+  uint8_t spi_cycle_state_[3]{};
+  volatile uint16_t spi_rx_inflight_{0};
+  uint32_t spi_rx_frames_{0};
+  uint32_t spi_rx_sync_errors_{0};
+  uint32_t spi_rx_crc_errors_{0};
+  uint32_t spi_rx_queue_errors_{0};
+  uint32_t spi_rx_frame_gaps_{0};
+  uint32_t spi_rx_recoveries_{0};
+  uint32_t spi_rx_last_sequence_{0};
+  uint32_t spi_rx_last_flags_{0};
+  uint32_t spi_rx_last_sample_counter_{0};
+  uint32_t spi_last_frame_samples_{0};
+  float spi_sample_rate_hz_{0.0f};
+  uint32_t spi_invalid_window_last_log_ms_{0};
+  uint32_t spi_rx_last_log_ms_{0};
+  bool spi_rx_logged_status_valid_{false};
+  uint32_t spi_rx_logged_sync_errors_{0};
+  uint32_t spi_rx_logged_crc_errors_{0};
+  uint32_t spi_rx_logged_queue_errors_{0};
+  uint32_t spi_rx_logged_frame_gaps_{0};
+  uint32_t spi_rx_logged_recoveries_{0};
+  uint32_t spi_rx_logged_flags_{0};
+  uint32_t spi_last_diagnostics_publish_ms_{0};
+  bool spi_diag_recoveries_published_{false};
+  uint32_t spi_diag_published_recoveries_{0};
+  volatile uint16_t spi_rx_invalid_streak_{0};
+  volatile bool spi_rx_recover_requested_{false};
+  bool spi_rx_waiting_for_valid_after_recovery_{false};
+  uint8_t spi_rx_recoveries_since_valid_{0};
+  uint8_t spi_rx_last_recovery_attempts_{0};
+  uint32_t spi_rx_last_samd_reset_ms_{0};
   float power_apparent_min_{5.0f};
   float phase_detection_confidence_ratio_{1.5f};
   uint32_t phase_detection_update_interval_ms_{10000};
-  sensor::Sensor *raw_total_power_sensor_{nullptr};
-  sensor::Sensor *total_power_sensor_{nullptr};
-  sensor::Sensor *raw_grid_import_power_sensor_{nullptr};
-  sensor::Sensor *grid_import_power_sensor_{nullptr};
-  sensor::Sensor *raw_grid_export_power_sensor_{nullptr};
-  sensor::Sensor *grid_export_power_sensor_{nullptr};
   std::vector<MeteringPhaseConfig *> metering_phases_{};
   std::vector<MeteringCTClampConfig *> metering_ct_clamps_{};
   std::vector<MeteringGroupConfig *> metering_groups_{};
@@ -660,10 +829,10 @@ class MeteringCTClampConfig {
   bool is_line_pair() const { return this->line_pair_; }
   void set_input_port(uint8_t input_port) { this->input_port_ = input_port; }
   uint8_t get_input_port() const { return this->input_port_; }
-  void set_raw_power_sensor(sensor::Sensor *sensor) { this->raw_power_sensor_ = sensor; }
-  sensor::Sensor *get_raw_power_sensor() const { return this->raw_power_sensor_; }
-  void set_power_sensor(sensor::Sensor *sensor) { this->power_sensor_ = sensor; }
-  sensor::Sensor *get_power_sensor() const { return this->power_sensor_; }
+  void add_power_output(uint8_t direction, sensor::Sensor *raw_power_sensor, sensor::Sensor *power_sensor) {
+    this->power_outputs_.emplace_back(direction, raw_power_sensor, power_sensor);
+  }
+  const std::vector<MeteringPowerOutput> &get_power_outputs() const { return this->power_outputs_; }
   void set_current_sensor(sensor::Sensor *sensor) { this->current_sensor_ = sensor; }
   sensor::Sensor *get_current_sensor() const { return this->current_sensor_; }
   void set_apparent_power_sensor(sensor::Sensor *sensor) { this->apparent_power_sensor_ = sensor; }
@@ -684,8 +853,8 @@ class MeteringCTClampConfig {
   text_sensor::TextSensor *get_phase_detection_sensor() const { return this->phase_detection_sensor_; }
   void set_phase_detection_name(const std::string &name) { this->phase_detection_name_ = name; }
   const std::string &get_phase_detection_name() const { return this->phase_detection_name_; }
-  void set_phase_detection_min_power(float min_power) { this->phase_detection_min_power_ = min_power; }
-  float get_phase_detection_min_power() const { return this->phase_detection_min_power_; }
+  void set_phase_detection_power_min(float power_min) { this->phase_detection_power_min_ = power_min; }
+  float get_phase_detection_power_min() const { return this->phase_detection_power_min_; }
   void add_phase_detection_candidate(MeteringPhaseConfig *phase, uint8_t line) {
     this->phase_detection_candidates_.push_back(PhaseDetectionCandidate{phase, line});
   }
@@ -695,6 +864,25 @@ class MeteringCTClampConfig {
   void reset_phase_detection() {
     this->phase_detection_scores_.fill(0.0f);
     this->phase_detection_samples_ = 0;
+  }
+  void reset_phase_detection_stability() {
+    this->phase_detection_candidate_line_ = 0;
+    this->phase_detection_candidate_windows_ = 0;
+  }
+  uint8_t update_phase_detection_candidate(uint8_t line) {
+    if (line < 1 || line > 3) {
+      this->reset_phase_detection_stability();
+      return 0;
+    }
+    if (this->phase_detection_candidate_line_ == line) {
+      if (this->phase_detection_candidate_windows_ < UINT8_MAX) {
+        this->phase_detection_candidate_windows_++;
+      }
+    } else {
+      this->phase_detection_candidate_line_ = line;
+      this->phase_detection_candidate_windows_ = 1;
+    }
+    return this->phase_detection_candidate_windows_;
   }
   void add_phase_detection_score(uint8_t line, float score) {
     if (line >= 1 && line <= 3) {
@@ -712,8 +900,7 @@ class MeteringCTClampConfig {
   MeteringPhaseConfig *line_pair_phase_b_{nullptr};
   bool line_pair_{false};
   uint8_t input_port_{0};
-  sensor::Sensor *raw_power_sensor_{nullptr};
-  sensor::Sensor *power_sensor_{nullptr};
+  std::vector<MeteringPowerOutput> power_outputs_{};
   sensor::Sensor *current_sensor_{nullptr};
   sensor::Sensor *apparent_power_sensor_{nullptr};
   sensor::Sensor *power_factor_sensor_{nullptr};
@@ -722,30 +909,34 @@ class MeteringCTClampConfig {
   MeteringPowerFilters power_filters_{};
   text_sensor::TextSensor *phase_detection_sensor_{nullptr};
   std::string phase_detection_name_{};
-  float phase_detection_min_power_{30.0f};
+  float phase_detection_power_min_{30.0f};
   std::vector<PhaseDetectionCandidate> phase_detection_candidates_{};
   std::array<float, 3> phase_detection_scores_{0.0f, 0.0f, 0.0f};
   uint32_t phase_detection_samples_{0};
   uint32_t phase_detection_window_start_ms_{0};
+  uint8_t phase_detection_candidate_line_{0};
+  uint8_t phase_detection_candidate_windows_{0};
 };
 
 class MeteringGroupConfig {
  public:
   struct Term {
-    bool total_power{false};
     float sign{1.0f};
     MeteringCTClampConfig *ct_clamp{nullptr};
+    MeteringGroupConfig *group{nullptr};
   };
 
-  void add_total_power_term(float sign) { this->terms_.push_back(Term{true, sign, nullptr}); }
   void add_ct_clamp_term(MeteringCTClampConfig *ct_clamp, float sign) {
-    this->terms_.push_back(Term{false, sign, ct_clamp});
+    this->terms_.push_back(Term{sign, ct_clamp, nullptr});
+  }
+  void add_group_term(MeteringGroupConfig *group, float sign) {
+    this->terms_.push_back(Term{sign, nullptr, group});
   }
   const std::vector<Term> &get_terms() const { return this->terms_; }
-  void set_raw_power_sensor(sensor::Sensor *sensor) { this->raw_power_sensor_ = sensor; }
-  sensor::Sensor *get_raw_power_sensor() const { return this->raw_power_sensor_; }
-  void set_power_sensor(sensor::Sensor *sensor) { this->power_sensor_ = sensor; }
-  sensor::Sensor *get_power_sensor() const { return this->power_sensor_; }
+  void add_power_output(uint8_t direction, sensor::Sensor *raw_power_sensor, sensor::Sensor *power_sensor) {
+    this->power_outputs_.emplace_back(direction, raw_power_sensor, power_sensor);
+  }
+  const std::vector<MeteringPowerOutput> &get_power_outputs() const { return this->power_outputs_; }
   void add_power_multiply_filter(float multiplier) { this->power_filters_.add_multiply_filter(multiplier); }
   void add_power_lambda_filter(std::function<float(float)> filter) {
     this->power_filters_.add_lambda_filter(std::move(filter));
@@ -755,8 +946,7 @@ class MeteringGroupConfig {
 
  protected:
   std::vector<Term> terms_{};
-  sensor::Sensor *raw_power_sensor_{nullptr};
-  sensor::Sensor *power_sensor_{nullptr};
+  std::vector<MeteringPowerOutput> power_outputs_{};
   MeteringPowerFilters power_filters_{};
 };
 

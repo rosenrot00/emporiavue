@@ -1,0 +1,28 @@
+esp32:
+  partitions:
+    - name: samd_bak
+      type: data
+      subtype: undefined
+      size: 0x10000
+
+emporiavue:
+  id: samd_reader
+  hardware: vue2
+  mode: spi
+  spi_clk_pin: GPIO22
+  spi_data_pin: GPIO21
+  spi_frame_pin: GPIO13
+  backup_partition: samd_bak
+  connect_under_reset: true
+
+  firmware_version:
+    name: "SAMD Firmware Version"
+  bundled_firmware_version:
+    name: "SAMD Bundled Firmware Version"
+
+  backup_firmware_button:
+    name: "Read SAMD Firmware"
+  install_firmware_button:
+    name: "Flash SAMD Bundled Firmware"
+  restore_firmware_button:
+    name: "Flash SAMD Backup Firmware"
