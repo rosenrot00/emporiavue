@@ -1,7 +1,8 @@
-# Emporia Vue 2 two-phase metering topology.
+# Emporia Vue 2 three-phase metering topology.
 #
-# Include this together with packages/vue2-i2c.yaml. The base package defines
-# hardware, transport, firmware handling, and SWD; this package only describes
+# Include this together with packages/vue2-i2c.yaml or packages/vue2-spi.yaml.
+# The base package defines hardware, transport, firmware handling, and SWD;
+# this package only describes
 # the electrical line mapping and the comparison metering sensors.
 
 emporiavue:
@@ -32,15 +33,23 @@ emporiavue:
       power:
         id: line_2_power
         name: "Line 2 Power"
-  total_power:
-    id: total_power
-    name: "Total Power"
-  grid_import_power:
-    id: grid_import_w
-    name: "Grid Import Power"
-  grid_export_power:
-    id: grid_export_w
-    name: "Grid Export Power"
+    line_3:
+      voltage_input: BLUE
+      main_clamp: C
+      calibration: 0.022
+      voltage:
+        id: line_3_voltage
+        name: "Line 3 Voltage"
+      phase_angle:
+        id: line_3_phase_angle
+        name: "Line 3 Phase Angle"
+      power:
+        id: line_3_power
+        name: "Line 3 Power"
+  groups:
+    grid:
+      name: "Grid"
+      sources: [line_1, line_2, line_3]
   # Override circuits.<id>.line in the main node YAML when a branch CT is
   # installed on a different line. Use line: [1, 2] for a line-to-line load
   # measured by that physical CT port. Add circuits.<id>.power there only for
@@ -50,25 +59,25 @@ emporiavue:
   circuits:
     cir1:
       input: "1"
-      line: 1
-      name: "Circuit 1 Power"
+      line: 2
+      name: "Circuit 1"
     cir2:
       input: "2"
-      line: 2
-      name: "Circuit 2 Power"
+      line: 3
+      name: "Circuit 2"
     cir3:
       input: "3"
       line: 1
-      name: "Circuit 3 Power"
+      name: "Circuit 3"
     cir4:
       input: "4"
       line: 2
-      name: "Circuit 4 Power"
+      name: "Circuit 4"
     cir5:
       input: "5"
-      line: 1
-      name: "Circuit 5 Power"
+      line: 3
+      name: "Circuit 5"
     cir6:
       input: "6"
-      line: 2
-      name: "Circuit 6 Power"
+      line: 3
+      name: "Circuit 6"

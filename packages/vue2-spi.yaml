@@ -1,9 +1,3 @@
-# Emporia Vue 3 I2C preset.
-#
-# Include this with exactly one Vue 3 topology package. Vue 3 support is still
-# untested in this repository; this package uses the community-reported Vue 3
-# I2C pins and keeps SAMD auto-update disabled.
-
 esp32:
   partitions:
     - name: samd_bak
@@ -11,21 +5,15 @@ esp32:
       subtype: undefined
       size: 0x10000
 
-i2c:
-  sda:
-    number: 5
-    ignore_strapping_warning: true
-  scl: 18
-  scan: false
-  frequency: 400kHz
-  timeout: 1ms
-
 emporiavue:
   id: samd_reader
-  hardware: vue3
-  mode: i2c
-  auto_update_samd: false
+  hardware: vue2
+  mode: spi
+  spi_clk_pin: GPIO22
+  spi_data_pin: GPIO21
+  spi_frame_pin: GPIO13
   backup_partition: samd_bak
+  connect_under_reset: true
 
   firmware_version:
     name: "SAMD Firmware Version"

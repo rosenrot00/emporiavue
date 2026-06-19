@@ -1,0 +1,160 @@
+# Compact Emporia Vue 2 3phase setup with neutral.
+#
+# This is a copy/paste starting point. Keep one topology package enabled, then
+# adjust circuit names, line assignments, filters, groups, and energy sensors
+# for your panel.
+
+esphome:
+  name: emporiavue2
+  friendly_name: vue2
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/rosenrot00/emporiavue.git
+      ref: main
+    components:
+      - emporiavue
+    refresh: always
+
+packages:
+  emporiavue:
+    url: https://github.com/rosenrot00/emporiavue.git
+    ref: main
+    files:
+      - packages/vue2-i2c.yaml
+      - packages/vue2-3phase.yaml
+      # Optional Vue 2 non-I2C GPIO helpers:
+      # - packages/vue2-gpios.yaml
+      # Vue 3 is currently untested. To try it, swap the two files above for:
+      # - packages/vue3-i2c.yaml
+      # - packages/vue3-3phase.yaml
+    refresh: always
+
+esp32:
+  board: esp32dev
+  cpu_frequency: 160MHz
+  framework:
+    type: esp-idf
+    version: recommended
+
+api:
+  encryption:
+    key: !secret ha_enc_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+    allow_partition_access: true
+    on_begin:
+      then:
+        - logger.log: "OTA start: saving daily energy counters"
+        - lambda: |-
+            global_preferences->sync();
+    on_end:
+      then:
+        - logger.log: "OTA end: saving daily energy counters before reboot"
+        - lambda: |-
+            global_preferences->sync();
+        - delay: 1s
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  fast_connect: true
+
+logger:
+  logs:
+    sensor: INFO
+
+preferences:
+  flash_write_interval: never
+
+time:
+  - platform: sntp
+    id: my_time
+    timezone: "Europe/Vienna"
+
+.defaultfilters:
+  - &throttle_avg
+    throttle_average: 5s
+  - &throttle_time
+    throttle: 60s
+  - &pos
+    lambda: 'return max(x, 0.0f);'
+
+emporiavue:
+  power_apparent_min: 5VA
+
+  filter_defaults:
+    voltage: [*throttle_avg, *pos]
+    frequency: [*throttle_avg, *pos]
+    phase_angle: [*throttle_avg, *pos]
+    power: *throttle_avg
+    current: *throttle_avg
+    power_apparent: *throttle_avg
+    power_factor: *throttle_avg
+    energy:
+      - multiply: 0.001
+      - *throttle_time
+
+  phase_detection:
+    power_min: 30W
+    confidence_ratio: 1.5
+    update_interval: 10s
+
+  virtual_lines:
+    line_2_3:
+      lines: [2, 3]
+      voltage:
+
+  circuits:
+    cir1:
+      name: "Livingroom"
+      line: 2
+      power:
+        filters: [*pos, *throttle_avg]
+      energy:
+    cir2:
+      line: 3
+      power:
+      current:
+      power_apparent:
+      power_factor:
+    cir3:
+      line: 1
+      phase_detection: true
+      power:
+    cir4:
+      line: 2
+      power:
+    cir5:
+      name: "Fridge, Steamer"
+      line: 3
+      power:
+      energy:
+    cir6:
+      name: "HVAC, Dishwasher"
+      line: 3
+      power:
+      energy:
+
+  groups:
+    grid:
+      name: "Grid"
+      sources: [line_1, line_2, line_3]
+      power:
+        both:
+          name: "Total Power"
+          energy:
+            name: "Today’s Total Energy"
+        positive:
+          energy:
+        negative:
+          energy:
+
+    total_heat_pump_power:
+      name: "Heat Pump"
+      sources: [cir2, cir3, cir4]
+      power:
+      energy:

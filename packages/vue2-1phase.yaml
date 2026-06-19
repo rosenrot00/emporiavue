@@ -1,8 +1,9 @@
-# Emporia Vue 3 single-phase metering topology.
+# Emporia Vue 2 single-phase metering topology.
 #
-# Include this together with packages/vue3-i2c.yaml. Vue 3 support is currently
-# untested in this repository; verify line and circuit mapping against real
-# hardware before relying on the readings.
+# Include this together with packages/vue2-i2c.yaml or packages/vue2-spi.yaml.
+# The base package defines hardware, transport, firmware handling, and SWD;
+# this package only describes
+# the electrical line mapping and the comparison metering sensors.
 
 emporiavue:
   mains:
@@ -19,15 +20,10 @@ emporiavue:
       power:
         id: line_1_power
         name: "Line 1 Power"
-  total_power:
-    id: total_power
-    name: "Total Power"
-  grid_import_power:
-    id: grid_import_w
-    name: "Grid Import Power"
-  grid_export_power:
-    id: grid_export_w
-    name: "Grid Export Power"
+  groups:
+    grid:
+      name: "Grid"
+      sources: [line_1]
   # Override circuits.<id>.line in the main node YAML if needed. Add
   # circuits.<id>.power there only for circuits that should be visible in Home
   # Assistant. The component automatically keeps every configured circuit
@@ -36,24 +32,24 @@ emporiavue:
     cir1:
       input: "1"
       line: 1
-      name: "Circuit 1 Power"
+      name: "Circuit 1"
     cir2:
       input: "2"
       line: 1
-      name: "Circuit 2 Power"
+      name: "Circuit 2"
     cir3:
       input: "3"
       line: 1
-      name: "Circuit 3 Power"
+      name: "Circuit 3"
     cir4:
       input: "4"
       line: 1
-      name: "Circuit 4 Power"
+      name: "Circuit 4"
     cir5:
       input: "5"
       line: 1
-      name: "Circuit 5 Power"
+      name: "Circuit 5"
     cir6:
       input: "6"
       line: 1
-      name: "Circuit 6 Power"
+      name: "Circuit 6"
