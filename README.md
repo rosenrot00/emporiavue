@@ -17,6 +17,7 @@ import/export, and more accurate handling of real-world wiring such as line-to-l
 
 | Version | Changes |
 |---|---|
+| 2026.06.3 | Fixed Vue 3 main clamp labeling so `main_clamp: A/B/C` follows the physical Vue 3 labels while the component maps the reversed internal ports automatically. |
 | 2026.06.2 | Improved stock I2C compatibility for Vue 2 and Vue 3 by matching the original firmware's frame marker and checksum handling more closely. |
 | 2026.06.1 | Added SPI functionality for Vue 2 and [display filter defaults](#display-filter-defaults). You can now use `packages/vue2-spi.yaml` instead of the I2C package when testing the new SPI firmware. |
 | 2026.05.1 | Initial public release with [Vue base and topology packages](#vue-base-and-topology-packages), [runtime voltage calibration](#runtime-calibration), [internal metering filters](#internal-metering-filters), [stable circuit IDs and energy](#stable-circuit-ids-current-and-energy), [apparent power and power factor](#apparent-power-and-power-factor), [groups](#groups), [line-to-line circuit power](#line-to-line-circuits), [power split](#power-split), [virtual lines](#virtual-lines), [phase detection](#phase-detection), [grid import/export](#grid-importexport), [diagnostics](#diagnostics), [Vue GPIO helpers](#vue-gpio-helpers), and [SAMD09 firmware management](#samd09-firmware-management). |

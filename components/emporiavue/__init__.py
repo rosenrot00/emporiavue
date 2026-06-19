@@ -224,6 +224,23 @@ CT_INPUTS = {
 
 BRANCH_CT_INPUTS = {key: value for key, value in CT_INPUTS.items() if key not in {"A", "B", "C"}}
 
+MAIN_CT_INPUTS_BY_HARDWARE = {
+    HARDWARE_VUE2: {
+        "A": 0,
+        "B": 1,
+        "C": 2,
+    },
+    HARDWARE_VUE3: {
+        "A": 2,
+        "B": 1,
+        "C": 0,
+    },
+}
+
+
+def _main_ct_input_for_hardware(hardware, main_clamp):
+    return MAIN_CT_INPUTS_BY_HARDWARE.get(hardware, CT_INPUTS)[main_clamp]
+
 MAIN_PHASE_DEFAULTS = {
     "line_1": {
         "label": "Line 1",
@@ -2199,7 +2216,11 @@ async def to_code(config):
 
         ct_clamp_var = cg.new_Pvariable(main_config[CONF_CT_ID], MeteringCTClampConfig())
         cg.add(ct_clamp_var.set_phase(phase_var))
-        cg.add(ct_clamp_var.set_input_port(CT_INPUTS[main_config[CONF_MAIN_CLAMP]]))
+        cg.add(
+            ct_clamp_var.set_input_port(
+                _main_ct_input_for_hardware(config[CONF_HARDWARE], main_config[CONF_MAIN_CLAMP])
+            )
+        )
         await _add_internal_power_filters(ct_clamp_var, main_config.get(CONF_FILTERS))
         await _add_power_outputs(ct_clamp_var, main_config.get(CONF_POWER))
         if current_config := main_config.get(CONF_CURRENT):
