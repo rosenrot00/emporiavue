@@ -40,6 +40,8 @@ static constexpr uint8_t SPI_ADC_OFFSET_SMOOTHING_SHIFT = 4;
 static constexpr int32_t SPI_ADC_OFFSET_MAX_STEP = 96;
 static constexpr uint16_t SPI_MIN_METERING_SAMPLES = 512;
 static constexpr uint16_t SPI_MAX_METERING_SAMPLES = SPI_MAIN_SAMPLE_COUNT;
+static constexpr float SPI_TWO_PI = 6.28318530717958647692f;
+static constexpr float SPI_MIN_VOLTAGE_FUNDAMENTAL_AMPLITUDE = 16.0f;
 static_assert(SPI_RAW_SCAN_SIZE * SPI_RAW_SCAN_COUNT == SPI_RAW_FRAME_PAYLOAD_SIZE,
               "SPI raw scan payload must fill the 1024-byte frame payload");
 static constexpr uint8_t SPI_MUX_TABLE[16] = {12, 4, 13, 5, 14, 6, 11, 3, 15, 7, 18, 10, 16, 8, 17, 9};
@@ -571,7 +573,10 @@ void EmporiaVueComponent::decode_spi_raw_frame_(const uint8_t *frame, uint32_t s
     auto &acc = this->spi_metering_accumulator_;
     if (this->spi_metering_window_synced_ && acc.line1_period_count != 0) {
       const float period_samples = acc.cycle_count[0] == 0 ? 0.0f : acc.cycle_sum[0] / acc.cycle_count[0];
-      if (acc.line1_period_count >= this->spi_metering_target_periods_(period_samples)) {
+      if (acc.target_periods == 0) {
+        acc.target_periods = this->spi_metering_target_periods_(period_samples);
+      }
+      if (acc.line1_period_count >= acc.target_periods) {
         this->finish_spi_metering_window_(sequence, flags);
       }
     }
@@ -639,6 +644,9 @@ void EmporiaVueComponent::process_spi_raw_scan_(const SpiRawScan &scan) {
                 acc.cycle_sum[0] += period;
                 acc.cycle_count[0]++;
                 acc.line1_period_count++;
+                if (acc.line1_period_sample_count < 64) {
+                  acc.line1_periods[acc.line1_period_sample_count++] = period;
+                }
               } else {
                 sync_window_after_scan = true;
               }
@@ -686,12 +694,34 @@ void EmporiaVueComponent::process_spi_raw_scan_(const SpiRawScan &scan) {
 
   if (sync_window_after_scan) {
     this->spi_metering_accumulator_ = SpiMeteringAccumulator{};
+    this->spi_metering_accumulator_.window_start_sample = scan.sample_counter;
     this->spi_metering_window_synced_ = true;
     return;
   }
 
   if (!this->spi_metering_window_synced_) {
     return;
+  }
+
+  if (acc.sample_count == 0) {
+    acc.window_start_sample = scan.sample_counter;
+    if (this->spi_line1_period_valid_ && this->spi_line1_period_samples_ > 0.0f) {
+      acc.dft_period_samples = this->spi_line1_period_samples_;
+    }
+  }
+
+  bool fundamental_reference_valid = false;
+  float fundamental_cos = 0.0f;
+  float fundamental_sin = 0.0f;
+  if (acc.dft_period_samples <= 0.0f && this->spi_line1_period_valid_ && this->spi_line1_period_samples_ > 0.0f) {
+    acc.dft_period_samples = this->spi_line1_period_samples_;
+  }
+  if (acc.dft_period_samples > 0.0f) {
+    const float sample_offset = static_cast<float>(scan.sample_counter - acc.window_start_sample);
+    const float theta = SPI_TWO_PI * std::fmod(sample_offset, acc.dft_period_samples) / acc.dft_period_samples;
+    fundamental_cos = std::cos(theta);
+    fundamental_sin = std::sin(theta);
+    fundamental_reference_valid = true;
   }
 
   for (uint8_t phase = 0; phase < 3; phase++) {
@@ -701,6 +731,10 @@ void EmporiaVueComponent::process_spi_raw_scan_(const SpiRawScan &scan) {
 
     acc.voltage_sum[phase] += scan.value[voltage_index];
     acc.voltage_square_sum[phase] += static_cast<int64_t>(voltage_difference) * voltage_difference;
+    if (fundamental_reference_valid) {
+      acc.voltage_fund_i[phase] += static_cast<double>(voltage_difference) * fundamental_cos;
+      acc.voltage_fund_q[phase] += static_cast<double>(voltage_difference) * fundamental_sin;
+    }
 
     acc.current_sum[phase] += main_current_scan.value[current_index_for_phase];
     const int32_t current_difference =
@@ -792,13 +826,6 @@ void EmporiaVueComponent::finish_spi_metering_window_(uint32_t sequence, uint32_
     invalid_reason = "missing sample rate";
   } else if (phase_required[0] && acc.cycle_count[0] < min_cycle_count) {
     invalid_reason = "missing line 1 cycles";
-  } else {
-    for (uint8_t phase = 1; phase < 3; phase++) {
-      if (phase_required[phase] && acc.cycle_count[phase] < min_cycle_count) {
-        invalid_reason = phase == 1 ? "missing line 2 cycles" : "missing line 3 cycles";
-        break;
-      }
-    }
   }
 
   if (invalid_reason == nullptr) {
@@ -901,17 +928,69 @@ void EmporiaVueComponent::finish_spi_metering_window_(uint32_t sequence, uint32_
   frame.valid = true;
   frame.quality_flags = static_cast<uint8_t>(flags & 0xFFU);
 
-  float line1_period_samples = 0.0f;
-  if (acc.cycle_count[0] != 0) {
+  auto robust_line1_period = [&acc]() -> float {
+    if (acc.line1_period_sample_count == 0) {
+      return 0.0f;
+    }
+    float periods[64]{};
+    for (uint8_t index = 0; index < acc.line1_period_sample_count; index++) {
+      periods[index] = acc.line1_periods[index];
+    }
+    std::sort(periods, periods + acc.line1_period_sample_count);
+    uint8_t first = 0;
+    uint8_t last = acc.line1_period_sample_count;
+    if (acc.line1_period_sample_count >= 5) {
+      first = 1;
+      last = static_cast<uint8_t>(acc.line1_period_sample_count - 1);
+    }
+    float sum = 0.0f;
+    for (uint8_t index = first; index < last; index++) {
+      sum += periods[index];
+    }
+    return sum / static_cast<float>(last - first);
+  };
+
+  float line1_period_samples = robust_line1_period();
+  if (line1_period_samples <= 0.0f && acc.cycle_count[0] != 0) {
     line1_period_samples = acc.cycle_sum[0] / static_cast<float>(acc.cycle_count[0]);
-    if (line1_period_samples > 0.0f) {
-      frame.phases[0].phase_angle_degrees = 0.0f;
-      if (this->spi_sample_rate_hz_ > 1.0f) {
-        const float frequency = this->spi_sample_rate_hz_ / line1_period_samples;
-        for (auto &phase : frame.phases) {
-          phase.frequency_hz = frequency;
-        }
+  }
+  if (line1_period_samples > 0.0f) {
+    frame.phases[0].phase_angle_degrees = 0.0f;
+    frame.phases[0].cycle_count_raw = normalize_cycle_count(line1_period_samples);
+    if (this->spi_sample_rate_hz_ > 1.0f) {
+      const float frequency = this->spi_sample_rate_hz_ / line1_period_samples;
+      for (auto &phase : frame.phases) {
+        phase.frequency_hz = frequency;
       }
+    }
+  }
+
+  float voltage_fund_angle[3]{};
+  bool voltage_fund_angle_valid[3]{};
+  for (uint8_t phase = 0; phase < 3; phase++) {
+    const double i = acc.voltage_fund_i[phase];
+    const double q = acc.voltage_fund_q[phase];
+    const double magnitude = std::sqrt(i * i + q * q);
+    const double amplitude = acc.sample_count == 0 ? 0.0 : (2.0 * magnitude / static_cast<double>(acc.sample_count));
+    if (amplitude >= SPI_MIN_VOLTAGE_FUNDAMENTAL_AMPLITUDE) {
+      voltage_fund_angle[phase] = static_cast<float>(std::atan2(q, i));
+      voltage_fund_angle_valid[phase] = true;
+    }
+  }
+  if (voltage_fund_angle_valid[0] && line1_period_samples > 0.0f) {
+    for (uint8_t phase = 1; phase < 3; phase++) {
+      if (!voltage_fund_angle_valid[phase]) {
+        continue;
+      }
+      float angle = (voltage_fund_angle[phase] - voltage_fund_angle[0]) * 360.0f / SPI_TWO_PI;
+      while (angle < 0.0f) {
+        angle += 360.0f;
+      }
+      while (angle >= 360.0f) {
+        angle -= 360.0f;
+      }
+      frame.phases[phase].phase_angle_degrees = angle;
+      frame.phases[phase].cycle_count_raw = normalize_cycle_count(angle * line1_period_samples / 360.0f);
     }
   }
 
@@ -925,6 +1004,9 @@ void EmporiaVueComponent::finish_spi_metering_window_(uint32_t sequence, uint32_
     for (uint8_t voltage_phase = 0; voltage_phase < 3; voltage_phase++) {
       frame.clamps[phase].power_raw_by_phase[voltage_phase] =
           scale_spi_power_(acc.raw_power_sum[phase][voltage_phase], SPI_POWER_SCALE_MULTIPLIER, acc.sample_count);
+    }
+    if (phase == 0 || !std::isnan(frame.phases[phase].phase_angle_degrees)) {
+      continue;
     }
     if (acc.cycle_count[phase] != 0) {
       const float cycle_samples = acc.cycle_sum[phase] / static_cast<float>(acc.cycle_count[phase]);

@@ -397,9 +397,16 @@ class EmporiaVueComponent : public Component
     int32_t voltage_sum[3]{};
     int64_t current_square_sum[19]{};
     int64_t raw_power_sum[19][3]{};
+    double voltage_fund_i[3]{};
+    double voltage_fund_q[3]{};
     float cycle_sum[3]{};
+    float line1_periods[64]{};
+    float dft_period_samples{0.0f};
     uint16_t cycle_count[3]{};
     uint16_t line1_period_count{0};
+    uint16_t target_periods{0};
+    uint8_t line1_period_sample_count{0};
+    uint32_t window_start_sample{0};
     uint32_t sample_count{0};
     uint32_t mux_sample_count[16]{};
   };
