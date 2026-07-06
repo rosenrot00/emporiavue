@@ -593,6 +593,7 @@ def _apply_power_output_defaults(parent_config, raw_id, base_name, path, always_
 
     has_parent_energy_config = CONF_ENERGY in parent_config
     parent_energy_config = parent_config.pop(CONF_ENERGY, None)
+    parent_energy_output = None
     if has_parent_energy_config and parent_energy_config is not False:
         if not power_outputs:
             power_outputs.append({})
@@ -605,6 +606,7 @@ def _apply_power_output_defaults(parent_config, raw_id, base_name, path, always_
             both_output = {CONF_DIRECTION: DIRECTION_BOTH}
             power_outputs.insert(0, both_output)
         both_output[CONF_ENERGY] = parent_energy_config
+        parent_energy_output = both_output
 
     if not power_outputs and always_create_both:
         power_outputs.append({CONF_DIRECTION: DIRECTION_BOTH})
@@ -639,10 +641,15 @@ def _apply_power_output_defaults(parent_config, raw_id, base_name, path, always_
         if CONF_NAME not in output_config:
             output_config[CONF_NAME] = _direction_power_name(base_name, direction)
         if CONF_ENERGY in output_config:
+            energy_state_class = (
+                STATE_CLASS_TOTAL_INCREASING
+                if output_config is parent_energy_output
+                else _direction_energy_state_class(direction)
+            )
             output_config = _apply_energy_sensor_defaults(
                 output_config,
                 _direction_energy_name(base_name, direction),
-                _direction_energy_state_class(direction),
+                energy_state_class,
             )
         normalized_outputs.append(output_config)
 

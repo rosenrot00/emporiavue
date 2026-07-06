@@ -17,6 +17,7 @@ output:
     id: vue3_gpio4_ethernet_status_led
     pin:
       number: GPIO4
+      ignore_strapping_warning: true
 
 interval:
   - interval: 250ms

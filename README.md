@@ -17,6 +17,7 @@ import/export, and more accurate handling of real-world wiring such as line-to-l
 
 | Version | Changes |
 |---|---|
+| 2026.07.1 | Defaulted simple Today energy sensors to `total_increasing`; explicit signed/net `power.both.energy` remains `total`. |
 | 2026.06.3 | Fixed Vue 3 main clamp labeling so `main_clamp: A/B/C` follows the physical Vue 3 labels while the component maps the reversed internal ports automatically. |
 | 2026.06.2 | Improved stock I2C compatibility for Vue 2 and Vue 3 by matching the original firmware's frame marker and checksum handling more closely. |
 | 2026.06.1 | Added SPI functionality for Vue 2 and [display filter defaults](#display-filter-defaults). You can now use `packages/vue2-spi.yaml` instead of the I2C package when testing the new SPI firmware. |
@@ -410,6 +411,8 @@ emporiavue:
 Daily energy can be declared next to the source power sensor. The energy calculation uses the internal metering value,
 so display-only `power` filters do not get applied twice. Add energy filters directly or define `filter_defaults.energy`
 when you want ESPHome's Wh integration output shown as kWh.
+Simple circuit and group `energy:` outputs default to `state_class: total_increasing`, which matches Home Assistant's
+statistics model for daily counters that only increase and reset at midnight.
 
 ```yaml
 emporiavue:
@@ -610,8 +613,9 @@ Phase detection is not available for line-to-line circuits because those intenti
 
 Topology packages define grid as a normal internal group. Add `power` outputs in your node YAML when you want visible
 grid sensors. Positive becomes import; negative becomes export as a positive value.
-For nested energy sensors, `both` defaults to `state_class: total` because signed net energy can move up or down.
-`positive` and `negative` default to `total_increasing`. If you set `state_class` yourself, your YAML value wins.
+For nested energy sensors, explicit `both` defaults to `state_class: total` because signed net energy can move up or
+down. `positive` and `negative` default to `total_increasing`. If you set `state_class` yourself, your YAML value wins.
+For the Home Assistant Energy Dashboard, use import/export energy rather than signed net grid energy.
 
 ```yaml
 emporiavue:
