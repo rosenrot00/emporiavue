@@ -17,6 +17,7 @@ import/export, and more accurate handling of real-world wiring such as line-to-l
 
 | Version | Changes |
 |---|---|
+| 2026.07.3 | Improved SPI frequency and phase angle stability by evaluating complete interpolated line cycles with a shared period reference. |
 | 2026.07.2 | Improved Vue 2 SPI frequency and phase angle calculation by using a more stable line-period estimate and fundamental-voltage phase measurement over the SPI metering window. |
 | 2026.07.1 | Defaulted simple Today energy sensors to `total_increasing`; explicit signed/net `power.both.energy` remains `total`. |
 | 2026.06.3 | Fixed Vue 3 main clamp labeling so `main_clamp: A/B/C` follows the physical Vue 3 labels while the component maps the reversed internal ports automatically. |

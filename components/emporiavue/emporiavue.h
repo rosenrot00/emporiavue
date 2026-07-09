@@ -387,8 +387,12 @@ class EmporiaVueComponent : public Component
 
   struct SpiRawScan {
     int16_t value[8]{};
-    uint32_t sample_counter{0};
+    uint64_t sample_counter{0};
     uint8_t mux_index{0};
+  };
+
+  struct SpiVoltageSample {
+    int16_t value[3]{};
   };
 
   struct SpiMeteringAccumulator {
@@ -399,14 +403,14 @@ class EmporiaVueComponent : public Component
     int64_t raw_power_sum[19][3]{};
     double voltage_fund_i[3]{};
     double voltage_fund_q[3]{};
-    float cycle_sum[3]{};
+    double voltage_fund_weight{0.0};
+    double cycle_sum[3]{};
     float line1_periods[64]{};
-    float dft_period_samples{0.0f};
     uint16_t cycle_count[3]{};
+    uint16_t voltage_fund_cycle_count{0};
     uint16_t line1_period_count{0};
     uint16_t target_periods{0};
     uint8_t line1_period_sample_count{0};
-    uint32_t window_start_sample{0};
     uint32_t sample_count{0};
     uint32_t mux_sample_count[16]{};
   };
@@ -573,6 +577,8 @@ class EmporiaVueComponent : public Component
   void reset_spi_metering_state_();
   void decode_spi_raw_frame_(const uint8_t *frame, uint32_t sequence, uint32_t flags, uint32_t sample_counter);
   void process_spi_raw_scan_(const SpiRawScan &scan);
+  void push_spi_voltage_sample_(const SpiRawScan &scan);
+  bool accumulate_spi_voltage_cycle_(double start_cross_sample, double end_cross_sample);
   void finish_spi_metering_window_(uint32_t sequence, uint32_t flags);
   uint32_t spi_metering_target_samples_() const;
   uint16_t spi_metering_target_periods_(float period_samples) const;
@@ -682,22 +688,30 @@ class EmporiaVueComponent : public Component
   SpiRawScan spi_raw_scan_ring_[6]{};
   uint8_t spi_raw_scan_ring_index_{0};
   uint8_t spi_raw_scan_ring_count_{0};
+  static constexpr uint16_t SPI_VOLTAGE_SAMPLE_RING_SIZE = 768;
+  SpiVoltageSample spi_voltage_sample_ring_[SPI_VOLTAGE_SAMPLE_RING_SIZE]{};
+  uint16_t spi_voltage_sample_ring_index_{0};
+  uint16_t spi_voltage_sample_ring_count_{0};
+  uint64_t spi_voltage_sample_ring_last_counter_{0};
   bool spi_expected_sample_counter_valid_{false};
   uint32_t spi_expected_sample_counter_{0};
+  bool spi_sample_counter_unwrap_valid_{false};
+  uint32_t spi_last_raw_sample_counter_{0};
+  uint64_t spi_sample_counter_epoch_{0};
   uint8_t spi_main_current_delay_{2};
   uint8_t spi_mux_current_delay_{4};
   int16_t spi_adc_offsets_[22]{};
   int32_t spi_adc_offset_estimate_q8_[22]{};
   uint8_t spi_offset_warmup_windows_{0};
   bool spi_last_cross_sample_valid_[3]{};
-  float spi_last_cross_sample_[3]{};
+  double spi_last_cross_sample_[3]{};
   bool spi_line1_period_valid_{false};
   float spi_line1_period_samples_{0.0f};
   bool spi_last_voltage_sample_valid_[3]{};
   int32_t spi_last_voltage_difference_[3]{};
-  uint32_t spi_last_voltage_sample_counter_[3]{};
+  uint64_t spi_last_voltage_sample_counter_[3]{};
   bool spi_pending_cross_sample_valid_[3]{};
-  float spi_pending_cross_sample_[3]{};
+  double spi_pending_cross_sample_[3]{};
   uint8_t spi_cycle_state_[3]{};
   volatile uint16_t spi_rx_inflight_{0};
   uint32_t spi_rx_frames_{0};
