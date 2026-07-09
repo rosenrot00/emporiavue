@@ -24,6 +24,7 @@ static constexpr uint8_t SPI_RAW_SCAN_SIZE = 18;
 static constexpr uint8_t SPI_RAW_SCAN_COUNT = 56;
 static constexpr float SPI_SAMPLE_TIMEBASE_HZ = 16000000.0f;
 static constexpr uint16_t SPI_RX_RECOVERY_INVALID_STREAK = 64;
+static constexpr uint32_t SPI_RX_VALID_FRAME_TIMEOUT_MS = 2000;
 static constexpr uint8_t SPI_RX_SOFT_RECOVERIES_BEFORE_SAMD_RESET = 3;
 static constexpr uint32_t SPI_RX_SAMD_RESET_MIN_INTERVAL_MS = 2000;
 static constexpr uint16_t SPI_RX_SAMD_RESET_BOOT_DELAY_MS = 20;
@@ -42,6 +43,7 @@ static constexpr uint16_t SPI_MIN_METERING_SAMPLES = 512;
 static constexpr uint16_t SPI_MAX_METERING_SAMPLES = SPI_MAIN_SAMPLE_COUNT;
 static constexpr double SPI_TWO_PI = 6.28318530717958647692;
 static constexpr float SPI_MIN_VOLTAGE_FUNDAMENTAL_AMPLITUDE = 16.0f;
+static constexpr uint16_t SPI_FRAME_FLAG_DMA_ERROR = 0x0002;
 static_assert(SPI_RAW_SCAN_SIZE * SPI_RAW_SCAN_COUNT == SPI_RAW_FRAME_PAYLOAD_SIZE,
               "SPI raw scan payload must fill the 1024-byte frame payload");
 static constexpr uint8_t SPI_MUX_TABLE[16] = {12, 4, 13, 5, 14, 6, 11, 3, 15, 7, 18, 10, 16, 8, 17, 9};
@@ -58,7 +60,8 @@ void EmporiaVueComponent::publish_spi_diagnostics_() {
         static_cast<float>(this->spi_rx_sync_errors_ + this->spi_rx_crc_errors_));
   }
   if (this->diag_transfer_errors_sensor_ != nullptr) {
-    this->diag_transfer_errors_sensor_->publish_state(static_cast<float>(this->spi_rx_queue_errors_));
+    this->diag_transfer_errors_sensor_->publish_state(
+        static_cast<float>(this->spi_rx_queue_errors_ + this->spi_rx_dma_errors_));
   }
   if (this->diag_frame_overruns_sensor_ != nullptr) {
     this->diag_frame_overruns_sensor_->publish_state(static_cast<float>(this->spi_rx_frame_gaps_));
@@ -94,10 +97,15 @@ void EmporiaVueComponent::setup_spi_receiver_(bool reset_statistics) {
     }
     this->reset_spi_metering_state_();
     this->spi_rx_task_stop_ = false;
+    this->spi_rx_force_stop_ = false;
     this->spi_rx_inflight_ = 0;
+    this->spi_rx_recover_requested_ = false;
+    this->spi_rx_stall_recovery_ = false;
+    this->spi_rx_last_valid_frame_ms_ = millis();
     for (uint8_t index = 0; index < SPI_RX_QUEUE_SIZE; index++) {
       if (!this->queue_spi_receive_(index)) {
         this->spi_rx_task_stop_ = true;
+        this->stop_spi_receiver_(true);
         return;
       }
     }
@@ -107,6 +115,7 @@ void EmporiaVueComponent::setup_spi_receiver_(bool reset_statistics) {
     if (task_result != pdPASS) {
       ESP_LOGE(TAG, "SAMD09 SPI receiver task restart failed");
       this->spi_rx_task_stop_ = true;
+      this->stop_spi_receiver_(true);
       return;
     }
     ESP_LOGI(TAG, "SAMD09 SPI receiver resumed");
@@ -134,7 +143,15 @@ void EmporiaVueComponent::setup_spi_receiver_(bool reset_statistics) {
   }
 
   auto cleanup_spi_init = [this]() {
-    spi_slave_free(this->spi_host_);
+    const esp_err_t disable_err = spi_slave_disable(this->spi_host_);
+    if (disable_err != ESP_OK && disable_err != ESP_ERR_INVALID_STATE) {
+      ESP_LOGE(TAG, "SAMD09 SPI receiver disable during cleanup failed: %d", static_cast<int>(disable_err));
+    }
+    const esp_err_t free_err = spi_slave_free(this->spi_host_);
+    if (free_err != ESP_OK) {
+      ESP_LOGE(TAG, "SAMD09 SPI receiver cleanup failed: %d", static_cast<int>(free_err));
+      return;
+    }
     if (this->spi_metering_queue_ != nullptr) {
       vQueueDelete(this->spi_metering_queue_);
       this->spi_metering_queue_ = nullptr;
@@ -146,6 +163,7 @@ void EmporiaVueComponent::setup_spi_receiver_(bool reset_statistics) {
       }
     }
     std::memset(this->spi_transactions_, 0, sizeof(this->spi_transactions_));
+    this->spi_rx_inflight_ = 0;
   };
 
   this->spi_metering_queue_ = xQueueCreate(1, sizeof(MeteringFrame));
@@ -155,6 +173,7 @@ void EmporiaVueComponent::setup_spi_receiver_(bool reset_statistics) {
     return;
   }
   this->reset_spi_metering_state_();
+  this->spi_rx_inflight_ = 0;
 
   for (uint8_t index = 0; index < SPI_RX_QUEUE_SIZE; index++) {
     this->spi_rx_buffers_[index] = static_cast<uint8_t *>(heap_caps_malloc(SPI_RAW_FRAME_SIZE, MALLOC_CAP_DMA));
@@ -169,13 +188,14 @@ void EmporiaVueComponent::setup_spi_receiver_(bool reset_statistics) {
     }
   }
 
-  this->spi_rx_inflight_ = 0;
   this->spi_rx_task_stop_ = false;
+  this->spi_rx_force_stop_ = false;
   if (reset_statistics) {
     this->spi_rx_frames_ = 0;
     this->spi_rx_sync_errors_ = 0;
     this->spi_rx_crc_errors_ = 0;
     this->spi_rx_queue_errors_ = 0;
+    this->spi_rx_dma_errors_ = 0;
     this->spi_rx_frame_gaps_ = 0;
     this->spi_rx_recoveries_ = 0;
     this->spi_rx_last_sequence_ = 0;
@@ -192,15 +212,18 @@ void EmporiaVueComponent::setup_spi_receiver_(bool reset_statistics) {
   this->spi_last_frame_samples_ = 0;
   this->spi_rx_invalid_streak_ = 0;
   this->spi_rx_recover_requested_ = false;
+  this->spi_rx_stall_recovery_ = false;
   this->spi_rx_logged_status_valid_ = reset_statistics;
   this->spi_rx_logged_sync_errors_ = this->spi_rx_sync_errors_;
   this->spi_rx_logged_crc_errors_ = this->spi_rx_crc_errors_;
   this->spi_rx_logged_queue_errors_ = this->spi_rx_queue_errors_;
+  this->spi_rx_logged_dma_errors_ = this->spi_rx_dma_errors_;
   this->spi_rx_logged_frame_gaps_ = this->spi_rx_frame_gaps_;
   this->spi_rx_logged_recoveries_ = this->spi_rx_recoveries_;
   this->spi_rx_logged_flags_ = this->spi_rx_last_flags_;
   this->spi_receiver_started_ = true;
   this->spi_rx_last_log_ms_ = millis();
+  this->spi_rx_last_valid_frame_ms_ = this->spi_rx_last_log_ms_;
   const BaseType_t task_result =
       xTaskCreate(EmporiaVueComponent::spi_rx_task_trampoline_, "samd_spi_rx", 4096, this, 5,
                   &this->spi_rx_task_handle_);
@@ -226,8 +249,26 @@ bool EmporiaVueComponent::stop_spi_receiver_(bool release_driver) {
 
 #ifdef USE_ESP32
   this->spi_rx_task_stop_ = true;
-  for (uint16_t wait = 0; wait < 500 && this->spi_rx_task_handle_ != nullptr; wait++) {
+  for (uint16_t wait = 0; wait < 125 && this->spi_rx_task_handle_ != nullptr; wait++) {
     vTaskDelay(pdMS_TO_TICKS(2));
+  }
+  bool driver_disabled = false;
+  if (this->spi_rx_task_handle_ != nullptr) {
+    if (!release_driver) {
+      ESP_LOGE(TAG, "SAMD09 SPI receiver task cannot be paused while transfers are stalled");
+      return false;
+    }
+    ESP_LOGW(TAG, "SAMD09 SPI receiver stalled while stopping; forcing a clean driver restart");
+    const esp_err_t disable_err = spi_slave_disable(this->spi_host_);
+    if (disable_err != ESP_OK && disable_err != ESP_ERR_INVALID_STATE) {
+      ESP_LOGE(TAG, "SAMD09 SPI receiver disable failed: %d", static_cast<int>(disable_err));
+      return false;
+    }
+    driver_disabled = true;
+    this->spi_rx_force_stop_ = true;
+    for (uint16_t wait = 0; wait < 50 && this->spi_rx_task_handle_ != nullptr; wait++) {
+      vTaskDelay(pdMS_TO_TICKS(2));
+    }
   }
   if (this->spi_rx_task_handle_ != nullptr) {
     ESP_LOGE(TAG, "SAMD09 SPI receiver task did not stop cleanly; keeping SPI driver allocated");
@@ -236,6 +277,13 @@ bool EmporiaVueComponent::stop_spi_receiver_(bool release_driver) {
   if (!release_driver) {
     ESP_LOGD(TAG, "SAMD09 SPI receiver paused; keeping SPI driver allocated");
     return true;
+  }
+  if (!driver_disabled) {
+    const esp_err_t disable_err = spi_slave_disable(this->spi_host_);
+    if (disable_err != ESP_OK && disable_err != ESP_ERR_INVALID_STATE) {
+      ESP_LOGE(TAG, "SAMD09 SPI receiver disable failed: %d", static_cast<int>(disable_err));
+      return false;
+    }
   }
   const esp_err_t free_err = spi_slave_free(this->spi_host_);
   if (free_err != ESP_OK) {
@@ -253,13 +301,17 @@ bool EmporiaVueComponent::stop_spi_receiver_(bool release_driver) {
     }
   }
   std::memset(this->spi_transactions_, 0, sizeof(this->spi_transactions_));
+  this->spi_rx_inflight_ = 0;
 #endif
   this->spi_receiver_started_ = false;
+  this->spi_rx_last_valid_frame_ms_ = 0;
   return true;
 }
 
 void EmporiaVueComponent::restart_spi_receiver_() {
   const uint16_t invalid_streak = this->spi_rx_invalid_streak_;
+  const bool stalled = this->spi_rx_stall_recovery_;
+  const uint32_t stalled_ms = stalled ? millis() - this->spi_rx_last_valid_frame_ms_ : 0;
   this->spi_rx_recoveries_++;
   if (this->spi_rx_recoveries_since_valid_ < UINT8_MAX) {
     this->spi_rx_recoveries_since_valid_++;
@@ -272,13 +324,24 @@ void EmporiaVueComponent::restart_spi_receiver_() {
       this->spi_rx_recoveries_since_valid_ >= SPI_RX_SOFT_RECOVERIES_BEFORE_SAMD_RESET &&
       now - this->spi_rx_last_samd_reset_ms_ >= SPI_RX_SAMD_RESET_MIN_INTERVAL_MS;
 
-  ESP_LOGW(TAG,
-           "SAMD09 SPI receiver recovery: %s after %" PRIu16
-           " invalid frames (recoveries=%" PRIu32 ")",
-           reset_samd ? "resetting SAMD09" : "resyncing ESP32 SPI", invalid_streak, this->spi_rx_recoveries_);
+  if (stalled) {
+    ESP_LOGW(TAG,
+             "SAMD09 SPI receiver recovery: %s after no valid frame for %" PRIu32
+             " ms (recoveries=%" PRIu32 ")",
+             reset_samd ? "resetting SAMD09" : "resyncing ESP32 SPI", stalled_ms, this->spi_rx_recoveries_);
+  } else if (invalid_streak != 0) {
+    ESP_LOGW(TAG,
+             "SAMD09 SPI receiver recovery: %s after %" PRIu16
+             " invalid frames (recoveries=%" PRIu32 ")",
+             reset_samd ? "resetting SAMD09" : "resyncing ESP32 SPI", invalid_streak, this->spi_rx_recoveries_);
+  } else {
+    ESP_LOGW(TAG, "SAMD09 SPI receiver recovery: %s after SPI driver error (recoveries=%" PRIu32 ")",
+             reset_samd ? "resetting SAMD09" : "resyncing ESP32 SPI", this->spi_rx_recoveries_);
+  }
 
   this->spi_rx_invalid_streak_ = 0;
   this->spi_rx_recover_requested_ = false;
+  this->spi_rx_stall_recovery_ = false;
   this->reset_spi_metering_state_();
 #ifdef USE_ESP32
   if (this->spi_metering_queue_ != nullptr) {
@@ -345,9 +408,12 @@ void EmporiaVueComponent::process_spi_transaction_(spi_slave_transaction_t *tran
   uint32_t flags = 0;
   uint32_t sample_counter = 0;
   uint16_t sample_period_ticks = 0;
-  if (transaction->trans_len == SPI_RAW_FRAME_SIZE * 8 &&
+  const bool protocol_valid =
+      transaction->trans_len == SPI_RAW_FRAME_SIZE * 8 &&
       this->validate_spi_frame_(static_cast<const uint8_t *>(transaction->rx_buffer), &sequence, &flags,
-                                &sample_counter, &sample_period_ticks)) {
+                                &sample_counter, &sample_period_ticks);
+  const bool samd_dma_error = protocol_valid && (flags & SPI_FRAME_FLAG_DMA_ERROR) != 0;
+  if (protocol_valid && !samd_dma_error) {
     if (this->spi_rx_frames_ > 0) {
       const uint16_t last_sequence = static_cast<uint16_t>(this->spi_rx_last_sequence_);
       const uint16_t current_sequence = static_cast<uint16_t>(sequence);
@@ -371,14 +437,22 @@ void EmporiaVueComponent::process_spi_transaction_(spi_slave_transaction_t *tran
     this->spi_rx_last_sample_counter_ = sample_counter;
     this->spi_sample_rate_hz_ = SPI_SAMPLE_TIMEBASE_HZ / static_cast<float>(sample_period_ticks);
     this->spi_rx_invalid_streak_ = 0;
+    this->spi_rx_last_valid_frame_ms_ = millis();
     this->decode_spi_raw_frame_(static_cast<const uint8_t *>(transaction->rx_buffer), sequence, flags, sample_counter);
   } else {
-    if (this->spi_rx_frames_ == 0) {
+    if (samd_dma_error) {
+      this->spi_rx_dma_errors_++;
+      this->spi_rx_last_flags_ = flags;
+      this->reset_spi_metering_state_();
+      if (this->spi_rx_invalid_streak_ == 0) {
+        ESP_LOGW(TAG, "Discarding SAMD09 SPI frame seq=%" PRIu32 " after SAMD DMA error", sequence);
+      }
+    } else if (this->spi_rx_frames_ == 0) {
       this->spi_rx_sync_errors_++;
     } else {
       this->spi_rx_crc_errors_++;
     }
-    if (this->spi_rx_frames_ > 0 && this->spi_rx_invalid_streak_ < UINT16_MAX) {
+    if (this->spi_rx_invalid_streak_ < UINT16_MAX) {
       this->spi_rx_invalid_streak_++;
       if (this->spi_rx_invalid_streak_ >= SPI_RX_RECOVERY_INVALID_STREAK) {
         this->spi_rx_recover_requested_ = true;
@@ -386,7 +460,9 @@ void EmporiaVueComponent::process_spi_transaction_(spi_slave_transaction_t *tran
     }
   }
   if (!this->spi_rx_task_stop_) {
-    this->queue_spi_receive_(index);
+    if (!this->queue_spi_receive_(index)) {
+      this->spi_rx_recover_requested_ = true;
+    }
   }
 }
 
@@ -395,13 +471,14 @@ void EmporiaVueComponent::spi_rx_task_trampoline_(void *arg) {
 }
 
 void EmporiaVueComponent::spi_rx_task_() {
-  while (!this->spi_rx_task_stop_ || this->spi_rx_inflight_ > 0) {
+  while (!this->spi_rx_task_stop_ || (!this->spi_rx_force_stop_ && this->spi_rx_inflight_ > 0)) {
     spi_slave_transaction_t *transaction = nullptr;
     const esp_err_t err = spi_slave_get_trans_result(this->spi_host_, &transaction, pdMS_TO_TICKS(20));
     if (err == ESP_OK) {
       this->process_spi_transaction_(transaction);
     } else if (err != ESP_ERR_TIMEOUT && !this->spi_rx_task_stop_) {
       this->spi_rx_queue_errors_++;
+      this->spi_rx_recover_requested_ = true;
       ESP_LOGD(TAG, "SAMD09 SPI get result failed: %d", static_cast<int>(err));
     }
   }
@@ -1139,16 +1216,22 @@ void EmporiaVueComponent::process_spi_receiver_() {
 #ifdef USE_ESP32
   this->publish_queued_spi_metering_();
 
+  const uint32_t now = millis();
+  if (!this->spi_rx_recover_requested_ && this->spi_rx_last_valid_frame_ms_ != 0 &&
+      now - this->spi_rx_last_valid_frame_ms_ >= SPI_RX_VALID_FRAME_TIMEOUT_MS) {
+    this->spi_rx_stall_recovery_ = true;
+    this->spi_rx_recover_requested_ = true;
+  }
   if (this->spi_rx_recover_requested_) {
     this->restart_spi_receiver_();
     return;
   }
 
-  const uint32_t now = millis();
   const bool status_changed =
       !this->spi_rx_logged_status_valid_ || this->spi_rx_sync_errors_ != this->spi_rx_logged_sync_errors_ ||
       this->spi_rx_crc_errors_ != this->spi_rx_logged_crc_errors_ ||
       this->spi_rx_queue_errors_ != this->spi_rx_logged_queue_errors_ ||
+      this->spi_rx_dma_errors_ != this->spi_rx_logged_dma_errors_ ||
       this->spi_rx_frame_gaps_ != this->spi_rx_logged_frame_gaps_ ||
       this->spi_rx_recoveries_ != this->spi_rx_logged_recoveries_ ||
       this->spi_rx_last_flags_ != this->spi_rx_logged_flags_;
@@ -1156,15 +1239,16 @@ void EmporiaVueComponent::process_spi_receiver_() {
     this->spi_rx_last_log_ms_ = now;
     ESP_LOGD(TAG,
              "SAMD09 SPI rx status: sync_errors=%" PRIu32 " crc_errors=%" PRIu32 " queue_errors=%" PRIu32
-             " seq_gaps=%" PRIu32 " recoveries=%" PRIu32 " inflight=%" PRIu16
+             " dma_errors=%" PRIu32 " seq_gaps=%" PRIu32 " recoveries=%" PRIu32 " inflight=%" PRIu16
              " flags=0x%04" PRIx32 " sample_counter=%" PRIu32,
-             this->spi_rx_sync_errors_, this->spi_rx_crc_errors_, this->spi_rx_queue_errors_, this->spi_rx_frame_gaps_,
-             this->spi_rx_recoveries_, this->spi_rx_inflight_, this->spi_rx_last_flags_,
+             this->spi_rx_sync_errors_, this->spi_rx_crc_errors_, this->spi_rx_queue_errors_, this->spi_rx_dma_errors_,
+             this->spi_rx_frame_gaps_, this->spi_rx_recoveries_, this->spi_rx_inflight_, this->spi_rx_last_flags_,
              this->spi_rx_last_sample_counter_);
     this->spi_rx_logged_status_valid_ = true;
     this->spi_rx_logged_sync_errors_ = this->spi_rx_sync_errors_;
     this->spi_rx_logged_crc_errors_ = this->spi_rx_crc_errors_;
     this->spi_rx_logged_queue_errors_ = this->spi_rx_queue_errors_;
+    this->spi_rx_logged_dma_errors_ = this->spi_rx_dma_errors_;
     this->spi_rx_logged_frame_gaps_ = this->spi_rx_frame_gaps_;
     this->spi_rx_logged_recoveries_ = this->spi_rx_recoveries_;
     this->spi_rx_logged_flags_ = this->spi_rx_last_flags_;

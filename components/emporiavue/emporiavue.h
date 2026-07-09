@@ -682,6 +682,7 @@ class EmporiaVueComponent : public Component
   QueueHandle_t spi_metering_queue_{nullptr};
   TaskHandle_t spi_rx_task_handle_{nullptr};
   volatile bool spi_rx_task_stop_{false};
+  volatile bool spi_rx_force_stop_{false};
 #endif
   SpiMeteringAccumulator spi_metering_accumulator_{};
   bool spi_metering_window_synced_{false};
@@ -718,6 +719,7 @@ class EmporiaVueComponent : public Component
   uint32_t spi_rx_sync_errors_{0};
   uint32_t spi_rx_crc_errors_{0};
   uint32_t spi_rx_queue_errors_{0};
+  uint32_t spi_rx_dma_errors_{0};
   uint32_t spi_rx_frame_gaps_{0};
   uint32_t spi_rx_recoveries_{0};
   uint32_t spi_rx_last_sequence_{0};
@@ -731,6 +733,7 @@ class EmporiaVueComponent : public Component
   uint32_t spi_rx_logged_sync_errors_{0};
   uint32_t spi_rx_logged_crc_errors_{0};
   uint32_t spi_rx_logged_queue_errors_{0};
+  uint32_t spi_rx_logged_dma_errors_{0};
   uint32_t spi_rx_logged_frame_gaps_{0};
   uint32_t spi_rx_logged_recoveries_{0};
   uint32_t spi_rx_logged_flags_{0};
@@ -739,6 +742,8 @@ class EmporiaVueComponent : public Component
   uint32_t spi_diag_published_recoveries_{0};
   volatile uint16_t spi_rx_invalid_streak_{0};
   volatile bool spi_rx_recover_requested_{false};
+  volatile uint32_t spi_rx_last_valid_frame_ms_{0};
+  bool spi_rx_stall_recovery_{false};
   bool spi_rx_waiting_for_valid_after_recovery_{false};
   uint8_t spi_rx_recoveries_since_valid_{0};
   uint8_t spi_rx_last_recovery_attempts_{0};

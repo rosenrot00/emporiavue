@@ -10,8 +10,7 @@ import/export, and more accurate handling of real-world wiring such as line-to-l
 > Input and development help are very welcome:
 > - Vue 2 accuracy: I am looking for someone who can run accuracy measurements with the adjusted SAMD09 firmware.
 > - Vue 2 SAMD09 firmware: ideas, review, and testing around firmware improvements are welcome, especially for SPI.
-> - Vue 3: YAML packages are available but untested; if you have a Vue 3 and can validate pins, channel order, and
->   readings, please get in touch.
+> - Vue 3: the I2C packages have been validated on real hardware; feedback from additional installations is welcome.
 
 ## Version History
 
@@ -40,7 +39,7 @@ For Vue 2, the choice is:
 - `packages/vue2-3phase.yaml` for 3phase with neutral
 - `packages/vue2-gpios.yaml` optionally manages non-I2C Vue 2 GPIO helpers
 
-For Vue 3, use the matching untested packages:
+For Vue 3, use the matching packages:
 
 - `packages/vue3-i2c.yaml` as the base package
 - `packages/vue3-1phase.yaml` for one measured line
@@ -48,9 +47,8 @@ For Vue 3, use the matching untested packages:
 - `packages/vue3-3phase.yaml` for 3phase with neutral
 - `packages/vue3-gpios.yaml` optionally manages non-I2C Vue 3 GPIO helpers
 
-> [!WARNING]
-> Vue 3 packages have not been validated on hardware in this repository. They use the community-reported Vue 3 I2C pins
-> `SDA=GPIO5` and `SCL=GPIO18`, but channel order, CT mapping, and reading accuracy still need real-device testing.
+> [!NOTE]
+> The Vue 3 I2C packages, pin assignments, and channel mapping have been validated on real Vue 3 hardware.
 
 ### 3phase With Neutral
 
@@ -97,7 +95,7 @@ packages:
       - packages/vue2-1phase.yaml
 ```
 
-### Vue 3 Untested
+### Vue 3
 
 Vue 3 uses the same package pattern, but swaps the base package and topology package names. The known I2C pin change is
 handled by `packages/vue3-i2c.yaml`. The full example YAML below includes the Vue 3 package names as commented
@@ -147,7 +145,7 @@ packages:
       - packages/vue2-3phase.yaml
       # Optional Vue 2 non-I2C GPIO helpers:
       # - packages/vue2-gpios.yaml
-      # Vue 3 is currently untested. To try it, swap the two files above for:
+      # For Vue 3, swap the two files above for:
       # - packages/vue3-i2c.yaml
       # - packages/vue3-3phase.yaml
       # Optional Vue 3 non-I2C GPIO helpers:
@@ -305,8 +303,8 @@ packages:
       - packages/vue2-3phase.yaml
 ```
 
-Vue 3 uses the same structure with `vue3-...` package names. These packages currently need hardware validation, and the
-full example YAML includes the Vue 3 package names as commented alternatives.
+Vue 3 uses the same structure with `vue3-...` package names. The full example YAML includes the Vue 3 package names as
+commented alternatives.
 
 ### Vue 2 SPI
 
@@ -685,9 +683,6 @@ packages:
       - packages/vue3-gpios.yaml
 ```
 
-Use this only on Vue 3 builds where those GPIOs match the board behavior. Vue 3 support is still hardware-unverified in
-this repository.
-
 ### SAMD09 Firmware Management
 
 SAMD09 firmware management is an advanced recovery and testing tool. Normal metering does not require pressing any
@@ -696,7 +691,7 @@ SAMD flash button.
 > [!WARNING]
 > Flashing the SAMD09 changes the measurement controller firmware inside the Vue 2. Only use the flash buttons if you
 > understand the recovery path and are comfortable working with firmware-level changes.
-> The bundled SAMD firmware image is for Vue 2, not for the untested Vue 3 packages.
+> The bundled SAMD firmware image is for Vue 2 only and must not be flashed to a Vue 3.
 
 The Vue 2 and Vue 3 I2C packages add a 64 KiB `samd_bak` data partition for SAMD firmware backups. When adding
 `samd_bak` to a device that is already flashed, update the ESP32 partition table once. ESPHome documents custom
@@ -729,9 +724,8 @@ Use `packages/vue2-i2c.yaml` for I2C, or `packages/vue2-spi.yaml` for the experi
 
 The Vue 3 package set mirrors the same structure with `packages/vue3-i2c.yaml`,
 `packages/vue3-1phase.yaml`, `packages/vue3-2phase.yaml`, and `packages/vue3-3phase.yaml`. The Vue 3 base
-package sets `hardware: vue3`, `mode: i2c`, and the community-reported I2C pins `SDA=GPIO5` and `SCL=GPIO18`. Vue 3 is
-currently untested here, so treat these files as a validation starting point. The optional `packages/vue3-gpios.yaml`
-package adds non-I2C GPIO helpers for GPIO2 WiFi status and GPIO4 Ethernet status.
+package sets `hardware: vue3`, `mode: i2c`, and the validated Vue 3 I2C pins `SDA=GPIO5` and `SCL=GPIO18`. The optional
+`packages/vue3-gpios.yaml` package adds non-I2C GPIO helpers for GPIO2 WiFi status and GPIO4 Ethernet status.
 
 The optional `packages/vue2-gpios.yaml` package drives the Vue 2 GPIO23 WiFi/status LED. It blinks while connecting or
 reconnecting and stays on once the node has a network connection.
