@@ -47,9 +47,6 @@ For Vue 3, use the matching packages:
 - `packages/vue3-3phase.yaml` for 3phase with neutral
 - `packages/vue3-gpios.yaml` optionally manages non-I2C Vue 3 GPIO helpers
 
-> [!NOTE]
-> The Vue 3 I2C packages, pin assignments, and channel mapping have been validated on real Vue 3 hardware.
-
 ### 3phase With Neutral
 
 This is the normal 3phase setup: the Vue neutral terminal is wired to neutral, and the three voltage inputs map to the
