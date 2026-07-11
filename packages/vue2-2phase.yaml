@@ -50,7 +50,7 @@ emporiavue:
       name: "Circuit 1"
     cir2:
       input: "2"
-      line: 2
+      line: 1
       name: "Circuit 2"
     cir3:
       input: "3"
@@ -58,7 +58,7 @@ emporiavue:
       name: "Circuit 3"
     cir4:
       input: "4"
-      line: 2
+      line: 1
       name: "Circuit 4"
     cir5:
       input: "5"
@@ -66,7 +66,7 @@ emporiavue:
       name: "Circuit 5"
     cir6:
       input: "6"
-      line: 2
+      line: 1
       name: "Circuit 6"
     cir7:
       input: "7"
@@ -74,7 +74,7 @@ emporiavue:
       name: "Circuit 7"
     cir8:
       input: "8"
-      line: 2
+      line: 1
       name: "Circuit 8"
     cir9:
       input: "9"
@@ -82,7 +82,7 @@ emporiavue:
       name: "Circuit 9"
     cir10:
       input: "10"
-      line: 2
+      line: 1
       name: "Circuit 10"
     cir11:
       input: "11"
@@ -90,7 +90,7 @@ emporiavue:
       name: "Circuit 11"
     cir12:
       input: "12"
-      line: 2
+      line: 1
       name: "Circuit 12"
     cir13:
       input: "13"
@@ -98,7 +98,7 @@ emporiavue:
       name: "Circuit 13"
     cir14:
       input: "14"
-      line: 2
+      line: 1
       name: "Circuit 14"
     cir15:
       input: "15"
@@ -106,5 +106,5 @@ emporiavue:
       name: "Circuit 15"
     cir16:
       input: "16"
-      line: 2
+      line: 1
       name: "Circuit 16"
