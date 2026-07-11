@@ -743,6 +743,11 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
         !std::isnan(frame.phases[input].phase_angle_degrees)) {
       phase->get_phase_angle_sensor()->publish_state(frame.phases[input].phase_angle_degrees);
     }
+    if (phase->get_voltage_thd_sensor() != nullptr) {
+      phase->get_voltage_thd_sensor()->publish_state(frame.phases[input].voltage_thd_valid
+                                                         ? frame.phases[input].voltage_thd_percent
+                                                         : std::numeric_limits<float>::quiet_NaN());
+    }
   }
 
   for (auto *virtual_line : this->metering_virtual_lines_) {

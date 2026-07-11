@@ -144,6 +144,7 @@ CONF_FUNDAMENTAL_REACTIVE_POWER = "fundamental_reactive_power"
 CONF_FUNDAMENTAL_POWER_FACTOR = "fundamental_power_factor"
 CONF_DISPLACEMENT_ANGLE = "displacement_angle"
 CONF_CURRENT_THD = "current_thd"
+CONF_VOLTAGE_THD = "voltage_thd"
 CONF_POWER_DEMAND = "power_demand"
 CONF_MAXIMUM_POWER_DEMAND = "maximum_power_demand"
 CONF_CURRENT_DEMAND = "current_demand"
@@ -174,6 +175,7 @@ CONF_STATE_CLASS = "state_class"
 STATE_CLASS_TOTAL = "total"
 
 SPI_ANALYSIS_SENSOR_KEYS = (
+    CONF_VOLTAGE_THD,
     CONF_FUNDAMENTAL_CURRENT,
     CONF_FUNDAMENTAL_REACTIVE_POWER,
     CONF_FUNDAMENTAL_POWER_FACTOR,
@@ -930,7 +932,7 @@ def _apply_filter_defaults_to_metering_node(node_config, filter_defaults, path, 
 
     node_config = dict(node_config)
     if phase_sensors:
-        for key in (CONF_VOLTAGE, CONF_FREQUENCY, CONF_PHASE_ANGLE):
+        for key in (CONF_VOLTAGE, CONF_FREQUENCY, CONF_PHASE_ANGLE, CONF_VOLTAGE_THD):
             node_config = _apply_filter_default_to_sensor(node_config, key, filter_defaults, path)
 
     for key in (
@@ -1094,6 +1096,9 @@ def _apply_raw_power_defaults(config):
                 )
                 main_config = _apply_optional_sensor_default_name(
                     main_config, CONF_CURRENT_THD, f"{default_base_name} Current THD"
+                )
+                main_config = _apply_optional_sensor_default_name(
+                    main_config, CONF_VOLTAGE_THD, f"{default_base_name} Voltage THD"
                 )
                 main_config = _apply_demand_default_names(main_config, default_base_name)
                 main_config = _apply_peak_default_names(main_config, default_base_name)
@@ -1743,6 +1748,13 @@ CURRENT_THD_SENSOR_SCHEMA = sensor.sensor_schema(
     accuracy_decimals=1,
 )
 
+VOLTAGE_THD_SENSOR_SCHEMA = sensor.sensor_schema(
+    unit_of_measurement="%",
+    icon="mdi:sine-wave",
+    state_class=STATE_CLASS_MEASUREMENT,
+    accuracy_decimals=1,
+)
+
 CURRENT_PEAK_SENSOR_SCHEMA = CURRENT_SENSOR_SCHEMA
 
 CURRENT_CREST_FACTOR_SENSOR_SCHEMA = sensor.sensor_schema(
@@ -1792,6 +1804,7 @@ FILTER_DEFAULTS_SCHEMA = cv.Schema(
         cv.Optional(CONF_FUNDAMENTAL_POWER_FACTOR): FILTER_DEFAULT_VALUE_SCHEMA,
         cv.Optional(CONF_DISPLACEMENT_ANGLE): FILTER_DEFAULT_VALUE_SCHEMA,
         cv.Optional(CONF_CURRENT_THD): FILTER_DEFAULT_VALUE_SCHEMA,
+        cv.Optional(CONF_VOLTAGE_THD): FILTER_DEFAULT_VALUE_SCHEMA,
         cv.Optional(CONF_POWER_DEMAND): FILTER_DEFAULT_VALUE_SCHEMA,
         cv.Optional(CONF_MAXIMUM_POWER_DEMAND): FILTER_DEFAULT_VALUE_SCHEMA,
         cv.Optional(CONF_CURRENT_DEMAND): FILTER_DEFAULT_VALUE_SCHEMA,
@@ -1985,6 +1998,7 @@ def _validate_metering_phases(value):
                 cv.Optional(CONF_VOLTAGE): PHASE_VOLTAGE_SENSOR_SCHEMA,
                 cv.Optional(CONF_FREQUENCY): PHASE_FREQUENCY_SENSOR_SCHEMA,
                 cv.Optional(CONF_PHASE_ANGLE): PHASE_ANGLE_SENSOR_SCHEMA,
+                cv.Optional(CONF_VOLTAGE_THD): VOLTAGE_THD_SENSOR_SCHEMA,
             }
         )
     )(value)
@@ -2029,6 +2043,7 @@ METERING_MAIN_SCHEMA = cv.Schema(
         cv.Optional(CONF_VOLTAGE): PHASE_VOLTAGE_SENSOR_SCHEMA,
         cv.Optional(CONF_FREQUENCY): PHASE_FREQUENCY_SENSOR_SCHEMA,
         cv.Optional(CONF_PHASE_ANGLE): PHASE_ANGLE_SENSOR_SCHEMA,
+        cv.Optional(CONF_VOLTAGE_THD): VOLTAGE_THD_SENSOR_SCHEMA,
         cv.Optional(CONF_FILTERS): INTERNAL_POWER_FILTER_SCHEMA,
         cv.Optional(CONF_POWER): _validate_power_outputs,
         cv.Optional(CONF_CURRENT): CURRENT_SENSOR_SCHEMA,
@@ -2212,6 +2227,7 @@ def _validate_metering_topology(config):
         analysis_nodes = [
             *((f"mains.{key}", node) for key, node in mains.items()),
             *((f"circuits.{key}", node) for key, node in circuits.items()),
+            *((f"phases[{index}]", node) for index, node in enumerate(config.get(CONF_PHASES, []))),
             *((f"ct_clamps[{index}]", node) for index, node in enumerate(config.get(CONF_CT_CLAMPS, []))),
         ]
         for path, node in analysis_nodes:
@@ -2719,6 +2735,9 @@ async def to_code(config):
         if phase_angle_config := main_config.get(CONF_PHASE_ANGLE):
             sens = await sensor.new_sensor(phase_angle_config)
             cg.add(phase_var.set_phase_angle_sensor(sens))
+        if voltage_thd_config := main_config.get(CONF_VOLTAGE_THD):
+            sens = await sensor.new_sensor(voltage_thd_config)
+            cg.add(phase_var.set_voltage_thd_sensor(sens))
 
         phases.append(phase_var)
 
@@ -2868,6 +2887,9 @@ async def to_code(config):
         if phase_angle_config := phase_config.get(CONF_PHASE_ANGLE):
             sens = await sensor.new_sensor(phase_angle_config)
             cg.add(phase_var.set_phase_angle_sensor(sens))
+        if voltage_thd_config := phase_config.get(CONF_VOLTAGE_THD):
+            sens = await sensor.new_sensor(voltage_thd_config)
+            cg.add(phase_var.set_voltage_thd_sensor(sens))
 
         phases.append(phase_var)
     if phases:

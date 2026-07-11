@@ -8,6 +8,7 @@ firmware.
 
 | Version | Changes |
 |---|---|
+| 2026.07.9 | Added optional SPI voltage THD from the synchronized 2nd through 40th voltage harmonics. |
 | 2026.07.8 | Added persistent automatic circuit line assignment with an optional Home Assistant line selector. |
 | 2026.07.7 | Renamed voltage calibration options and added optional per-CT current gain and SPI phase calibration. |
 | 2026.07.6 | Added time-windowed SPI current peak and current crest factor entities. |
@@ -216,6 +217,46 @@ cir8:
 ESPHome SPI exposes the raw voltage and current sample stream. The component can therefore separate the fundamental
 component from the total RMS waveform and optionally publish additional analysis entities per main or branch CT.
 
+### Voltage THD
+
+Voltage THD is configured on a main voltage reference, not on a circuit:
+
+```yaml
+emporiavue:
+  filter_defaults:
+    voltage_thd:
+      - throttle_average: 10s
+
+  mains:
+    line_1:
+      voltage_thd:
+    line_2:
+      voltage_thd:
+    line_3:
+      voltage_thd:
+```
+
+This creates entities such as `Line 1 Voltage THD`. Only explicitly configured entities are created. A local
+`filters:` entry on one `voltage_thd:` sensor replaces the global default, just like the other sensor types.
+
+The SPI path measures complete cycles synchronized to the detected grid frequency. For each requested voltage input it
+calculates the RMS components of harmonics 2 through 40 and publishes:
+
+```text
+Voltage THD = sqrt(U2² + U3² + ... + U40²) / U1 × 100%
+```
+
+`U1` is the voltage fundamental. When the fundamental is unavailable or too small for a valid analysis, the entity is
+`unknown`. Voltage calibration scales the fundamental and harmonics equally and therefore does not change the THD
+ratio. Harmonic processing is only performed for voltage inputs that have a `voltage_thd:` entity. The result is a
+waveform-derived diagnostic value; absolute accuracy should be checked against a suitable reference instrument when it
+matters.
+
+`throttle_average` is recommended for display smoothing. The SPI analysis still uses every complete synchronized
+measurement window; the ESPHome filter only controls how often the averaged result is published.
+
+### Circuit waveform analysis
+
 ```yaml
 emporiavue:
   minimum_apparent_power: 5VA
@@ -338,6 +379,8 @@ time:
     throttle_average: 5s
   - &slow_update
     throttle: 60s
+  - &analysis_average
+    throttle_average: 10s
 
 emporiavue:
   minimum_apparent_power: 5VA
@@ -355,8 +398,9 @@ emporiavue:
     fundamental_current: [*fast_average]
     fundamental_reactive_power: [*fast_average]
     fundamental_power_factor: [*fast_average]
-    displacement_angle: [*fast_average]
-    current_thd: [*fast_average]
+    displacement_angle: [*analysis_average]
+    current_thd: [*analysis_average]
+    voltage_thd: [*analysis_average]
     energy:
       - multiply: 0.001
       - *slow_update
@@ -420,6 +464,8 @@ emporiavue:
     power:
       - throttle_average: 5s
     current_thd:
+      - throttle_average: 10s
+    voltage_thd:
       - throttle_average: 10s
 
   circuits:

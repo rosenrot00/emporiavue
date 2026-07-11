@@ -40,6 +40,9 @@ static constexpr const char *TAG = "emporiavue";
 static constexpr float VUE2_STOCK_CYCLE_TIMEBASE_HZ = 25310.0f;
 static constexpr float VUE3_STOCK_CYCLE_TIMEBASE_HZ = 19610.0f;
 static constexpr uint8_t SPI_RX_QUEUE_SIZE = 16;
+// Voltage THD uses the conventional harmonic range H2 through H40.
+static constexpr uint8_t SPI_VOLTAGE_THD_MAX_HARMONIC = 40;
+static constexpr uint8_t SPI_VOLTAGE_THD_HARMONIC_COUNT = SPI_VOLTAGE_THD_MAX_HARMONIC - 1;
 
 class MeteringPhaseConfig;
 class MeteringCTClampConfig;
@@ -443,6 +446,8 @@ class EmporiaVueComponent : public Component
     float voltage_fundamental_i_raw{0.0f};
     float voltage_fundamental_q_raw{0.0f};
     bool voltage_fundamental_valid{false};
+    float voltage_thd_percent{std::numeric_limits<float>::quiet_NaN()};
+    bool voltage_thd_valid{false};
     float frequency_hz{std::numeric_limits<float>::quiet_NaN()};
     float phase_angle_degrees{std::numeric_limits<float>::quiet_NaN()};
     uint8_t quality_flags{0};
@@ -526,6 +531,9 @@ class EmporiaVueComponent : public Component
     float current_fund_weight[19]{};
     float voltage_fund_i[3]{};
     float voltage_fund_q[3]{};
+    float voltage_harmonic_i[3][SPI_VOLTAGE_THD_HARMONIC_COUNT]{};
+    float voltage_harmonic_q[3][SPI_VOLTAGE_THD_HARMONIC_COUNT]{};
+    bool voltage_thd_requested[3]{};
     float voltage_fund_weight{0.0f};
     float cycle_sum[3]{};
     float line1_periods[64]{};
@@ -947,6 +955,8 @@ class MeteringPhaseConfig {
   sensor::Sensor *get_frequency_sensor() const { return this->frequency_sensor_; }
   void set_phase_angle_sensor(sensor::Sensor *sensor) { this->phase_angle_sensor_ = sensor; }
   sensor::Sensor *get_phase_angle_sensor() const { return this->phase_angle_sensor_; }
+  void set_voltage_thd_sensor(sensor::Sensor *sensor) { this->voltage_thd_sensor_ = sensor; }
+  sensor::Sensor *get_voltage_thd_sensor() const { return this->voltage_thd_sensor_; }
 
  protected:
   uint8_t input_wire_{0};
@@ -955,6 +965,7 @@ class MeteringPhaseConfig {
   sensor::Sensor *voltage_sensor_{nullptr};
   sensor::Sensor *frequency_sensor_{nullptr};
   sensor::Sensor *phase_angle_sensor_{nullptr};
+  sensor::Sensor *voltage_thd_sensor_{nullptr};
 };
 
 class MeteringCalibrationNumber : public number::Number, public Parented<MeteringPhaseConfig> {

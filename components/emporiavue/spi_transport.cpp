@@ -706,6 +706,22 @@ bool EmporiaVueComponent::accumulate_spi_voltage_cycle_(const SpiCrossingPositio
 
   float cycle_i[3]{};
   float cycle_q[3]{};
+  bool voltage_thd_required[3]{};
+  bool any_voltage_thd_required = false;
+  for (const auto *phase_config : this->metering_phases_) {
+    if (phase_config == nullptr || phase_config->get_voltage_thd_sensor() == nullptr ||
+        phase_config->get_input_wire() >= 3) {
+      continue;
+    }
+    voltage_thd_required[phase_config->get_input_wire()] = true;
+    any_voltage_thd_required = true;
+  }
+  float harmonic_i[3][SPI_VOLTAGE_THD_HARMONIC_COUNT]{};
+  float harmonic_q[3][SPI_VOLTAGE_THD_HARMONIC_COUNT]{};
+  float harmonic_cos[SPI_VOLTAGE_THD_HARMONIC_COUNT]{};
+  float harmonic_sin[SPI_VOLTAGE_THD_HARMONIC_COUNT]{};
+  float harmonic_step_cos[SPI_VOLTAGE_THD_HARMONIC_COUNT]{};
+  float harmonic_step_sin[SPI_VOLTAGE_THD_HARMONIC_COUNT]{};
   float current_cycle_i[19]{};
   float current_cycle_q[19]{};
   float current_cycle_weight[19]{};
@@ -717,6 +733,26 @@ bool EmporiaVueComponent::accumulate_spi_voltage_cycle_(const SpiCrossingPositio
   const float first_phase = phase_step * first_from_start;
   float fundamental_cos = std::cos(first_phase);
   float fundamental_sin = std::sin(first_phase);
+  if (any_voltage_thd_required) {
+    // Build the H2..H40 oscillators recursively from the fundamental to avoid per-harmonic trig calls.
+    float order_cos = fundamental_cos;
+    float order_sin = fundamental_sin;
+    float order_step_cos = step_cos;
+    float order_step_sin = step_sin;
+    for (uint8_t index = 0; index < SPI_VOLTAGE_THD_HARMONIC_COUNT; index++) {
+      const float next_order_cos = order_cos * fundamental_cos - order_sin * fundamental_sin;
+      order_sin = order_sin * fundamental_cos + order_cos * fundamental_sin;
+      order_cos = next_order_cos;
+      harmonic_cos[index] = order_cos;
+      harmonic_sin[index] = order_sin;
+
+      const float next_order_step_cos = order_step_cos * step_cos - order_step_sin * step_sin;
+      order_step_sin = order_step_sin * step_cos + order_step_cos * step_sin;
+      order_step_cos = next_order_step_cos;
+      harmonic_step_cos[index] = order_step_cos;
+      harmonic_step_sin[index] = order_step_sin;
+    }
+  }
   for (uint16_t offset = 0; offset < this->spi_voltage_sample_ring_count_; offset++) {
     const uint16_t index = static_cast<uint16_t>((first_index + offset) % SPI_VOLTAGE_SAMPLE_RING_SIZE);
     const auto &sample = this->spi_voltage_sample_ring_[index];
@@ -728,6 +764,15 @@ bool EmporiaVueComponent::accumulate_spi_voltage_cycle_(const SpiCrossingPositio
       for (uint8_t phase = 0; phase < 3; phase++) {
         cycle_i[phase] += static_cast<float>(sample.voltage[phase]) * fundamental_cos * weight;
         cycle_q[phase] += static_cast<float>(sample.voltage[phase]) * fundamental_sin * weight;
+
+        if (voltage_thd_required[phase]) {
+          const float voltage = static_cast<float>(static_cast<int32_t>(sample.voltage[phase]) -
+                                                   this->spi_adc_offsets_[phase]);
+          for (uint8_t index = 0; index < SPI_VOLTAGE_THD_HARMONIC_COUNT; index++) {
+            harmonic_i[phase][index] += voltage * harmonic_cos[index] * weight;
+            harmonic_q[phase][index] += voltage * harmonic_sin[index] * weight;
+          }
+        }
 
         const int32_t current_difference =
             static_cast<int32_t>(sample.main_current[phase]) - this->spi_adc_offsets_[3 + phase];
@@ -754,6 +799,15 @@ bool EmporiaVueComponent::accumulate_spi_voltage_cycle_(const SpiCrossingPositio
     const float next_cos = fundamental_cos * step_cos - fundamental_sin * step_sin;
     fundamental_sin = fundamental_sin * step_cos + fundamental_cos * step_sin;
     fundamental_cos = next_cos;
+    if (any_voltage_thd_required) {
+      for (uint8_t index = 0; index < SPI_VOLTAGE_THD_HARMONIC_COUNT; index++) {
+        const float next_harmonic_cos = harmonic_cos[index] * harmonic_step_cos[index] -
+                                        harmonic_sin[index] * harmonic_step_sin[index];
+        harmonic_sin[index] = harmonic_sin[index] * harmonic_step_cos[index] +
+                              harmonic_cos[index] * harmonic_step_sin[index];
+        harmonic_cos[index] = next_harmonic_cos;
+      }
+    }
   }
 
   if (cycle_weight < period_samples * 0.99f) {
@@ -764,6 +818,13 @@ bool EmporiaVueComponent::accumulate_spi_voltage_cycle_(const SpiCrossingPositio
   for (uint8_t phase = 0; phase < 3; phase++) {
     acc.voltage_fund_i[phase] += cycle_i[phase];
     acc.voltage_fund_q[phase] += cycle_q[phase];
+    if (voltage_thd_required[phase]) {
+      acc.voltage_thd_requested[phase] = true;
+      for (uint8_t index = 0; index < SPI_VOLTAGE_THD_HARMONIC_COUNT; index++) {
+        acc.voltage_harmonic_i[phase][index] += harmonic_i[phase][index];
+        acc.voltage_harmonic_q[phase][index] += harmonic_q[phase][index];
+      }
+    }
   }
   for (uint8_t clamp = 0; clamp < 19; clamp++) {
     acc.current_fund_i[clamp] += current_cycle_i[clamp];
@@ -1230,6 +1291,21 @@ void EmporiaVueComponent::finish_spi_metering_window_(uint32_t sequence, uint32_
         frame.phases[phase].voltage_fundamental_q_raw =
             acc.voltage_fund_q[phase] * SPI_FUNDAMENTAL_RMS_COMPONENT_SCALE / acc.voltage_fund_weight;
         frame.phases[phase].voltage_fundamental_valid = true;
+        if (acc.voltage_thd_requested[phase]) {
+          // All bins share the same cycle weight, so their raw phasor magnitude ratio is the THD ratio.
+          double harmonic_magnitude_squared = 0.0;
+          for (uint8_t index = 0; index < SPI_VOLTAGE_THD_HARMONIC_COUNT; index++) {
+            const double harmonic_i = acc.voltage_harmonic_i[phase][index];
+            const double harmonic_q = acc.voltage_harmonic_q[phase][index];
+            harmonic_magnitude_squared += harmonic_i * harmonic_i + harmonic_q * harmonic_q;
+          }
+          const double fundamental_magnitude_squared = static_cast<double>(i) * i + static_cast<double>(q) * q;
+          if (fundamental_magnitude_squared > 0.0) {
+            frame.phases[phase].voltage_thd_percent =
+                static_cast<float>(100.0 * std::sqrt(harmonic_magnitude_squared / fundamental_magnitude_squared));
+            frame.phases[phase].voltage_thd_valid = std::isfinite(frame.phases[phase].voltage_thd_percent);
+          }
+        }
         voltage_fund_angle[phase] = std::atan2(q, i);
         voltage_fund_angle_valid[phase] = true;
       }

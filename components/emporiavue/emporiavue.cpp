@@ -121,6 +121,7 @@ void EmporiaVueComponent::dump_config() {
     LOG_SENSOR("    ", "Voltage", phase->get_voltage_sensor());
     LOG_SENSOR("    ", "Frequency", phase->get_frequency_sensor());
     LOG_SENSOR("    ", "Phase angle", phase->get_phase_angle_sensor());
+    LOG_SENSOR("    ", "Voltage THD", phase->get_voltage_thd_sensor());
   }
   for (auto *ct_clamp : this->metering_ct_clamps_) {
     ESP_LOGCONFIG(TAG, "  Metering CT clamp");
