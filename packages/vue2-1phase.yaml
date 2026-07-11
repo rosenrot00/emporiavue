@@ -53,3 +53,43 @@ emporiavue:
       input: "6"
       line: 1
       name: "Circuit 6"
+    cir7:
+      input: "7"
+      line: 1
+      name: "Circuit 7"
+    cir8:
+      input: "8"
+      line: 1
+      name: "Circuit 8"
+    cir9:
+      input: "9"
+      line: 1
+      name: "Circuit 9"
+    cir10:
+      input: "10"
+      line: 1
+      name: "Circuit 10"
+    cir11:
+      input: "11"
+      line: 1
+      name: "Circuit 11"
+    cir12:
+      input: "12"
+      line: 1
+      name: "Circuit 12"
+    cir13:
+      input: "13"
+      line: 1
+      name: "Circuit 13"
+    cir14:
+      input: "14"
+      line: 1
+      name: "Circuit 14"
+    cir15:
+      input: "15"
+      line: 1
+      name: "Circuit 15"
+    cir16:
+      input: "16"
+      line: 1
+      name: "Circuit 16"
