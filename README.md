@@ -527,6 +527,13 @@ emporiavue:
 Possible text states are `low load`, `L2 weak`, `L2`, or `ambiguous L2/L3`. It is intentionally unavailable for
 line-to-line circuits.
 
+To use it, switch on a clear, steady load on that circuit and keep it above `power_min` until the same line is shown
+without `weak`. A stable result needs three consecutive update windows, so with the defaults the load should run for
+about 30 seconds. If the result is `L3`, set that circuit to `line: 3` (`L1` means `line: 1`, and so on). `L3 weak` is
+only a preliminary result; keep the load running. `low load` means the load is below the threshold, while
+`ambiguous L2/L3` means the helper cannot make a reliable choice. After assigning the line, you can remove
+`phase_detection: true` again.
+
 ### Three phase without neutral
 
 There is no universal no-neutral preset because the voltage reference depends on the installation. Start with
