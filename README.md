@@ -1,7 +1,8 @@
 # Emporia Vue ESPHome
 
-Turn an Emporia Vue into a local ESPHome energy meter for Home Assistant. Start with dependable I2C metering, or use the
-SPI path when you specifically want raw-waveform analysis and are comfortable testing experimental firmware.
+Turn an Emporia Vue into a local ESPHome energy meter for Home Assistant. Start with dependable ESPHome I2C metering,
+or use the ESPHome SPI path when you specifically want raw-waveform analysis and are comfortable testing experimental
+firmware.
 
 ## Version History
 
@@ -14,7 +15,7 @@ SPI path when you specifically want raw-waveform analysis and are comfortable te
 | 2026.07.1 | Defaulted simple daily energy sensors to `total_increasing`; explicit signed/net energy remains `total`. |
 | 2026.06.3 | Fixed Vue 3 physical main-clamp mapping. |
 | 2026.06.2 | Improved stock I2C frame marker and checksum compatibility. |
-| 2026.06.1 | Added the experimental Vue 2 SPI transport and display filter defaults. |
+| 2026.06.1 | Added the experimental ESPHome SPI transport for Vue 2 and display filter defaults. |
 | 2026.05.1 | Initial package-based release. |
 
 ## Choose Your Path
@@ -29,21 +30,21 @@ SPI path when you specifically want raw-waveform analysis and are comfortable te
 The short decision is:
 
 1. Want the official Emporia app and cloud? **Stay with Emporia stock.**
-2. Want reliable local values in Home Assistant? **Choose I2C.** This is the right default for most users.
+2. Want reliable local values in Home Assistant? **Choose ESPHome I2C.** This is the right default for most users.
 3. Have a Vue 2 and specifically want waveform-derived values such as reactive power, displacement angle, or current
-   THD? **Choose SPI.** It requires the matching managed SAMD09 firmware and should be treated as experimental. (Want
-   this for Vue 3? Help us identify and measure the connections between its MCU and SAMD09 so we can add support.)
+   THD? **Choose ESPHome SPI.** It requires the matching managed SAMD09 firmware and should be treated as experimental.
+   (Want this for Vue 3? Help us identify and measure the connections between its MCU and SAMD09 so we can add support.)
 
 ## Quick Start
 
 Every node combines exactly two core packages:
 
-- one **base package** selects the Vue model and I2C/SPI path;
+- one **base package** selects the Vue model and ESPHome I2C/SPI path;
 - one **topology package** describes the connected voltage inputs.
 
-### 1. Choose I2C or SPI
+### 1. Choose ESPHome I2C or ESPHome SPI
 
-#### I2C — recommended for normal use
+#### ESPHome I2C — recommended for normal use
 
 Choose this when you want a straightforward local meter. It provides the everyday values most dashboards need without
 requiring raw waveform processing.
@@ -53,7 +54,7 @@ requiring raw waveform processing.
 | Vue 2 | `packages/vue2-i2c.yaml` | Local metering through the stock-compatible I2C interface |
 | Vue 3 | `packages/vue3-i2c.yaml` | Local metering through I2C; validated on real hardware |
 
-#### SPI — optional enhanced metering
+#### ESPHome SPI — optional enhanced metering
 
 Choose `packages/vue2-spi.yaml` when you want sample-derived metering and the optional analysis entities described
 below.
@@ -87,7 +88,7 @@ packages:
       - packages/vue2-3phase.yaml
 ```
 
-For the Vue 2 SPI path, replace only the base package:
+For ESPHome SPI, replace only the base package:
 
 ```yaml
 packages:
@@ -176,8 +177,8 @@ cir8:
 
 ## Optional ESPHome SPI Analysis
 
-SPI exposes the raw voltage and current sample stream. The component can therefore separate the fundamental component
-from the total RMS waveform and optionally publish five additional entities per main or branch CT.
+ESPHome SPI exposes the raw voltage and current sample stream. The component can therefore separate the fundamental
+component from the total RMS waveform and optionally publish five additional entities per main or branch CT.
 
 ```yaml
 emporiavue:
@@ -721,7 +722,7 @@ These packages are optional and separate from metering.
 | File | Purpose |
 |---|---|
 | `packages/vue2-i2c.yaml` | Vue 2 stock-compatible I2C transport and firmware management |
-| `packages/vue2-spi.yaml` | Vue 2 raw-sample SPI transport and firmware management |
+| `packages/vue2-spi.yaml` | Raw-sample ESPHome SPI transport for Vue 2 and firmware management |
 | `packages/vue2-1phase.yaml` | Vue 2 one-line topology |
 | `packages/vue2-2phase.yaml` | Vue 2 two-line/split-phase topology |
 | `packages/vue2-3phase.yaml` | Vue 2 three-phase-with-neutral topology |
@@ -736,7 +737,7 @@ These packages are optional and separate from metering.
 
 Useful contributions include:
 
-- Vue 2 SPI comparisons against a trusted power analyzer;
+- ESPHome SPI comparisons against a trusted power analyzer;
 - CT gain and phase-error measurements;
 - low-current/noise-floor results;
 - 50 Hz and 60 Hz installations;
