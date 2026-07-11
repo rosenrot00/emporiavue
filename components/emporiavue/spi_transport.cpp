@@ -794,9 +794,12 @@ void EmporiaVueComponent::process_spi_raw_scan_(const SpiRawScan &scan) {
         const int32_t previous_difference = this->spi_last_voltage_difference_[phase];
         const int32_t delta = voltage_difference - previous_difference;
         if (previous_difference < 0 && delta > 0) {
-          const double fraction =
-              std::max(0.0, std::min(1.0, static_cast<double>(-previous_difference) / static_cast<double>(delta)));
-          return static_cast<double>(this->spi_last_voltage_sample_counter_[phase]) + fraction;
+          const int32_t crossing_numerator = -previous_difference;
+          const float fraction = crossing_numerator >= delta
+                                     ? 1.0f
+                                     : static_cast<float>(crossing_numerator) / static_cast<float>(delta);
+          return static_cast<double>(this->spi_last_voltage_sample_counter_[phase]) +
+                 static_cast<double>(fraction);
         }
       }
       return static_cast<double>(scan.sample_counter);
