@@ -1,7 +1,7 @@
 # Emporia Vue ESPHome
 
 Turn an Emporia Vue into a local ESPHome energy meter for Home Assistant. Start with dependable I2C metering, or use the
-Vue 2 SPI path when you specifically want raw-waveform analysis and are comfortable testing experimental firmware.
+SPI path when you specifically want raw-waveform analysis and are comfortable testing experimental firmware.
 
 ## Version History
 
