@@ -687,8 +687,15 @@ sample rate. They are intended for troubleshooting, not normal dashboards.
 
 ### SAMD09 firmware management
 
-Vue 2 SPI requires the matching managed SAMD09 firmware. The base packages expose buttons to read the installed image,
-install the bundled image, and restore a backup. `auto_update_samd` defaults to `false`.
+ESPHome SPI requires the matching managed SAMD09 firmware. With `auto_update_samd: false`, use these two steps in
+Home Assistant:
+
+1. **Back up the original firmware:** press `Read SAMD Firmware` and wait until the ESPHome log reports
+   `SAMD09 legacy firmware backup valid`.
+2. **Write the managed firmware:** press `Flash SAMD Bundled Firmware` and wait until the ESPHome log reports
+   `SAMD09 firmware update complete`. To return to the saved original firmware, press `Flash SAMD Backup Firmware`.
+
+`auto_update_samd` defaults to `false`.
 
 > [!WARNING]
 > Flashing changes the measurement-controller firmware. Keep a backup and understand the recovery path. The bundled
