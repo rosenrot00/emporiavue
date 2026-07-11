@@ -1,56 +1,80 @@
 # Emporia Vue ESPHome
 
-Local Emporia Vue metering for ESPHome, with a YAML structure that is meant to stay usable as your panel setup grows.
-
-This repository provides an ESPHome external component and ready-to-use packages for Emporia Vue devices. It keeps the
-common setup simple, while still giving you clean places for calibration, circuit names, grouped loads, grid
-import/export, and more accurate handling of real-world wiring such as line-to-line circuits.
-
-> [!TIP]
-> Input and development help are very welcome:
-> - Vue 2 accuracy: I am looking for someone who can run accuracy measurements with the adjusted SAMD09 firmware.
-> - Vue 2 SAMD09 firmware: ideas, review, and testing around firmware improvements are welcome, especially for SPI.
-> - Vue 3: the I2C packages have been validated on real hardware; feedback from additional installations is welcome.
+Turn an Emporia Vue into a local ESPHome energy meter for Home Assistant. Start with dependable I2C metering, or use the
+Vue 2 SPI path when you specifically want raw-waveform analysis and are comfortable testing experimental firmware.
 
 ## Version History
 
 | Version | Changes |
 |---|---|
-| 2026.07.3 | Improved SPI frequency and phase angle stability by evaluating complete interpolated line cycles with a shared period reference. |
-| 2026.07.2 | Improved Vue 2 SPI frequency and phase angle calculation by using a more stable line-period estimate and fundamental-voltage phase measurement over the SPI metering window. |
-| 2026.07.1 | Defaulted simple Today energy sensors to `total_increasing`; explicit signed/net `power.both.energy` remains `total`. |
-| 2026.06.3 | Fixed Vue 3 main clamp labeling so `main_clamp: A/B/C` follows the physical Vue 3 labels while the component maps the reversed internal ports automatically. |
-| 2026.06.2 | Improved stock I2C compatibility for Vue 2 and Vue 3 by matching the original firmware's frame marker and checksum handling more closely. |
-| 2026.06.1 | Added SPI functionality for Vue 2 and [display filter defaults](#display-filter-defaults). You can now use `packages/vue2-spi.yaml` instead of the I2C package when testing the new SPI firmware. |
-| 2026.05.1 | Initial public release with [Vue base and topology packages](#vue-base-and-topology-packages), [runtime voltage calibration](#runtime-calibration), [internal metering filters](#internal-metering-filters), [stable circuit IDs and energy](#stable-circuit-ids-current-and-energy), [apparent power and power factor](#apparent-power-and-power-factor), [groups](#groups), [line-to-line circuit power](#line-to-line-circuits), [power split](#power-split), [virtual lines](#virtual-lines), [phase detection](#phase-detection), [grid import/export](#grid-importexport), [diagnostics](#diagnostics), [Vue GPIO helpers](#vue-gpio-helpers), and [SAMD09 firmware management](#samd09-firmware-management). |
+| 2026.07.4 | Added sample-derived SPI line-to-line RMS voltage plus optional fundamental current, fundamental reactive power, fundamental power factor, displacement angle, and current THD entities. |
+| 2026.07.3 | Improved SPI frequency and phase-angle stability with complete interpolated line cycles and a shared period reference. |
+| 2026.07.2 | Added fundamental-voltage phase measurement over the SPI metering window. |
+| 2026.07.1 | Defaulted simple daily energy sensors to `total_increasing`; explicit signed/net energy remains `total`. |
+| 2026.06.3 | Fixed Vue 3 physical main-clamp mapping. |
+| 2026.06.2 | Improved stock I2C frame marker and checksum compatibility. |
+| 2026.06.1 | Added the experimental Vue 2 SPI transport and display filter defaults. |
+| 2026.05.1 | Initial package-based release. |
 
-## Setup Examples
+## Choose Your Path
 
-Use one Vue base package plus exactly one topology package. Start with the topology that matches how the Vue voltage
-inputs are wired, then override only the circuit names, line assignments, filters, and groups that differ in your panel.
-Full copy/paste YAML files are collected in [`examples/yaml`](examples/yaml/).
+|  | Emporia stock | ESPHome I2C | ESPHome SPI |
+|---|---|---|---|
+| **Best for** | Official Emporia experience | Normal daily monitoring | Enthusiasts and development |
+| **You get** | Emporia app and cloud | Local Home Assistant entities | Local entities plus waveform detail |
+| **Measurements** | Official Emporia feature set | Voltage, current, power, energy, groups and import/export | Same core values plus optional fundamental and waveform analysis |
+| **Firmware** |  | Stock SAMD09 firmware works; custom ESPHome firmware calculates line-to-line voltage without a fixed `√3` assumption | Experimental; custom SAMD09 firmware required |
 
-For Vue 2, the choice is:
+The short decision is:
 
-- `packages/vue2-i2c.yaml` for the stock-compatible I2C transport
-- `packages/vue2-spi.yaml` for the experimental SPI transport
-- `packages/vue2-1phase.yaml` for one measured line
-- `packages/vue2-2phase.yaml` for split-phase or two measured lines
-- `packages/vue2-3phase.yaml` for 3phase with neutral
-- `packages/vue2-gpios.yaml` optionally manages non-I2C Vue 2 GPIO helpers
+1. Want the official Emporia app and cloud? **Stay with Emporia stock.**
+2. Want reliable local values in Home Assistant? **Choose I2C.** This is the right default for most users.
+3. Have a Vue 2 and specifically want waveform-derived values such as reactive power, displacement angle, or current
+   THD? **Choose SPI.** It requires the matching managed SAMD09 firmware and should be treated as experimental. (Want
+   this for Vue 3? Help us identify and measure the connections between its MCU and SAMD09 so we can add support.)
 
-For Vue 3, use the matching packages:
+## Quick Start
 
-- `packages/vue3-i2c.yaml` as the base package
-- `packages/vue3-1phase.yaml` for one measured line
-- `packages/vue3-2phase.yaml` for split-phase or two measured lines
-- `packages/vue3-3phase.yaml` for 3phase with neutral
-- `packages/vue3-gpios.yaml` optionally manages non-I2C Vue 3 GPIO helpers
+Every node combines exactly two core packages:
 
-### 3phase With Neutral
+- one **base package** selects the Vue model and I2C/SPI path;
+- one **topology package** describes the connected voltage inputs.
 
-This is the normal 3phase setup: the Vue neutral terminal is wired to neutral, and the three voltage inputs map to the
-three mains lines. This is the setup used by the full example below.
+### 1. Choose I2C or SPI
+
+#### I2C — recommended for normal use
+
+Choose this when you want a straightforward local meter. It provides the everyday values most dashboards need without
+requiring raw waveform processing.
+
+| Device | Base package | What you get |
+|---|---|---|
+| Vue 2 | `packages/vue2-i2c.yaml` | Local metering through the stock-compatible I2C interface |
+| Vue 3 | `packages/vue3-i2c.yaml` | Local metering through I2C; validated on real hardware |
+
+#### SPI — optional enhanced metering
+
+Choose `packages/vue2-spi.yaml` when you want sample-derived metering and the optional analysis entities described
+below.
+
+| Benefit | Practical result |
+|---|---|
+| Raw synchronized voltage/current samples | Active power is calculated directly from the waveform |
+| Direct line-to-line waveform calculation | Better handling of distorted line-to-line voltages |
+| Fundamental phasors | Optional fundamental current, reactive power, PF and displacement angle |
+| Total RMS versus fundamental current | Optional estimated current THD |
+
+### 2. Choose the electrical topology
+
+Choose the topology from the voltage inputs that are actually connected:
+
+| Installation | Vue 2 topology | Vue 3 topology |
+|---|---|---|
+| One measured line | `packages/vue2-1phase.yaml` | `packages/vue3-1phase.yaml` |
+| Two measured lines / split phase | `packages/vue2-2phase.yaml` | `packages/vue3-2phase.yaml` |
+| Three phases with neutral | `packages/vue2-3phase.yaml` | `packages/vue3-3phase.yaml` |
+
+Example: Vue 2 with I2C and three phases:
 
 ```yaml
 packages:
@@ -62,251 +86,7 @@ packages:
       - packages/vue2-3phase.yaml
 ```
 
-### 2phase / Split Phase
-
-Use the 2phase preset when the installation has two measured lines. Keep the base package and swap only the topology
-package.
-
-```yaml
-packages:
-  emporiavue:
-    url: https://github.com/rosenrot00/emporiavue
-    ref: main
-    files:
-      - packages/vue2-i2c.yaml
-      - packages/vue2-2phase.yaml
-```
-
-### 1phase
-
-Use the 1phase preset for single-line installations. Circuit YAML can still name circuits and add filters, but only one
-line is used as the voltage reference.
-
-```yaml
-packages:
-  emporiavue:
-    url: https://github.com/rosenrot00/emporiavue
-    ref: main
-    files:
-      - packages/vue2-i2c.yaml
-      - packages/vue2-1phase.yaml
-```
-
-### Vue 3
-
-Vue 3 uses the same package pattern, but swaps the base package and topology package names. The known I2C pin change is
-handled by `packages/vue3-i2c.yaml`. The full example YAML below includes the Vue 3 package names as commented
-alternatives.
-
-### 3phase Without Neutral
-
-Some 3phase subpanels do not have neutral available. This is not a normal preset, because the voltage reference must be
-reviewed for the specific installation. A starting point is available at
-[`examples/yaml/vue2-3phase-no-neutral.yaml`](examples/yaml/vue2-3phase-no-neutral.yaml), and line-to-line
-circuit examples are described below in [Line-to-Line Circuits](#line-to-line-circuits).
-
-> [!WARNING]
-> This is an advanced electrical setup, not a generic recommendation. Do not rewire the Vue voltage reference unless
-> you understand the installation, local electrical rules, and the device safety implications.
-
-## Example YAML
-
-A compact Vue 2 3phase setup can look like this. The packages provide the hardware defaults; the node YAML only
-names the circuits, applies display filters, defines groups, and adds the energy sensors you want in Home Assistant.
-
-```yaml
-esphome:
-  name: emporiavue2
-  friendly_name: vue2
-
-external_components:
-  - source:
-      type: git
-      url: https://github.com/rosenrot00/emporiavue.git
-      ref: main
-    components:
-      - emporiavue
-    refresh: always
-
-packages:
-  emporiavue:
-    url: https://github.com/rosenrot00/emporiavue.git
-    ref: main
-    files:
-      - packages/vue2-i2c.yaml
-      # For experimental SPI transport, use this base package instead:
-      # - packages/vue2-spi.yaml
-      # Pick exactly one topology package:
-      # - packages/vue2-1phase.yaml
-      # - packages/vue2-2phase.yaml
-      - packages/vue2-3phase.yaml
-      # Optional Vue 2 non-I2C GPIO helpers:
-      # - packages/vue2-gpios.yaml
-      # For Vue 3, swap the two files above for:
-      # - packages/vue3-i2c.yaml
-      # - packages/vue3-3phase.yaml
-      # Optional Vue 3 non-I2C GPIO helpers:
-      # - packages/vue3-gpios.yaml
-    refresh: always
-
-esp32:
-  board: esp32dev
-  cpu_frequency: 160MHz
-  framework:
-    type: esp-idf
-    version: recommended
-
-api:
-  encryption:
-    key: !secret ha_enc_key
-
-ota:
-  - platform: esphome
-    password: !secret ota_password
-    allow_partition_access: true
-    on_begin:
-      then:
-        - logger.log: "OTA start: saving daily energy counters"
-        - lambda: |-
-            global_preferences->sync();
-    on_end:
-      then:
-        - logger.log: "OTA end: saving daily energy counters before reboot"
-        - lambda: |-
-            global_preferences->sync();
-        - delay: 1s
-
-wifi:
-  ssid: !secret wifi_ssid
-  password: !secret wifi_password
-  fast_connect: true
-
-logger:
-  logs:
-    sensor: INFO
-
-preferences:
-  flash_write_interval: never
-
-time:
-  - platform: sntp
-    id: my_time
-    timezone: "Europe/Vienna"
-
-.defaultfilters:
-  - &throttle_avg
-    throttle_average: 5s
-  - &throttle_time
-    throttle: 60s
-  - &pos
-    lambda: 'return max(x, 0.0f);'
-
-emporiavue:
-  power_apparent_min: 5VA
-
-  filter_defaults:
-    voltage: [*throttle_avg, *pos]
-    frequency: [*throttle_avg, *pos]
-    phase_angle: [*throttle_avg, *pos]
-    power: *throttle_avg
-    current: *throttle_avg
-    power_apparent: *throttle_avg
-    power_factor: *throttle_avg
-    energy:
-      - multiply: 0.001
-      - *throttle_time
-
-  phase_detection:
-    power_min: 30W
-    confidence_ratio: 1.5
-    update_interval: 10s
-
-  virtual_lines:
-    line_2_3:
-      lines: [2, 3]
-      voltage:
-
-  circuits:
-    cir1:
-      name: "Livingroom"
-      line: 2
-      power:
-        filters: [*pos, *throttle_avg]
-      energy:
-    cir2:
-      line: 3
-      power:
-      current:
-      power_apparent:
-      power_factor:
-    cir3:
-      line: 1
-      phase_detection: true
-      power:
-    cir4:
-      line: 2
-      power:
-    cir5:
-      name: "Fridge, Steamer"
-      line: 3
-      power:
-      energy:
-    cir6:
-      name: "HVAC, Dishwasher"
-      line: 3
-      power:
-      energy:
-
-  groups:
-    grid:
-      name: "Grid"
-      sources: [line_1, line_2, line_3]
-      power:
-        both:
-          name: "Total Power"
-          energy:
-            name: "Today’s Total Energy"
-        positive:
-          energy:
-        negative:
-          energy:
-
-    total_heat_pump_power:
-      name: "Heat Pump"
-      sources: [cir2, cir3, cir4]
-      power:
-      energy:
-```
-
-## Feature Details
-
-### Vue Base And Topology Packages
-
-The base package sets up the Vue hardware and transport. Add exactly one topology package for your installation:
-single-phase, two-phase, or three-phase. The topology package adds the usual line and circuit defaults, so your node YAML
-only has to override the parts that are different in your panel. Vue 2 can use either `packages/vue2-i2c.yaml` or
-`packages/vue2-spi.yaml` with the same topology package.
-
-```yaml
-packages:
-  emporiavue:
-    url: https://github.com/rosenrot00/emporiavue
-    ref: main
-    files:
-      - packages/vue2-i2c.yaml
-      # Pick exactly one topology package:
-      # - packages/vue2-1phase.yaml
-      # - packages/vue2-2phase.yaml
-      - packages/vue2-3phase.yaml
-```
-
-Vue 3 uses the same structure with `vue3-...` package names. The full example YAML includes the Vue 3 package names as
-commented alternatives.
-
-### Vue 2 SPI
-
-Vue 2 can now use SPI instead of I2C for communication with the SAMD09. To try it, use `packages/vue2-spi.yaml` instead
-of `packages/vue2-i2c.yaml`. The rest of your meter setup can stay the same.
+For the Vue 2 SPI path, replace only the base package:
 
 ```yaml
 packages:
@@ -318,242 +98,391 @@ packages:
       - packages/vue2-3phase.yaml
 ```
 
-This is still experimental and intended for testing.
-
-### Runtime Calibration
-
-Each main line gets a Home Assistant number entity for calibration. The YAML value is the initial value; once you adjust
-it in Home Assistant, ESPHome restores the saved value after reboot.
+### 3. Add the external component
 
 ```yaml
-emporiavue:
-  mains:
-    line_1:
-      calibration: 0.022
-    line_2:
-      calibration: 0.022
-    line_3:
-      calibration: 0.022
+external_components:
+  - source:
+      type: git
+      url: https://github.com/rosenrot00/emporiavue.git
+      ref: main
+    components: [emporiavue]
 ```
 
-### Internal Metering Filters
+### 4. Name and assign circuits
 
-Filters directly under a main, circuit, CT clamp, or group are metering corrections. They feed energy sensors and group
-calculations. Filters under `power` only shape the visible Home Assistant power sensor.
+The topology packages define all 16 branch inputs. Your node YAML only overrides the entries that differ in your panel.
+A circuit is visible in Home Assistant only when you add a sensor such as `power:`, `current:`, or `energy:`.
 
 ```yaml
 emporiavue:
   circuits:
     cir1:
-      name: "Livingroom"
-      line: 2
-      filters:
-        - multiply: -1
+      # No name: keeps the default base name "Circuit 1"
+      line: 1
       power:
-        filters:
-          - throttle_average: 5s
+      energy:
+
+    cir2:
+      name: "Heat Pump"
+      line: 2
+      power:
+      current:
+      power_apparent:
+      power_factor:
 ```
 
-### Display Filter Defaults
+Without `name:`, the topology package keeps the default circuit name, for example `Circuit 1 Power`. When you set a
+custom circuit name, the component uses it as the base for concise English entity names:
 
-Use `filter_defaults` to keep common display filters in one place. Defaults are applied only to visible sensor outputs
-that are already configured; they do not create sensors by themselves. A bare key such as `power:` creates that sensor
-with defaults. A local `filters:` entry on one sensor replaces the matching default completely.
+```text
+Heat Pump Power
+Heat Pump Current
+Heat Pump Apparent Power
+Heat Pump Power Factor
+```
+
+An explicit sensor `name:` always wins over both the default and the circuit name.
+
+### 5. Understand `line`
+
+`input` is the physical CT socket. `line` selects the configured voltage reference used for that CT.
+All circuits default to logical `line: 1`; adjust each circuit to match the actual line used in your installation.
+
+```yaml
+cir1:
+  line: 1
+```
+
+`line_1` means the first configured voltage input, normally `voltage_input: BLACK`. It does not magically identify the
+utility label printed on the conductor. If the black Vue voltage lead is physically connected to L2, logical `line_1`
+measures that real L2. Assign every circuit from the actual installation rather than assuming CT socket order determines
+the phase.
+
+If you do not know the correct `line`, use the [phase detection helper](#phase-detection-helper) to detect the most likely
+assignment automatically. It reports the result but never changes your YAML.
+
+For a load connected between two lines, use a pair:
+
+```yaml
+cir8:
+  name: "Wallbox"
+  line: [1, 2]
+  power:
+  power_apparent:
+  power_factor:
+```
+
+## Optional ESPHome SPI Analysis
+
+SPI exposes the raw voltage and current sample stream. The component can therefore separate the fundamental component
+from the total RMS waveform and optionally publish five additional entities per main or branch CT.
+
+```yaml
+emporiavue:
+  minimum_apparent_power: 5VA
+  minimum_fundamental_current: 20mA
+
+  circuits:
+    cir2:
+      name: "Heat Pump"
+      line: 2
+
+      fundamental_current:
+      fundamental_reactive_power:
+      fundamental_power_factor:
+      displacement_angle:
+      current_thd:
+```
+
+This creates:
+
+```text
+Heat Pump Fundamental Current
+Heat Pump Fundamental Reactive Power
+Heat Pump Fundamental Power Factor
+Heat Pump Displacement Angle
+Heat Pump Current THD
+```
+
+The keys are optional; only configured entities are created. They are rejected during YAML validation when `mode: i2c`
+is selected.
+
+| YAML key | Unit | Meaning |
+|---|---:|---|
+| `fundamental_current` | A | RMS current of the fundamental component |
+| `fundamental_reactive_power` | var | Signed fundamental reactive power; with correct CT orientation, positive is inductive and negative is capacitive for normal import |
+| `fundamental_power_factor` | — | Fundamental power factor `abs(P1) / S1`, from 0 to 1 |
+| `displacement_angle` | ° | Voltage-current displacement angle; with correct CT orientation, positive is lagging/inductive for normal import |
+| `current_thd` | % | Estimated residual current relative to the fundamental current |
+
+At low current, a PF, angle, or THD number would be dominated by noise. The behavior is therefore deliberate:
+
+```text
+Fundamental Current          0 A
+Fundamental Reactive Power   0 var
+Fundamental Power Factor     unknown
+Displacement Angle           unknown
+Current THD                  unknown
+```
+
+`minimum_fundamental_current` controls that boundary globally. `minimum_apparent_power` is the global cutoff for the
+existing apparent-power and total-power-factor outputs.
+
+> [!NOTE]
+> Existing configurations from before version 2026.07.4 must rename `power_apparent_min` to
+> `minimum_apparent_power`.
+
+## A Practical Node Example
+
+This example keeps the node YAML focused on user choices. The selected packages provide hardware pins, firmware
+handling, voltage references, all 16 CT inputs, and stable internal IDs.
+
+```yaml
+esphome:
+  name: emporiavue2
+  friendly_name: Vue 2
+
+external_components:
+  - source:
+      type: git
+      url: https://github.com/rosenrot00/emporiavue.git
+      ref: main
+    components: [emporiavue]
+
+packages:
+  emporiavue:
+    url: https://github.com/rosenrot00/emporiavue.git
+    ref: main
+    files:
+      - packages/vue2-spi.yaml
+      - packages/vue2-3phase.yaml
+
+esp32:
+  board: esp32dev
+  framework:
+    type: esp-idf
+    version: recommended
+
+api:
+
+ota:
+  - platform: esphome
+    allow_partition_access: true
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+logger:
+  logs:
+    sensor: INFO
+
+time:
+  - platform: sntp
+    id: my_time
+
+.display_filters:
+  - &fast_average
+    throttle_average: 5s
+  - &slow_update
+    throttle: 60s
+
+emporiavue:
+  minimum_apparent_power: 5VA
+  minimum_fundamental_current: 20mA
+
+  filter_defaults:
+    voltage: [*fast_average]
+    frequency: [*fast_average]
+    phase_angle: [*fast_average]
+    power: [*fast_average]
+    current: [*fast_average]
+    power_apparent: [*fast_average]
+    power_factor: [*fast_average]
+    fundamental_current: [*fast_average]
+    fundamental_reactive_power: [*fast_average]
+    fundamental_power_factor: [*fast_average]
+    displacement_angle: [*fast_average]
+    current_thd: [*fast_average]
+    energy:
+      - multiply: 0.001
+      - *slow_update
+
+  circuits:
+    cir1:
+      name: "Living Room"
+      line: 1
+      power:
+      energy:
+
+    cir2:
+      name: "Heat Pump"
+      line: 2
+      power:
+      current:
+      power_apparent:
+      power_factor:
+      fundamental_current:
+      fundamental_reactive_power:
+      fundamental_power_factor:
+      displacement_angle:
+      current_thd:
+
+    cir8:
+      name: "Wallbox"
+      line: [1, 2]
+      power:
+      power_apparent:
+      power_factor:
+
+  groups:
+    grid:
+      name: "Grid"
+      sources: [line_1, line_2, line_3]
+      power:
+        both:
+          name: "Grid Net Power"
+        positive:
+          name: "Grid Import Power"
+          energy:
+        negative:
+          name: "Grid Export Power"
+          energy:
+```
+
+Full and specialized examples are available in [`examples/yaml`](examples/yaml/).
+
+## Common Configuration Recipes
+
+### Display filters and metering corrections
+
+`filter_defaults` applies normal ESPHome display filters only to sensors that you explicitly create. It does not create
+entities by itself. A local sensor `filters:` entry replaces the corresponding default.
 
 ```yaml
 emporiavue:
   filter_defaults:
-    voltage: [*throttle_avg, *pos]
-    frequency: [*throttle_avg, *pos]
-    phase_angle: [*throttle_avg, *pos]
-    power: *throttle_avg
-    current: *throttle_avg
-    power_apparent: *throttle_avg
-    power_factor: *throttle_avg
-    energy:
+    power:
+      - throttle_average: 5s
+    current_thd:
+      - throttle_average: 10s
+
+  circuits:
+    cir1:
+      power:
+      current_thd:
+        filters:
+          - throttle_average: 30s
+```
+
+`filters` directly under a circuit are internal active-power corrections used by power, energy, and groups:
+
+```yaml
+cir1:
+  filters:
+    - multiply: -1
+  power:
+```
+
+The fundamental analysis deliberately does not reuse arbitrary internal active-power filters. Applying a nonlinear
+filter independently to P1, Q1, and S1 would destroy the phasor relationship and could hide negative/capacitive Q.
+Normal display filters directly on the new sensor entities are supported.
+
+Avoid `max(x, 0)` or absolute-value display filters on signed reactive power or displacement angle unless you explicitly
+want to discard direction.
+
+### Energy
+
+Add `energy:` next to a circuit to create an energy entity; a visible `power:` sensor is not required.
+
+```yaml
+cir1:
+  name: "Living Room"
+  energy:
+    # state_class: total  # Uncomment for explicit signed/net energy.
+    filters:
       - multiply: 0.001
-      - *throttle_time
-
-  circuits:
-    cir2:
-      power:
-      energy:
-    cir1:
-      power:
-        filters: [*pos, *throttle_avg]
 ```
 
-### Stable Circuit IDs, Current, and Energy
-
-Every configured circuit gets a stable internal power ID such as `cir1` or `cir5`, even if you do not expose that circuit
-as a visible power sensor. That keeps ESPHome energy sensors simple and avoids duplicate display sensors.
-
-Set `circuits.<id>.name` to the human base name. The component adds the measurement suffix for visible sensors, so
-`name: "Livingroom"` becomes `Livingroom Power`, `Livingroom Current`, `Livingroom Apparent Power`, and
-`Livingroom Power Factor`. An explicit sensor `name:` still wins when you need a special label.
-
-Circuits can also expose current directly from the SAMD09 RMS current value. This is not estimated from `power /
-voltage`.
-
-```yaml
-emporiavue:
-  circuits:
-    cir2:
-      current:
-        name: "Circuit 2 Current"
-        filters:
-          - throttle_average: 5s
-```
-
-Daily energy can be declared next to the source power sensor. The energy calculation uses the internal metering value,
-so display-only `power` filters do not get applied twice. Add energy filters directly or define `filter_defaults.energy`
-when you want ESPHome's Wh integration output shown as kWh.
-Simple circuit and group `energy:` outputs default to `state_class: total_increasing`, which matches Home Assistant's
-statistics model for daily counters that only increase and reset at midnight.
-
-```yaml
-emporiavue:
-  circuits:
-    cir1:
-      name: "Livingroom"
-      energy:
-        filters:
-          - multiply: 0.001
-```
-
-### Apparent Power and Power Factor
-
-Configured mains, circuits, and legacy `ct_clamps` can expose apparent power and power factor. Apparent power uses the
-SAMD09 RMS voltage and RMS current values:
-
-```text
-power_apparent = voltage_rms * current_rms
-power_factor = real_power / power_apparent
-```
-
-For line-to-line circuits, the component uses the calculated line-to-line voltage as the voltage reference. This keeps
-`line: [2, 3]` loads consistent with their real voltage reference.
-
-```yaml
-emporiavue:
-  power_apparent_min: 5VA
-
-  circuits:
-    cir2:
-      power_apparent:
-        name: "Circuit 2 Apparent Power"
-        filters:
-          - throttle_average: 5s
-      power_factor:
-        name: "Circuit 2 Power Factor"
-        filters:
-          - throttle_average: 5s
-```
-
-`power_apparent_min` defaults to `5VA`, matching the stock firmware's low-load cutoff. Below that threshold, apparent power and power factor publish `0` instead of
-showing noise-dominated standby values. Set it lower, higher, or to `0VA` if your installation needs a different cutoff.
-Apparent power is exposed as a `VA` measurement. Power factor is published as a dimensionless magnitude between `0` and
-`1` without a Home Assistant state class, so it does not create misleading long-term statistics; use the real power
-sensor for direction.
+Simple daily energy defaults to `state_class: total_increasing`. Explicit signed/net energy can use `state_class: total`.
+`both`, `positive`, and `negative` are power directions, not energy modes. A nested `energy:` integrates that selected
+output: `both` is signed/net, `positive` keeps positive power, and `negative` exposes negative power as a positive value.
+An `energy:` directly under the circuit uses `both`. Use separate positive/import and negative/export energy rather than
+signed net energy in the Home Assistant Energy Dashboard.
 
 ### Groups
 
-Groups create a new power sensor from existing circuit IDs without adding ESPHome template sensors. Use them for
-combined loads such as a heat pump across multiple breakers.
+Groups sum or subtract mains, circuits, and other groups without ESPHome template sensors.
 
 ```yaml
 emporiavue:
   groups:
-    total_heat_pump_power:
+    heat_pump:
       name: "Heat Pump"
       sources: [cir2, cir3, cir4]
       power:
-        filters:
-          - throttle_average: 5s
+      energy:
+
+    unmonitored:
+      name: "Unmonitored"
+      sources: [grid, -cir1, -cir2, -cir3]
+      power:
 ```
 
-Groups can also subtract sources. This is useful for a balance power sensor that shows the unmonitored remainder:
+### Grid import and export
+
+Topology packages define `grid` as an internal group. Add directional outputs only when you want visible entities:
 
 ```yaml
 emporiavue:
   groups:
-    balance_power:
-      sources: [grid, -cir1, -cir2, -cir3]
-      filters:
-        - lambda: |-
-            return x > 0.0f ? x : 0.0f;
+    grid:
+      sources: [line_1, line_2, line_3]
       power:
-        name: "Balance Power"
-        filters:
-          - throttle_average: 5s
+        both:
+        positive:
+          energy:
+        negative:
+          energy:
 ```
 
-### Line-to-Line Circuits
+Positive is import. Negative is exposed as a positive export value on the `negative` output.
 
-Normal circuits use one line reference, for example `line: 2`. For a load connected between two lines, use a two-item
-line list. The component calculates the CT power against the voltage difference between those two lines.
+### Line-to-line voltage and power
+
+For `line: [1, 2]`, real power is calculated from the instantaneous voltage difference:
+
+```text
+p[n] = (v1[n] - v2[n]) * i[n]
+```
+
+In SPI mode, line-to-line RMS voltage is also calculated directly from the waveform:
+
+```text
+V12_rms = sqrt(mean((v1[n] - v2[n])²))
+```
+
+This improves line-to-line apparent power and PF when the two voltage waveforms contain different harmonic content.
+I2C has no raw samples, so it retains the RMS/phase-angle phasor reconstruction as a fallback.
+
+### Power split
+
+`power_split` is a presentation helper for dashboards. It publishes half of one measured line-to-line circuit power on
+each selected line; it is not a separate conductor measurement.
 
 ```yaml
-emporiavue:
-  circuits:
-    cir2:
-      line: [2, 3]
-      power:
-        name: "Line 2-3 Load Power"
-        filters:
-          - throttle_average: 5s
+cir8:
+  line: [1, 2]
+  power:
+  power_split:
+    line_1:
+    line_2:
 ```
 
-If the CT direction or line order gives the opposite sign, add an internal circuit filter:
+### Virtual line voltage
 
-```yaml
-emporiavue:
-  circuits:
-    cir2:
-      line: [2, 3]
-      filters:
-        - multiply: -1
-```
-
-### Power Split
-
-`power_split` is an optional display helper for line-to-line circuits. It publishes one share sensor for each line in the
-pair, using half of the circuit's measured line-to-line power. The real measured load remains the circuit `power` sensor.
-
-This is most useful in split-phase regions such as North America, where 240 V appliances are connected between two legs,
-and in any setup where a dashboard or Sankey chart should visually assign a line-to-line load to both involved lines. In a
-3phase installation it can also be useful for line-to-line loads, but it is still a presentation helper: it does not mean
-the component has separately measured conductor power on each line.
-
-```yaml
-emporiavue:
-  circuits:
-    cir2:
-      line: [1, 2]
-      power:
-        name: "Dryer Power"
-        filters:
-          - throttle_average: 5s
-      power_split:
-        line_1:
-          name: "Dryer L1 Share"
-          filters:
-            - throttle_average: 5s
-        line_2:
-          name: "Dryer L2 Share"
-          filters:
-            - throttle_average: 5s
-```
-
-For the common case, `power_split: true` creates both share sensors with default names derived from the circuit power name.
-If the circuit uses an internal filter, for example `filters: [{ multiply: -1 }]`, the split sensors use the corrected
-power too.
-
-### Virtual Lines
-
-Virtual lines publish derived line-to-line voltage sensors without using or reserving a physical CT port. They use the
-configured main line calibration values plus the measured phase offsets, so they work for both split-phase and
-three-phase line-to-line voltage display.
+Virtual lines expose a line-to-line voltage without reserving a CT:
 
 ```yaml
 emporiavue:
@@ -561,19 +490,27 @@ emporiavue:
     line_2_3:
       lines: [2, 3]
       voltage:
-        name: "Line 2-3 Voltage"
-        filters:
-          - throttle_average: 5s
 ```
 
-If `name` is omitted, the component uses a stable default such as `Line 2-3 Voltage`.
+### Runtime voltage calibration
 
-### Phase Detection
+Each configured main line gets a Home Assistant calibration number. The YAML value is the initial value; a value changed
+in Home Assistant is restored after reboot.
 
-Phase detection is an optional diagnostic helper for single-line branch circuits. It compares the circuit CT against all
-available voltage references, collects valid samples for one `update_interval` period, publishes one compact diagnostic
-text result, and then starts a fresh period.
-The final `L1`, `L2`, or `L3` state is only published after the same line wins several windows in a row.
+```yaml
+emporiavue:
+  mains:
+    line_1:
+      calibration: 0.022
+```
+
+Calibration affects voltage and all power quantities using that voltage reference. Validate changes against a trusted
+meter and a known load.
+
+### Phase detection helper
+
+Phase detection compares a single-line CT with all configured voltage references and suggests the most likely logical
+line. It never rewrites YAML automatically.
 
 ```yaml
 emporiavue:
@@ -585,176 +522,177 @@ emporiavue:
   circuits:
     cir3:
       phase_detection: true
-
-    cir5:
-      phase_detection:
-        name: "Heat Pump Phase"
-        power_min: 100W
 ```
 
-If no name is provided, the component derives one from the circuit base name: `name: "Heat Pump"` becomes
-`Heat Pump Phase`.
+Possible text states are `low load`, `L2 weak`, `L2`, or `ambiguous L2/L3`. It is intentionally unavailable for
+line-to-line circuits.
 
-The Home Assistant text sensor stays short:
+### Three phase without neutral
 
-- `low load`: the circuit is below `power_min`.
-- `L3 weak`: the circuit is currently leaning toward `line: 3`, but needs more stable windows.
-- `L3`: suggested YAML setting is likely `line: 3`.
-- `ambiguous L2/L3`: the best two candidates are too close.
+There is no universal no-neutral preset because the voltage reference depends on the installation. Start with
+[`examples/yaml/vue2-3phase-no-neutral.yaml`](examples/yaml/vue2-3phase-no-neutral.yaml) only if you understand the
+wiring, safety implications, and line-to-line calculation.
 
-Debug logging includes the details used for the decision, for example the elapsed interval, sample count, and mean
-absolute scores per line.
-Phase detection is not available for line-to-line circuits because those intentionally use two voltage references.
+## How the SPI Analysis Works
 
-### Grid Import/Export
+This section is for users who want to understand what the new entities represent.
 
-Topology packages define grid as a normal internal group. Add `power` outputs in your node YAML when you want visible
-grid sensors. Positive becomes import; negative becomes export as a positive value.
-For nested energy sensors, explicit `both` defaults to `state_class: total` because signed net energy can move up or
-down. `positive` and `negative` default to `total_increasing`. If you set `state_class` yourself, your YAML value wins.
-For the Home Assistant Energy Dashboard, use import/export energy rather than signed net grid energy.
+### Total waveform measurements
 
-```yaml
-emporiavue:
-  groups:
-    grid:
-      name: "Grid"
-      sources: [line_1, line_2, line_3]
-      power:
-        both:
-          name: "Total Power"
-          energy:
-        positive:
-          energy:
-        negative:
-          energy:
+SPI metering uses centered raw samples over complete mains cycles:
+
+```text
+U_rms = sqrt(mean(u[n]²))
+I_rms = sqrt(mean(i[n]²))
+P     = mean(u[n] * i[n])
+S     = U_rms * I_rms
+PF    = abs(P) / S
 ```
 
-### Diagnostics
+`P` is true active power from sample correlation, not an estimate from `U * I * cos(phi)`. Non-sinusoidal current is
+therefore included in total RMS, active power, apparent power, and total PF.
 
-Diagnostics are optional and stay disabled unless you set `diagnostics_interval`. Use a slow interval such as `30s`;
-these entities are meant for checking firmware and transport health, not for normal power dashboards.
+### Cycle and phase reference
+
+The component detects interpolated positive voltage zero crossings and evaluates complete line cycles. Voltage and the
+delay-aligned main/multiplexed CT samples are retained in the same cycle ring. A shared sine/cosine reference is then
+used for all voltage inputs and all 19 CT channels.
+
+The configured integer current delays compensate the ADC/multiplexer pipeline before the sample enters the common cycle
+analysis. They do not claim to correct the individual phase error of every physical CT.
+
+### Fundamental phasors
+
+For each accepted cycle, the component accumulates in-phase and quadrature components:
+
+```text
+Xc = sum(x[n] * cos(theta[n]) * weight[n])
+Xs = sum(x[n] * sin(theta[n]) * weight[n])
+```
+
+Partial boundary samples receive fractional overlap weights. Mains channels and each multiplexed branch channel keep
+separate normalization weights. The resulting signed RMS phasors produce:
+
+```text
+P1 = Vi * Ii + Vq * Iq
+Q1 = Vi * Iq - Vq * Ii
+S1 = hypot(Vi, Vq) * hypot(Ii, Iq)
+PF1 = abs(P1) / S1
+angle = atan2(Q1, P1)
+```
+
+For a line-to-line CT, the fundamental voltage phasor is the calibrated vector difference of both configured voltage
+phasors before P1, Q1, S1, PF1, and angle are calculated.
+
+### Current THD
+
+The exposed current THD uses total RMS current and fundamental RMS current:
+
+```text
+THD_I = sqrt(max(0, I_rms² - I1²)) / I1 * 100%
+```
+
+If `I1` is below `minimum_fundamental_current`, the denominator is not trustworthy and THD is `unknown`. If `I1` exceeds
+total RMS beyond a small numerical consistency tolerance, THD is also `unknown` instead of incorrectly reporting `0%`.
+
+This residual method is useful for diagnostics, but analog filtering, interharmonics, noise, CT bandwidth, and sample
+timing influence the result. Treat it as an experimental waveform indicator, not a standards-compliance report.
+
+### Sign conventions
+
+For normal import with correctly oriented CTs:
+
+- positive fundamental reactive power and positive displacement angle mean lagging/inductive current;
+- negative fundamental reactive power and negative displacement angle mean leading/capacitive current;
+- fundamental and total power factor are magnitudes from `0` to `1`;
+- active power remains the source of import/export direction.
+
+Export and reversed CTs can move P1/Q1 into a different quadrant. For line pairs, the configured order also defines the
+reference (`[1, 2]` means `V1 - V2`). Correct the wiring, CT orientation, and line order before interpreting the angle as
+a simple inductive/capacitive label. An active-power correction such as `filters: [{ multiply: -1 }]` does not rotate the
+fundamental current phasor and therefore does not repair Q1 or the displacement angle.
+
+### Accuracy limits
+
+The algorithms are tested with synthetic 50 Hz and 60 Hz waveforms, phase shifts, harmonic content, every mux alignment,
+all CT channels, and every line pair. Real-world absolute accuracy still depends on:
+
+- voltage and current calibration;
+- physical CT gain, bandwidth, phase error, and orientation;
+- analog anti-alias filtering;
+- ADC pipeline delay and sample-clock accuracy;
+- load level and waveform shape.
+
+No accuracy class, IEC 61000-4-30 claim, revenue-metering claim, or protection function is implied. Reference-instrument
+testing is welcome, especially for low current, motors, inverters, wallboxes, and strongly distorted loads.
+
+## Diagnostics and Maintenance
+
+### Transport diagnostics
+
+Diagnostics are disabled unless `diagnostics_interval` is configured:
 
 ```yaml
 emporiavue:
   diagnostics_interval: 30s
 ```
 
-Useful diagnostic entities include:
+Available entities cover frame errors, transfer errors, overruns, recoveries, last window sample count, and measured SPI
+sample rate. They are intended for troubleshooting, not normal dashboards.
 
-- `SAMD Frame Errors`: invalid frames or incomplete transport reads.
-- `SAMD Transfer Errors`: lower-level transfer or queue errors.
-- `SAMD Frame Overruns`: frames or sample windows that were skipped or overwritten.
-- `SAMD Recoveries`: transport recoveries; normally stays at `0`.
-- `SAMD Last Frame Samples`: sample count used for the last completed metering window.
-- `SAMD Sample Rate`: stock I2C timebase or measured SPI sample rate.
+### SAMD09 firmware management
 
-### Vue GPIO Helpers
-
-Vue 2 has an optional non-I2C GPIO helper package. `packages/vue2-gpios.yaml` drives the front-panel WiFi/status LED on
-GPIO23. The LED blinks while the node is connecting or reconnecting and stays on once the node has a network connection.
-
-```yaml
-packages:
-  emporiavue:
-    url: https://github.com/rosenrot00/emporiavue
-    ref: main
-    files:
-      - packages/vue2-i2c.yaml
-      - packages/vue2-3phase.yaml
-      - packages/vue2-gpios.yaml
-```
-
-Vue 3 has an optional non-I2C GPIO helper package. `packages/vue3-gpios.yaml` defines GPIO2 as the WiFi status output
-and GPIO4 as the Ethernet status output. The active network transport's GPIO blinks while the node is connecting or
-reconnecting, then stays on once the node has a network connection. The inactive transport GPIO is kept off.
-
-```yaml
-packages:
-  emporiavue:
-    url: https://github.com/rosenrot00/emporiavue
-    ref: main
-    files:
-      - packages/vue3-i2c.yaml
-      - packages/vue3-3phase.yaml
-      - packages/vue3-gpios.yaml
-```
-
-### SAMD09 Firmware Management
-
-SAMD09 firmware management is an advanced recovery and testing tool. Normal metering does not require pressing any
-SAMD flash button.
+Vue 2 SPI requires the matching managed SAMD09 firmware. The base packages expose buttons to read the installed image,
+install the bundled image, and restore a backup. `auto_update_samd` defaults to `false`.
 
 > [!WARNING]
-> Flashing the SAMD09 changes the measurement controller firmware inside the Vue 2. Only use the flash buttons if you
-> understand the recovery path and are comfortable working with firmware-level changes.
-> The bundled SAMD firmware image is for Vue 2 only and must not be flashed to a Vue 3.
+> Flashing changes the measurement-controller firmware. Keep a backup and understand the recovery path. The bundled
+> Vue 2 image must never be flashed to a Vue 3.
 
-The Vue 2 and Vue 3 I2C packages add a 64 KiB `samd_bak` data partition for SAMD firmware backups. When adding
-`samd_bak` to a device that is already flashed, update the ESP32 partition table once. ESPHome documents custom
-partition lists under `esp32.partitions`, and partition-table OTA needs `allow_partition_access: true` on the ESPHome
-OTA platform before running `esphome upload --partition-table`.
-
-The firmware buttons are configuration entities:
-
-- `Read SAMD Firmware` stores the current SAMD image in `samd_bak`.
-- `Flash SAMD Bundled Firmware` installs the firmware image bundled with this component.
-- `Flash SAMD Backup Firmware` restores the saved backup image.
-- External firmware entries create additional flash buttons for those images.
-
-`auto_update_samd` defaults to `false`. Leave it disabled unless you explicitly want the component to update the SAMD09
-automatically when the detected firmware is missing, older, or built for a different transport.
+The `samd_bak` partition needs 64 KiB. When adding it to an already-flashed ESP32, update the partition table once. OTA
+partition-table updates require `allow_partition_access: true`.
 
 ```yaml
 emporiavue:
   auto_update_samd: false
-  external_samd_firmware:
-    - id: vue2_i2c_v1_0
-      url: "https://raw.githubusercontent.com/rosenrot00/emporiavue/main/firmware/samd09/images/i2c/vue2-i2c-v1.0.bin"
 ```
 
-## Package Files
+### Optional GPIO helpers
 
-The repository includes Vue 2 base packages and presets for common electrical setups:
-`packages/vue2-1phase.yaml`, `packages/vue2-2phase.yaml`, and `packages/vue2-3phase.yaml`.
-Use `packages/vue2-i2c.yaml` for I2C, or `packages/vue2-spi.yaml` for the experimental SPI mode.
+- `packages/vue2-gpios.yaml` controls the Vue 2 GPIO23 Wi-Fi/status LED.
+- `packages/vue3-gpios.yaml` provides Vue 3 Wi-Fi and Ethernet status outputs.
 
-The Vue 3 package set mirrors the same structure with `packages/vue3-i2c.yaml`,
-`packages/vue3-1phase.yaml`, `packages/vue3-2phase.yaml`, and `packages/vue3-3phase.yaml`. The Vue 3 base
-package sets `hardware: vue3`, `mode: i2c`, and the validated Vue 3 I2C pins `SDA=GPIO5` and `SCL=GPIO18`. The optional
-`packages/vue3-gpios.yaml` package adds non-I2C GPIO helpers for GPIO2 WiFi status and GPIO4 Ethernet status.
+These packages are optional and separate from metering.
 
-The optional `packages/vue2-gpios.yaml` package drives the Vue 2 GPIO23 WiFi/status LED. It blinks while connecting or
-reconnecting and stays on once the node has a network connection.
+## Package Reference
 
-The topology presets create Home Assistant configuration numbers for the main voltage calibration values. The initial
-value is `0.022`, matching the old `emporia_vue` component's documented starting point. If a number was changed before,
-the restored ESPHome preference wins over the package value on boot.
+| File | Purpose |
+|---|---|
+| `packages/vue2-i2c.yaml` | Vue 2 stock-compatible I2C transport and firmware management |
+| `packages/vue2-spi.yaml` | Vue 2 raw-sample SPI transport and firmware management |
+| `packages/vue2-1phase.yaml` | Vue 2 one-line topology |
+| `packages/vue2-2phase.yaml` | Vue 2 two-line/split-phase topology |
+| `packages/vue2-3phase.yaml` | Vue 2 three-phase-with-neutral topology |
+| `packages/vue2-gpios.yaml` | Optional Vue 2 status LED helper |
+| `packages/vue3-i2c.yaml` | Vue 3 I2C transport and firmware management |
+| `packages/vue3-1phase.yaml` | Vue 3 one-line topology |
+| `packages/vue3-2phase.yaml` | Vue 3 two-line/split-phase topology |
+| `packages/vue3-3phase.yaml` | Vue 3 three-phase-with-neutral topology |
+| `packages/vue3-gpios.yaml` | Optional Vue 3 status GPIO helpers |
 
-Keep your `external_components` block in the main node YAML, then include the package:
+## Contributing and Validation
 
-```yaml
-packages:
-  emporiavue:
-    url: https://github.com/rosenrot00/emporiavue
-    ref: main
-    files:
-      - packages/vue2-i2c.yaml
-      # Pick exactly one topology package:
-      # - packages/vue2-1phase.yaml
-      # - packages/vue2-2phase.yaml
-      - packages/vue2-3phase.yaml
-```
+Useful contributions include:
 
-For Vue 3, use the same pattern with `vue3-...` package names; see the commented alternative in the example YAML above.
-Add `packages/vue3-gpios.yaml` if you want the optional Vue 3 non-I2C GPIO status helpers.
-For Vue 2, add `packages/vue2-gpios.yaml` if you want the optional GPIO23 WiFi/status LED helper.
+- Vue 2 SPI comparisons against a trusted power analyzer;
+- CT gain and phase-error measurements;
+- low-current/noise-floor results;
+- 50 Hz and 60 Hz installations;
+- split-phase, three-phase, and line-to-line validation;
+- Vue 3 feedback from additional hardware installations.
 
 ## Acknowledgements
 
-This project builds on work from the Emporia Vue local community.
-
-- Thanks to [`emporia-vue-local/esphome`](https://github.com/emporia-vue-local/esphome) for the original ESPHome
-  component and local Vue metering work.
-- Thanks to [`gekkehenkie11/emporia-SAMD09`](https://github.com/gekkehenkie11/emporia-SAMD09) for publishing a
-  stock-compatible SAMD09 firmware reference.
+- [`emporia-vue-local/esphome`](https://github.com/emporia-vue-local/esphome) for the original local Vue metering work.
+- [`gekkehenkie11/emporia-SAMD09`](https://github.com/gekkehenkie11/emporia-SAMD09) for publishing a stock-compatible
+  SAMD09 firmware reference.

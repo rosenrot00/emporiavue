@@ -128,7 +128,8 @@ class EmporiaVueComponent : public Component
     this->diagnostics_interval_ms_ = diagnostics_interval_ms;
   }
   void set_metering_interval(uint32_t metering_interval_ms) { this->metering_interval_ms_ = metering_interval_ms; }
-  void set_power_apparent_min(float power_apparent_min) { this->power_apparent_min_ = power_apparent_min; }
+  void set_minimum_apparent_power(float value) { this->minimum_apparent_power_ = value; }
+  void set_minimum_fundamental_current(float value) { this->minimum_fundamental_current_ = value; }
   void set_phase_detection_confidence_ratio(float confidence_ratio) {
     this->phase_detection_confidence_ratio_ = confidence_ratio;
   }
@@ -350,6 +351,9 @@ class EmporiaVueComponent : public Component
   struct MeteringPhase {
     uint16_t voltage_raw{0};
     uint16_t cycle_count_raw{0};
+    float voltage_fundamental_i_raw{0.0f};
+    float voltage_fundamental_q_raw{0.0f};
+    bool voltage_fundamental_valid{false};
     float frequency_hz{std::numeric_limits<float>::quiet_NaN()};
     float phase_angle_degrees{std::numeric_limits<float>::quiet_NaN()};
     uint8_t quality_flags{0};
@@ -357,6 +361,9 @@ class EmporiaVueComponent : public Component
 
   struct MeteringClamp {
     uint16_t current_raw{0};
+    float current_fundamental_i_raw{0.0f};
+    float current_fundamental_q_raw{0.0f};
+    bool current_fundamental_valid{false};
     int32_t power_raw_by_phase[3]{};
     uint8_t quality_flags{0};
   };
@@ -368,6 +375,11 @@ class EmporiaVueComponent : public Component
     uint32_t timestamp_ms{0};
     bool valid{false};
     uint8_t quality_flags{0};
+    // Mean voltage squares in voltage_raw squared units: BLACK, RED, BLUE.
+    float voltage_square_raw[3]{};
+    // Mean voltage products in voltage_raw squared units: BLACK*RED, BLACK*BLUE, RED*BLUE.
+    float voltage_product_raw[3]{};
+    bool voltage_statistics_valid{false};
     MeteringPhase phases[3]{};
     MeteringClamp clamps[19]{};
   };
@@ -383,6 +395,12 @@ class EmporiaVueComponent : public Component
     float apparent_power{0.0f};
     bool has_power_factor{false};
     float power_factor{0.0f};
+    bool has_fundamental_analysis{false};
+    float fundamental_current{0.0f};
+    float fundamental_reactive_power{0.0f};
+    float fundamental_power_factor{std::numeric_limits<float>::quiet_NaN()};
+    float displacement_angle{std::numeric_limits<float>::quiet_NaN()};
+    float current_thd{std::numeric_limits<float>::quiet_NaN()};
   };
 
   struct SpiRawScan {
@@ -391,8 +409,11 @@ class EmporiaVueComponent : public Component
     uint8_t mux_index{0};
   };
 
-  struct SpiVoltageSample {
-    int16_t value[3]{};
+  struct SpiFundamentalSample {
+    int16_t voltage[3]{};
+    int16_t main_current[3]{};
+    int16_t mux_current[2]{};
+    uint8_t mux_index{0};
   };
 
   struct SpiCrossingPosition {
@@ -403,9 +424,14 @@ class EmporiaVueComponent : public Component
   struct SpiMeteringAccumulator {
     int32_t current_sum[19]{};
     int64_t voltage_square_sum[3]{};
+    // Raw voltage products: BLACK*RED, BLACK*BLUE, RED*BLUE.
+    int64_t voltage_product_sum[3]{};
     int32_t voltage_sum[3]{};
     int64_t current_square_sum[19]{};
     int64_t raw_power_sum[19][3]{};
+    float current_fund_i[19]{};
+    float current_fund_q[19]{};
+    float current_fund_weight[19]{};
     float voltage_fund_i[3]{};
     float voltage_fund_q[3]{};
     float voltage_fund_weight{0.0f};
@@ -582,7 +608,8 @@ class EmporiaVueComponent : public Component
   void reset_spi_metering_state_();
   void decode_spi_raw_frame_(const uint8_t *frame, uint32_t sequence, uint32_t flags, uint32_t sample_counter);
   void process_spi_raw_scan_(const SpiRawScan &scan);
-  void push_spi_voltage_sample_(const SpiRawScan &scan);
+  void push_spi_fundamental_sample_(const SpiRawScan &scan, const SpiRawScan &main_current_scan,
+                                    const SpiRawScan &mux_current_scan);
   static float spi_crossing_difference_(const SpiCrossingPosition &end, const SpiCrossingPosition &start);
   bool accumulate_spi_voltage_cycle_(const SpiCrossingPosition &start_cross_sample,
                                      const SpiCrossingPosition &end_cross_sample);
@@ -643,6 +670,8 @@ class EmporiaVueComponent : public Component
                                     float *apparent_power) const;
   bool calculate_ct_measurement_(const MeteringFrame &frame, const MeteringCTClampConfig *ct_clamp,
                                  MeteringCTMeasurement *measurement) const;
+  bool calculate_ct_fundamental_analysis_(const MeteringFrame &frame, const MeteringCTClampConfig *ct_clamp,
+                                          MeteringCTMeasurement *measurement) const;
   bool calculate_group_power_(const MeteringFrame &frame, const MeteringGroupConfig *group, float *group_power,
                               uint8_t depth = 0) const;
   static float apply_power_direction_(float power, uint8_t direction);
@@ -697,7 +726,7 @@ class EmporiaVueComponent : public Component
   uint8_t spi_raw_scan_ring_index_{0};
   uint8_t spi_raw_scan_ring_count_{0};
   static constexpr uint16_t SPI_VOLTAGE_SAMPLE_RING_SIZE = 768;
-  SpiVoltageSample spi_voltage_sample_ring_[SPI_VOLTAGE_SAMPLE_RING_SIZE]{};
+  SpiFundamentalSample spi_voltage_sample_ring_[SPI_VOLTAGE_SAMPLE_RING_SIZE]{};
   uint16_t spi_voltage_sample_ring_index_{0};
   uint16_t spi_voltage_sample_ring_count_{0};
   uint64_t spi_voltage_sample_ring_last_counter_{0};
@@ -757,7 +786,8 @@ class EmporiaVueComponent : public Component
   uint8_t spi_rx_recoveries_since_valid_{0};
   uint8_t spi_rx_last_recovery_attempts_{0};
   uint32_t spi_rx_last_samd_reset_ms_{0};
-  float power_apparent_min_{5.0f};
+  float minimum_apparent_power_{5.0f};
+  float minimum_fundamental_current_{0.02f};
   float phase_detection_confidence_ratio_{1.5f};
   uint32_t phase_detection_update_interval_ms_{10000};
   std::vector<MeteringPhaseConfig *> metering_phases_{};
@@ -876,6 +906,22 @@ class MeteringCTClampConfig {
   sensor::Sensor *get_apparent_power_sensor() const { return this->apparent_power_sensor_; }
   void set_power_factor_sensor(sensor::Sensor *sensor) { this->power_factor_sensor_ = sensor; }
   sensor::Sensor *get_power_factor_sensor() const { return this->power_factor_sensor_; }
+  void set_fundamental_current_sensor(sensor::Sensor *sensor) { this->fundamental_current_sensor_ = sensor; }
+  sensor::Sensor *get_fundamental_current_sensor() const { return this->fundamental_current_sensor_; }
+  void set_fundamental_reactive_power_sensor(sensor::Sensor *sensor) {
+    this->fundamental_reactive_power_sensor_ = sensor;
+  }
+  sensor::Sensor *get_fundamental_reactive_power_sensor() const {
+    return this->fundamental_reactive_power_sensor_;
+  }
+  void set_fundamental_power_factor_sensor(sensor::Sensor *sensor) {
+    this->fundamental_power_factor_sensor_ = sensor;
+  }
+  sensor::Sensor *get_fundamental_power_factor_sensor() const { return this->fundamental_power_factor_sensor_; }
+  void set_displacement_angle_sensor(sensor::Sensor *sensor) { this->displacement_angle_sensor_ = sensor; }
+  sensor::Sensor *get_displacement_angle_sensor() const { return this->displacement_angle_sensor_; }
+  void set_current_thd_sensor(sensor::Sensor *sensor) { this->current_thd_sensor_ = sensor; }
+  sensor::Sensor *get_current_thd_sensor() const { return this->current_thd_sensor_; }
   void set_power_split_line_a_sensor(sensor::Sensor *sensor) { this->power_split_line_a_sensor_ = sensor; }
   sensor::Sensor *get_power_split_line_a_sensor() const { return this->power_split_line_a_sensor_; }
   void set_power_split_line_b_sensor(sensor::Sensor *sensor) { this->power_split_line_b_sensor_ = sensor; }
@@ -941,6 +987,11 @@ class MeteringCTClampConfig {
   sensor::Sensor *current_sensor_{nullptr};
   sensor::Sensor *apparent_power_sensor_{nullptr};
   sensor::Sensor *power_factor_sensor_{nullptr};
+  sensor::Sensor *fundamental_current_sensor_{nullptr};
+  sensor::Sensor *fundamental_reactive_power_sensor_{nullptr};
+  sensor::Sensor *fundamental_power_factor_sensor_{nullptr};
+  sensor::Sensor *displacement_angle_sensor_{nullptr};
+  sensor::Sensor *current_thd_sensor_{nullptr};
   sensor::Sensor *power_split_line_a_sensor_{nullptr};
   sensor::Sensor *power_split_line_b_sensor_{nullptr};
   MeteringPowerFilters power_filters_{};

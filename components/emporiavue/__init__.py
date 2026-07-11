@@ -112,7 +112,8 @@ CONF_FORCE_ENTITY_PREFIX = "force_entity_prefix"
 CONF_AUTO_UPDATE_SAMD = "auto_update_samd"
 CONF_DIAGNOSTICS_INTERVAL = "diagnostics_interval"
 CONF_METERING_INTERVAL = "metering_interval"
-CONF_POWER_APPARENT_MIN = "power_apparent_min"
+CONF_MINIMUM_APPARENT_POWER = "minimum_apparent_power"
+CONF_MINIMUM_FUNDAMENTAL_CURRENT = "minimum_fundamental_current"
 CONF_PHASE_DETECTION = "phase_detection"
 CONF_POWER_MIN = "power_min"
 CONF_CONFIDENCE_RATIO = "confidence_ratio"
@@ -129,6 +130,11 @@ CONF_LINE = "line"
 CONF_DIRECTION = "direction"
 CONF_POWER_APPARENT = "power_apparent"
 CONF_POWER_FACTOR = "power_factor"
+CONF_FUNDAMENTAL_CURRENT = "fundamental_current"
+CONF_FUNDAMENTAL_REACTIVE_POWER = "fundamental_reactive_power"
+CONF_FUNDAMENTAL_POWER_FACTOR = "fundamental_power_factor"
+CONF_DISPLACEMENT_ANGLE = "displacement_angle"
+CONF_CURRENT_THD = "current_thd"
 CONF_POWER_SPLIT = "power_split"
 CONF_PHASE_ID = "phase_id"
 CONF_CALIBRATION_NUMBER = "calibration_number"
@@ -145,6 +151,14 @@ CONF_LAMBDA = "lambda"
 CONF_ENERGY = "energy"
 CONF_STATE_CLASS = "state_class"
 STATE_CLASS_TOTAL = "total"
+
+SPI_ANALYSIS_SENSOR_KEYS = (
+    CONF_FUNDAMENTAL_CURRENT,
+    CONF_FUNDAMENTAL_REACTIVE_POWER,
+    CONF_FUNDAMENTAL_POWER_FACTOR,
+    CONF_DISPLACEMENT_ANGLE,
+    CONF_CURRENT_THD,
+)
 
 HARDWARE_CUSTOM = "custom"
 HARDWARE_VUE2 = "vue2"
@@ -837,7 +851,16 @@ def _apply_filter_defaults_to_metering_node(node_config, filter_defaults, path, 
         for key in (CONF_VOLTAGE, CONF_FREQUENCY, CONF_PHASE_ANGLE):
             node_config = _apply_filter_default_to_sensor(node_config, key, filter_defaults, path)
 
-    for key in (CONF_CURRENT, CONF_POWER_APPARENT, CONF_POWER_FACTOR):
+    for key in (
+        CONF_CURRENT,
+        CONF_POWER_APPARENT,
+        CONF_POWER_FACTOR,
+        CONF_FUNDAMENTAL_CURRENT,
+        CONF_FUNDAMENTAL_REACTIVE_POWER,
+        CONF_FUNDAMENTAL_POWER_FACTOR,
+        CONF_DISPLACEMENT_ANGLE,
+        CONF_CURRENT_THD,
+    ):
         node_config = _apply_filter_default_to_sensor(node_config, key, filter_defaults, path)
     node_config = _apply_filter_defaults_to_power_outputs(node_config, filter_defaults, path)
     node_config = _apply_filter_defaults_to_power_split(node_config, filter_defaults, path)
@@ -948,7 +971,7 @@ def _apply_raw_power_defaults(config):
         mains = dict(config[CONF_MAINS])
         for main_key, main_config in list(mains.items()):
             if isinstance(main_config, dict):
-                default_base_name = main_key.replace("_", " ").title()
+                default_base_name = main_config.get(CONF_NAME, main_key.replace("_", " ").title())
                 main_config = _apply_power_output_defaults(
                     main_config,
                     f"{main_key}_power",
@@ -964,6 +987,25 @@ def _apply_raw_power_defaults(config):
                 )
                 main_config = _apply_optional_sensor_default_name(
                     main_config, CONF_POWER_FACTOR, _name_from_power_name(default_name, "Power Factor")
+                )
+                main_config = _apply_optional_sensor_default_name(
+                    main_config, CONF_FUNDAMENTAL_CURRENT, f"{default_base_name} Fundamental Current"
+                )
+                main_config = _apply_optional_sensor_default_name(
+                    main_config,
+                    CONF_FUNDAMENTAL_REACTIVE_POWER,
+                    f"{default_base_name} Fundamental Reactive Power",
+                )
+                main_config = _apply_optional_sensor_default_name(
+                    main_config,
+                    CONF_FUNDAMENTAL_POWER_FACTOR,
+                    f"{default_base_name} Fundamental Power Factor",
+                )
+                main_config = _apply_optional_sensor_default_name(
+                    main_config, CONF_DISPLACEMENT_ANGLE, f"{default_base_name} Displacement Angle"
+                )
+                main_config = _apply_optional_sensor_default_name(
+                    main_config, CONF_CURRENT_THD, f"{default_base_name} Current THD"
                 )
                 mains[main_key] = main_config
         config[CONF_MAINS] = mains
@@ -992,6 +1034,25 @@ def _apply_raw_power_defaults(config):
                     circuits[circuit_key],
                     CONF_POWER_FACTOR,
                     _name_from_power_name(default_name, "Power Factor"),
+                )
+                circuits[circuit_key] = _apply_optional_sensor_default_name(
+                    circuits[circuit_key], CONF_FUNDAMENTAL_CURRENT, f"{default_base_name} Fundamental Current"
+                )
+                circuits[circuit_key] = _apply_optional_sensor_default_name(
+                    circuits[circuit_key],
+                    CONF_FUNDAMENTAL_REACTIVE_POWER,
+                    f"{default_base_name} Fundamental Reactive Power",
+                )
+                circuits[circuit_key] = _apply_optional_sensor_default_name(
+                    circuits[circuit_key],
+                    CONF_FUNDAMENTAL_POWER_FACTOR,
+                    f"{default_base_name} Fundamental Power Factor",
+                )
+                circuits[circuit_key] = _apply_optional_sensor_default_name(
+                    circuits[circuit_key], CONF_DISPLACEMENT_ANGLE, f"{default_base_name} Displacement Angle"
+                )
+                circuits[circuit_key] = _apply_optional_sensor_default_name(
+                    circuits[circuit_key], CONF_CURRENT_THD, f"{default_base_name} Current THD"
                 )
                 circuits[circuit_key] = _apply_power_split_defaults(
                     circuit_key, circuits[circuit_key], default_name
@@ -1031,6 +1092,25 @@ def _apply_raw_power_defaults(config):
                 )
                 ct_config = _apply_optional_sensor_default_name(
                     ct_config, CONF_POWER_FACTOR, _name_from_power_name(default_name, "Power Factor")
+                )
+                ct_config = _apply_optional_sensor_default_name(
+                    ct_config, CONF_FUNDAMENTAL_CURRENT, f"{default_base_name} Fundamental Current"
+                )
+                ct_config = _apply_optional_sensor_default_name(
+                    ct_config,
+                    CONF_FUNDAMENTAL_REACTIVE_POWER,
+                    f"{default_base_name} Fundamental Reactive Power",
+                )
+                ct_config = _apply_optional_sensor_default_name(
+                    ct_config,
+                    CONF_FUNDAMENTAL_POWER_FACTOR,
+                    f"{default_base_name} Fundamental Power Factor",
+                )
+                ct_config = _apply_optional_sensor_default_name(
+                    ct_config, CONF_DISPLACEMENT_ANGLE, f"{default_base_name} Displacement Angle"
+                )
+                ct_config = _apply_optional_sensor_default_name(
+                    ct_config, CONF_CURRENT_THD, f"{default_base_name} Current THD"
                 )
                 ct_clamps.append(ct_config)
             else:
@@ -1485,6 +1565,27 @@ POWER_FACTOR_SENSOR_SCHEMA = sensor.sensor_schema(
     accuracy_decimals=2,
 )
 
+FUNDAMENTAL_REACTIVE_POWER_SENSOR_SCHEMA = sensor.sensor_schema(
+    unit_of_measurement="var",
+    device_class="reactive_power",
+    state_class=STATE_CLASS_MEASUREMENT,
+    accuracy_decimals=1,
+)
+
+DISPLACEMENT_ANGLE_SENSOR_SCHEMA = sensor.sensor_schema(
+    unit_of_measurement=UNIT_DEGREES,
+    icon="mdi:angle-acute",
+    state_class=STATE_CLASS_MEASUREMENT,
+    accuracy_decimals=2,
+)
+
+CURRENT_THD_SENSOR_SCHEMA = sensor.sensor_schema(
+    unit_of_measurement="%",
+    icon="mdi:sine-wave",
+    state_class=STATE_CLASS_MEASUREMENT,
+    accuracy_decimals=1,
+)
+
 POWER_SPLIT_SENSOR_SCHEMA = cv.Schema(
     {
         cv.Optional("line_1"): POWER_SENSOR_SCHEMA,
@@ -1504,6 +1605,11 @@ FILTER_DEFAULTS_SCHEMA = cv.Schema(
         cv.Optional(CONF_POWER): FILTER_DEFAULT_VALUE_SCHEMA,
         cv.Optional(CONF_POWER_APPARENT): FILTER_DEFAULT_VALUE_SCHEMA,
         cv.Optional(CONF_POWER_FACTOR): FILTER_DEFAULT_VALUE_SCHEMA,
+        cv.Optional(CONF_FUNDAMENTAL_CURRENT): FILTER_DEFAULT_VALUE_SCHEMA,
+        cv.Optional(CONF_FUNDAMENTAL_REACTIVE_POWER): FILTER_DEFAULT_VALUE_SCHEMA,
+        cv.Optional(CONF_FUNDAMENTAL_POWER_FACTOR): FILTER_DEFAULT_VALUE_SCHEMA,
+        cv.Optional(CONF_DISPLACEMENT_ANGLE): FILTER_DEFAULT_VALUE_SCHEMA,
+        cv.Optional(CONF_CURRENT_THD): FILTER_DEFAULT_VALUE_SCHEMA,
         cv.Optional(CONF_ENERGY): FILTER_DEFAULT_VALUE_SCHEMA,
     }
 )
@@ -1584,6 +1690,25 @@ def _validate_volt_amps(value):
     value = cv.float_(value)
     if value < 0:
         raise cv.Invalid("apparent power value must not be negative")
+    return value
+
+
+def _validate_amperes(value):
+    if isinstance(value, str):
+        normalized = value.strip().lower().replace(" ", "")
+        multiplier = 1.0
+        if normalized.endswith("ma"):
+            normalized = normalized[:-2]
+            multiplier = 0.001
+        elif normalized.endswith("a"):
+            normalized = normalized[:-1]
+        try:
+            value = float(normalized) * multiplier
+        except ValueError as err:
+            raise cv.Invalid("current value must be a number, A, or mA value") from err
+    value = cv.float_(value)
+    if value <= 0:
+        raise cv.Invalid("current value must be positive")
     return value
 
 
@@ -1685,6 +1810,7 @@ METERING_MAIN_SCHEMA = cv.Schema(
         cv.GenerateID(CONF_CT_ID): cv.declare_id(MeteringCTClampConfig),
         cv.Required(CONF_VOLTAGE_INPUT): cv.one_of(*PHASE_INPUTS.keys(), upper=True),
         cv.Required(CONF_MAIN_CLAMP): cv.one_of("A", "B", "C", upper=True),
+        cv.Optional(CONF_NAME): cv.string_strict,
         cv.Required(CONF_CALIBRATION): cv.positive_float,
         cv.Optional(CONF_CALIBRATION_NUMBER): CALIBRATION_NUMBER_SCHEMA,
         cv.Optional(CONF_VOLTAGE): PHASE_VOLTAGE_SENSOR_SCHEMA,
@@ -1695,6 +1821,11 @@ METERING_MAIN_SCHEMA = cv.Schema(
         cv.Optional(CONF_CURRENT): CURRENT_SENSOR_SCHEMA,
         cv.Optional(CONF_POWER_APPARENT): APPARENT_POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_POWER_FACTOR): POWER_FACTOR_SENSOR_SCHEMA,
+        cv.Optional(CONF_FUNDAMENTAL_CURRENT): CURRENT_SENSOR_SCHEMA,
+        cv.Optional(CONF_FUNDAMENTAL_REACTIVE_POWER): FUNDAMENTAL_REACTIVE_POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_FUNDAMENTAL_POWER_FACTOR): POWER_FACTOR_SENSOR_SCHEMA,
+        cv.Optional(CONF_DISPLACEMENT_ANGLE): DISPLACEMENT_ANGLE_SENSOR_SCHEMA,
+        cv.Optional(CONF_CURRENT_THD): CURRENT_THD_SENSOR_SCHEMA,
         cv.Optional(CONF_ENERGY): _validate_energy_sensor,
     }
 )
@@ -1774,6 +1905,11 @@ METERING_CIRCUIT_SCHEMA = cv.Schema(
         cv.Optional(CONF_CURRENT): CURRENT_SENSOR_SCHEMA,
         cv.Optional(CONF_POWER_APPARENT): APPARENT_POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_POWER_FACTOR): POWER_FACTOR_SENSOR_SCHEMA,
+        cv.Optional(CONF_FUNDAMENTAL_CURRENT): CURRENT_SENSOR_SCHEMA,
+        cv.Optional(CONF_FUNDAMENTAL_REACTIVE_POWER): FUNDAMENTAL_REACTIVE_POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_FUNDAMENTAL_POWER_FACTOR): POWER_FACTOR_SENSOR_SCHEMA,
+        cv.Optional(CONF_DISPLACEMENT_ANGLE): DISPLACEMENT_ANGLE_SENSOR_SCHEMA,
+        cv.Optional(CONF_CURRENT_THD): CURRENT_THD_SENSOR_SCHEMA,
         cv.Optional(CONF_POWER_SPLIT): POWER_SPLIT_SENSOR_SCHEMA,
         cv.Optional(CONF_PHASE_DETECTION): _validate_phase_detection_sensor,
         cv.Optional(CONF_ENERGY): _validate_energy_sensor,
@@ -1833,6 +1969,17 @@ def _validate_metering_topology(config):
     mains = config.get(CONF_MAINS, {})
     groups = config.get(CONF_GROUPS, {})
     source_keys = set(circuits.keys()) | set(mains.keys()) | set(groups.keys())
+
+    if config[CONF_MODE] != MODE_SPI:
+        analysis_nodes = [
+            *((f"mains.{key}", node) for key, node in mains.items()),
+            *((f"circuits.{key}", node) for key, node in circuits.items()),
+            *((f"ct_clamps[{index}]", node) for index, node in enumerate(config.get(CONF_CT_CLAMPS, []))),
+        ]
+        for path, node in analysis_nodes:
+            for key in SPI_ANALYSIS_SENSOR_KEYS:
+                if key in node:
+                    raise cv.Invalid(f"{path}.{key} is only supported in SPI mode")
 
     for circuit_key, circuit_config in circuits.items():
         if CONF_PHASE_DETECTION in circuit_config and isinstance(circuit_config[CONF_LINE], list):
@@ -1920,6 +2067,11 @@ METERING_CT_CLAMP_SCHEMA = cv.Schema(
         cv.Optional(CONF_CURRENT): CURRENT_SENSOR_SCHEMA,
         cv.Optional(CONF_POWER_APPARENT): APPARENT_POWER_SENSOR_SCHEMA,
         cv.Optional(CONF_POWER_FACTOR): POWER_FACTOR_SENSOR_SCHEMA,
+        cv.Optional(CONF_FUNDAMENTAL_CURRENT): CURRENT_SENSOR_SCHEMA,
+        cv.Optional(CONF_FUNDAMENTAL_REACTIVE_POWER): FUNDAMENTAL_REACTIVE_POWER_SENSOR_SCHEMA,
+        cv.Optional(CONF_FUNDAMENTAL_POWER_FACTOR): POWER_FACTOR_SENSOR_SCHEMA,
+        cv.Optional(CONF_DISPLACEMENT_ANGLE): DISPLACEMENT_ANGLE_SENSOR_SCHEMA,
+        cv.Optional(CONF_CURRENT_THD): CURRENT_THD_SENSOR_SCHEMA,
         cv.Optional(CONF_ENERGY): _validate_energy_sensor,
     }
 )
@@ -1948,7 +2100,8 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_AUTO_UPDATE_SAMD, default=False): cv.boolean,
         cv.Optional(CONF_DIAGNOSTICS_INTERVAL): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_METERING_INTERVAL, default="220ms"): cv.positive_time_period_milliseconds,
-        cv.Optional(CONF_POWER_APPARENT_MIN, default="5VA"): _validate_volt_amps,
+        cv.Optional(CONF_MINIMUM_APPARENT_POWER, default="5VA"): _validate_volt_amps,
+        cv.Optional(CONF_MINIMUM_FUNDAMENTAL_CURRENT, default="20mA"): _validate_amperes,
         cv.Optional(CONF_PHASE_DETECTION, default={}): PHASE_DETECTION_GLOBAL_SCHEMA,
         cv.Optional(CONF_FILTER_DEFAULTS): FILTER_DEFAULTS_SCHEMA,
         cv.Optional(CONF_MAINS): _validate_mains,
@@ -2113,6 +2266,20 @@ async def _add_power_outputs(var, power_configs):
             await _new_total_daily_energy_sensor(energy_config, raw_sensor)
 
 
+async def _add_fundamental_analysis_sensors(var, config):
+    sensor_setters = (
+        (CONF_FUNDAMENTAL_CURRENT, var.set_fundamental_current_sensor),
+        (CONF_FUNDAMENTAL_REACTIVE_POWER, var.set_fundamental_reactive_power_sensor),
+        (CONF_FUNDAMENTAL_POWER_FACTOR, var.set_fundamental_power_factor_sensor),
+        (CONF_DISPLACEMENT_ANGLE, var.set_displacement_angle_sensor),
+        (CONF_CURRENT_THD, var.set_current_thd_sensor),
+    )
+    for key, setter in sensor_setters:
+        if sensor_config := config.get(key):
+            sens = await sensor.new_sensor(sensor_config)
+            cg.add(setter(sens))
+
+
 async def to_code(config):
     external_firmwares = []
     for external_firmware_config in config.get(CONF_EXTERNAL_SAMD_FIRMWARE, []):
@@ -2157,7 +2324,8 @@ async def to_code(config):
     if diagnostics_interval := config.get(CONF_DIAGNOSTICS_INTERVAL):
         cg.add(var.set_diagnostics_interval(diagnostics_interval))
     cg.add(var.set_metering_interval(config[CONF_METERING_INTERVAL]))
-    cg.add(var.set_power_apparent_min(config[CONF_POWER_APPARENT_MIN]))
+    cg.add(var.set_minimum_apparent_power(config[CONF_MINIMUM_APPARENT_POWER]))
+    cg.add(var.set_minimum_fundamental_current(config[CONF_MINIMUM_FUNDAMENTAL_CURRENT]))
     phase_detection_config = config[CONF_PHASE_DETECTION]
     cg.add(var.set_phase_detection_confidence_ratio(phase_detection_config[CONF_CONFIDENCE_RATIO]))
     cg.add(var.set_phase_detection_update_interval(phase_detection_config[CONF_UPDATE_INTERVAL]))
@@ -2239,6 +2407,7 @@ async def to_code(config):
         if power_factor_config := main_config.get(CONF_POWER_FACTOR):
             sens = await sensor.new_sensor(power_factor_config)
             cg.add(ct_clamp_var.set_power_factor_sensor(sens))
+        await _add_fundamental_analysis_sensors(ct_clamp_var, main_config)
         ct_clamps.append(ct_clamp_var)
         power_source_ct_clamps_by_key[phase_key] = ct_clamp_var
 
@@ -2265,6 +2434,7 @@ async def to_code(config):
         if power_factor_config := circuit_config.get(CONF_POWER_FACTOR):
             sens = await sensor.new_sensor(power_factor_config)
             cg.add(ct_clamp_var.set_power_factor_sensor(sens))
+        await _add_fundamental_analysis_sensors(ct_clamp_var, circuit_config)
         if power_split_config := circuit_config.get(CONF_POWER_SPLIT):
             line_a_key = _power_split_line_key(line_config[0])
             line_b_key = _power_split_line_key(line_config[1])
@@ -2351,6 +2521,7 @@ async def to_code(config):
         if power_factor_config := ct_config.get(CONF_POWER_FACTOR):
             sens = await sensor.new_sensor(power_factor_config)
             cg.add(ct_clamp_var.set_power_factor_sensor(sens))
+        await _add_fundamental_analysis_sensors(ct_clamp_var, ct_config)
 
         ct_clamps.append(ct_clamp_var)
     if ct_clamps:

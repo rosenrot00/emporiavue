@@ -97,6 +97,20 @@ bool EmporiaVueComponent::calculate_line_to_line_voltage_(const MeteringFrame &f
 
   const uint8_t input_a = line_a->get_input_wire();
   const uint8_t input_b = line_b->get_input_wire();
+  if (frame.voltage_statistics_valid && input_a != input_b) {
+    uint8_t pair = 2;
+    if (input_a == 0 || input_b == 0) {
+      pair = input_a == 0 ? static_cast<uint8_t>(input_b - 1) : static_cast<uint8_t>(input_a - 1);
+    }
+    const float calibration_a = line_a->get_calibration();
+    const float calibration_b = line_b->get_calibration();
+    const float voltage_sq = frame.voltage_square_raw[input_a] * calibration_a * calibration_a +
+                             frame.voltage_square_raw[input_b] * calibration_b * calibration_b -
+                             2.0f * frame.voltage_product_raw[pair] * calibration_a * calibration_b;
+    *voltage = std::sqrt(std::max(0.0f, voltage_sq));
+    return true;
+  }
+
   const float angle_a_degrees = frame.phases[input_a].phase_angle_degrees;
   const float angle_b_degrees = frame.phases[input_b].phase_angle_degrees;
   if (std::isnan(angle_a_degrees) || std::isnan(angle_b_degrees)) {
@@ -173,7 +187,7 @@ bool EmporiaVueComponent::calculate_ct_measurement_(const MeteringFrame &frame,
         std::fabs(ct_clamp->apply_power_filters(measurement->voltage * measurement->current));
     measurement->has_apparent_power = true;
     measurement->has_power_factor = true;
-    if (measurement->apparent_power >= this->power_apparent_min_ && measurement->apparent_power > 0.0f &&
+    if (measurement->apparent_power >= this->minimum_apparent_power_ && measurement->apparent_power > 0.0f &&
         measurement->has_power) {
       measurement->power_factor =
           std::max(0.0f, std::min(1.0f, std::fabs(measurement->power) / measurement->apparent_power));
@@ -181,6 +195,84 @@ bool EmporiaVueComponent::calculate_ct_measurement_(const MeteringFrame &frame,
   }
   return measurement->has_power || measurement->has_voltage || measurement->has_current ||
          measurement->has_apparent_power;
+}
+
+bool EmporiaVueComponent::calculate_ct_fundamental_analysis_(const MeteringFrame &frame,
+                                                             const MeteringCTClampConfig *ct_clamp,
+                                                             MeteringCTMeasurement *measurement) const {
+  if (ct_clamp == nullptr || measurement == nullptr || frame.transport != MeteringTransport::SPI) {
+    return false;
+  }
+
+  const uint8_t port = ct_clamp->get_input_port();
+  const MeteringPhaseConfig *phase_a = ct_clamp->get_phase();
+  if (port >= 19 || phase_a == nullptr || phase_a->get_input_wire() >= 3 ||
+      !frame.clamps[port].current_fundamental_valid) {
+    return false;
+  }
+
+  auto voltage_phasor = [&frame](const MeteringPhaseConfig *phase, float *i, float *q) -> bool {
+    if (phase == nullptr || i == nullptr || q == nullptr || phase->get_input_wire() >= 3) {
+      return false;
+    }
+    const auto &value = frame.phases[phase->get_input_wire()];
+    if (!value.voltage_fundamental_valid) {
+      return false;
+    }
+    *i = value.voltage_fundamental_i_raw * phase->get_calibration();
+    *q = value.voltage_fundamental_q_raw * phase->get_calibration();
+    return true;
+  };
+
+  float voltage_i = 0.0f;
+  float voltage_q = 0.0f;
+  if (!voltage_phasor(phase_a, &voltage_i, &voltage_q)) {
+    return false;
+  }
+  if (ct_clamp->is_line_pair()) {
+    float voltage_b_i = 0.0f;
+    float voltage_b_q = 0.0f;
+    if (!voltage_phasor(ct_clamp->get_line_pair_phase_b(), &voltage_b_i, &voltage_b_q)) {
+      return false;
+    }
+    voltage_i -= voltage_b_i;
+    voltage_q -= voltage_b_q;
+  }
+
+  const float current_scalar = port < 3 ? (775.0f / 42624.0f) : (775.0f / 170496.0f);
+  const float current_i = frame.clamps[port].current_fundamental_i_raw * current_scalar;
+  const float current_q = frame.clamps[port].current_fundamental_q_raw * current_scalar;
+  const float fundamental_current = std::hypot(current_i, current_q);
+  measurement->has_fundamental_analysis = true;
+  measurement->fundamental_current = fundamental_current;
+
+  if (fundamental_current < this->minimum_fundamental_current_) {
+    measurement->fundamental_current = 0.0f;
+    measurement->fundamental_reactive_power = 0.0f;
+    return true;
+  }
+
+  const float fundamental_voltage = std::hypot(voltage_i, voltage_q);
+  const float active_power = voltage_i * current_i + voltage_q * current_q;
+  const float reactive_power = voltage_i * current_q - voltage_q * current_i;
+  const float apparent_power = fundamental_voltage * fundamental_current;
+
+  measurement->fundamental_reactive_power = reactive_power;
+  if (apparent_power > 0.0f) {
+    measurement->fundamental_power_factor =
+        std::max(0.0f, std::min(1.0f, std::fabs(active_power) / apparent_power));
+    measurement->displacement_angle = std::atan2(reactive_power, active_power) * 180.0f / 3.14159265358979323846f;
+  }
+
+  if (measurement->has_current && fundamental_current > 0.0f) {
+    const float consistency_tolerance = std::max(0.001f, measurement->current * 0.01f);
+    if (fundamental_current <= measurement->current + consistency_tolerance) {
+      const float harmonic_current_sq =
+          std::max(0.0f, measurement->current * measurement->current - fundamental_current * fundamental_current);
+      measurement->current_thd = std::sqrt(harmonic_current_sq) * 100.0f / fundamental_current;
+    }
+  }
+  return true;
 }
 
 float EmporiaVueComponent::apply_power_direction_(float power, uint8_t direction) {
@@ -410,6 +502,8 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
 
     MeteringCTMeasurement measurement{};
     this->calculate_ct_measurement_(frame, ct_clamp, &measurement);
+    const bool has_fundamental_analysis =
+        this->calculate_ct_fundamental_analysis_(frame, ct_clamp, &measurement);
     if (measurement.has_power) {
       publish_power_outputs_(ct_clamp->get_power_outputs(), measurement.power);
       if (ct_clamp->is_line_pair()) {
@@ -427,11 +521,32 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
     }
 
     if (ct_clamp->get_apparent_power_sensor() != nullptr && measurement.has_apparent_power) {
-      const bool above_threshold = measurement.apparent_power >= this->power_apparent_min_;
+      const bool above_threshold = measurement.apparent_power >= this->minimum_apparent_power_;
       ct_clamp->get_apparent_power_sensor()->publish_state(above_threshold ? measurement.apparent_power : 0.0f);
     }
     if (ct_clamp->get_power_factor_sensor() != nullptr && measurement.has_power_factor) {
       ct_clamp->get_power_factor_sensor()->publish_state(measurement.power_factor);
+    }
+    const float unavailable = std::numeric_limits<float>::quiet_NaN();
+    if (ct_clamp->get_fundamental_current_sensor() != nullptr) {
+      ct_clamp->get_fundamental_current_sensor()->publish_state(
+          has_fundamental_analysis ? measurement.fundamental_current : unavailable);
+    }
+    if (ct_clamp->get_fundamental_reactive_power_sensor() != nullptr) {
+      ct_clamp->get_fundamental_reactive_power_sensor()->publish_state(
+          has_fundamental_analysis ? measurement.fundamental_reactive_power : unavailable);
+    }
+    if (ct_clamp->get_fundamental_power_factor_sensor() != nullptr) {
+      ct_clamp->get_fundamental_power_factor_sensor()->publish_state(
+          has_fundamental_analysis ? measurement.fundamental_power_factor : unavailable);
+    }
+    if (ct_clamp->get_displacement_angle_sensor() != nullptr) {
+      ct_clamp->get_displacement_angle_sensor()->publish_state(
+          has_fundamental_analysis ? measurement.displacement_angle : unavailable);
+    }
+    if (ct_clamp->get_current_thd_sensor() != nullptr) {
+      ct_clamp->get_current_thd_sensor()->publish_state(
+          has_fundamental_analysis ? measurement.current_thd : unavailable);
     }
     this->update_phase_detection_(frame, ct_clamp);
   }

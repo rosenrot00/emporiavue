@@ -84,7 +84,7 @@ time:
     lambda: 'return max(x, 0.0f);'
 
 emporiavue:
-  power_apparent_min: 5VA
+  minimum_apparent_power: 5VA
 
   filter_defaults:
     voltage: [*throttle_avg, *pos]

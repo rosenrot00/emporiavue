@@ -81,7 +81,8 @@ void EmporiaVueComponent::dump_config() {
   } else {
     ESP_LOGCONFIG(TAG, "  Metering interval: %" PRIu32 " ms", this->metering_interval_ms_);
   }
-  ESP_LOGCONFIG(TAG, "  Apparent power minimum: %.1f VA", this->power_apparent_min_);
+  ESP_LOGCONFIG(TAG, "  Minimum apparent power: %.1f VA", this->minimum_apparent_power_);
+  ESP_LOGCONFIG(TAG, "  Minimum fundamental current: %.3f A", this->minimum_fundamental_current_);
   ESP_LOGCONFIG(TAG, "  Phase detection confidence ratio: %.2f", this->phase_detection_confidence_ratio_);
   ESP_LOGCONFIG(TAG, "  Phase detection window: %" PRIu32 " ms", this->phase_detection_update_interval_ms_);
   const char *entity_prefix = this->entity_prefix_.empty() ? "(default)" : this->entity_prefix_.c_str();
@@ -121,6 +122,11 @@ void EmporiaVueComponent::dump_config() {
     LOG_SENSOR("    ", "Current", ct_clamp->get_current_sensor());
     LOG_SENSOR("    ", "Apparent power", ct_clamp->get_apparent_power_sensor());
     LOG_SENSOR("    ", "Power factor", ct_clamp->get_power_factor_sensor());
+    LOG_SENSOR("    ", "Fundamental current", ct_clamp->get_fundamental_current_sensor());
+    LOG_SENSOR("    ", "Fundamental reactive power", ct_clamp->get_fundamental_reactive_power_sensor());
+    LOG_SENSOR("    ", "Fundamental power factor", ct_clamp->get_fundamental_power_factor_sensor());
+    LOG_SENSOR("    ", "Displacement angle", ct_clamp->get_displacement_angle_sensor());
+    LOG_SENSOR("    ", "Current THD", ct_clamp->get_current_thd_sensor());
     LOG_SENSOR("    ", "Power split line A", ct_clamp->get_power_split_line_a_sensor());
     LOG_SENSOR("    ", "Power split line B", ct_clamp->get_power_split_line_b_sensor());
     LOG_TEXT_SENSOR("    ", "Phase detection", ct_clamp->get_phase_detection_sensor());
