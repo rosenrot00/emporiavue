@@ -9,7 +9,7 @@ emporiavue:
     line_1:
       voltage_input: BLACK
       main_clamp: A
-      calibration: 0.022
+      voltage_calibration: 0.022
       voltage:
         id: line_1_voltage
         name: "Line 1 Voltage"

@@ -240,6 +240,63 @@ void EmporiaVueComponent::submit_metering_frame_(const MeteringFrame &frame) {
   this->publish_metering_frame_(frame);
 }
 
+bool EmporiaVueComponent::calculate_ct_fundamental_phasors_(
+    const MeteringFrame &frame, const MeteringCTClampConfig *ct_clamp, float *voltage_i, float *voltage_q,
+    float *current_i, float *current_q, bool apply_phase_correction) const {
+  if (ct_clamp == nullptr || voltage_i == nullptr || voltage_q == nullptr || current_i == nullptr ||
+      current_q == nullptr || frame.transport != MeteringTransport::SPI) {
+    return false;
+  }
+
+  const uint8_t port = ct_clamp->get_input_port();
+  const MeteringPhaseConfig *phase_a = ct_clamp->get_phase();
+  if (port >= 19 || phase_a == nullptr || phase_a->get_input_wire() >= 3 ||
+      !frame.clamps[port].current_fundamental_valid) {
+    return false;
+  }
+
+  auto voltage_phasor = [&frame](const MeteringPhaseConfig *phase, float *i, float *q) -> bool {
+    if (phase == nullptr || i == nullptr || q == nullptr || phase->get_input_wire() >= 3) {
+      return false;
+    }
+    const auto &value = frame.phases[phase->get_input_wire()];
+    if (!value.voltage_fundamental_valid) {
+      return false;
+    }
+    *i = value.voltage_fundamental_i_raw * phase->get_calibration();
+    *q = value.voltage_fundamental_q_raw * phase->get_calibration();
+    return true;
+  };
+
+  if (!voltage_phasor(phase_a, voltage_i, voltage_q)) {
+    return false;
+  }
+  if (ct_clamp->is_line_pair()) {
+    float voltage_b_i = 0.0f;
+    float voltage_b_q = 0.0f;
+    if (!voltage_phasor(ct_clamp->get_line_pair_phase_b(), &voltage_b_i, &voltage_b_q)) {
+      return false;
+    }
+    *voltage_i -= voltage_b_i;
+    *voltage_q -= voltage_b_q;
+  }
+
+  const float current_scalar = port < 3 ? (775.0f / 42624.0f) : (775.0f / 170496.0f);
+  *current_i = frame.clamps[port].current_fundamental_i_raw * current_scalar * ct_clamp->get_current_gain();
+  *current_q = frame.clamps[port].current_fundamental_q_raw * current_scalar * ct_clamp->get_current_gain();
+  if (apply_phase_correction && ct_clamp->get_current_phase_correction() != 0.0f) {
+    constexpr float degrees_to_radians = 3.14159265358979323846f / 180.0f;
+    const float angle = ct_clamp->get_current_phase_correction() * degrees_to_radians;
+    const float cosine = std::cos(angle);
+    const float sine = std::sin(angle);
+    const float corrected_i = *current_i * cosine - *current_q * sine;
+    const float corrected_q = *current_i * sine + *current_q * cosine;
+    *current_i = corrected_i;
+    *current_q = corrected_q;
+  }
+  return true;
+}
+
 bool EmporiaVueComponent::calculate_ct_power_(const MeteringFrame &frame, const MeteringCTClampConfig *ct_clamp,
                                               float *power) const {
   if (ct_clamp == nullptr || power == nullptr) {
@@ -253,6 +310,7 @@ bool EmporiaVueComponent::calculate_ct_power_(const MeteringFrame &frame, const 
   }
 
   const float correction_factor = port < 3 ? 5.5f : 22.0f;
+  float corrected_power = 0.0f;
   if (ct_clamp->is_line_pair()) {
     const MeteringPhaseConfig *phase_b = ct_clamp->get_line_pair_phase_b();
     if (phase_b == nullptr || phase_b->get_input_wire() >= 3) {
@@ -263,12 +321,32 @@ bool EmporiaVueComponent::calculate_ct_power_(const MeteringFrame &frame, const 
     const int32_t raw_power_b = frame.clamps[port].power_raw_by_phase[phase_b->get_input_wire()];
     const float power_a = raw_power_a * phase->get_calibration() / correction_factor;
     const float power_b = raw_power_b * phase_b->get_calibration() / correction_factor;
-    *power = ct_clamp->apply_power_filters(power_a - power_b);
-    return true;
+    corrected_power = (power_a - power_b) * ct_clamp->get_current_gain();
+  } else {
+    const int32_t raw_power = frame.clamps[port].power_raw_by_phase[phase->get_input_wire()];
+    corrected_power = raw_power * phase->get_calibration() / correction_factor * ct_clamp->get_current_gain();
   }
 
-  const int32_t raw_power = frame.clamps[port].power_raw_by_phase[phase->get_input_wire()];
-  *power = ct_clamp->apply_power_filters(raw_power * phase->get_calibration() / correction_factor);
+  if (frame.transport == MeteringTransport::SPI && ct_clamp->get_current_phase_correction() != 0.0f) {
+    float voltage_i = 0.0f;
+    float voltage_q = 0.0f;
+    float measured_current_i = 0.0f;
+    float measured_current_q = 0.0f;
+    float corrected_current_i = 0.0f;
+    float corrected_current_q = 0.0f;
+    if (this->calculate_ct_fundamental_phasors_(frame, ct_clamp, &voltage_i, &voltage_q, &measured_current_i,
+                                                &measured_current_q, false) &&
+        this->calculate_ct_fundamental_phasors_(frame, ct_clamp, &voltage_i, &voltage_q, &corrected_current_i,
+                                                &corrected_current_q, true)) {
+      const float measured_fundamental_power =
+          voltage_i * measured_current_i + voltage_q * measured_current_q;
+      const float corrected_fundamental_power =
+          voltage_i * corrected_current_i + voltage_q * corrected_current_q;
+      corrected_power += corrected_fundamental_power - measured_fundamental_power;
+    }
+  }
+
+  *power = ct_clamp->apply_power_filters(corrected_power);
   return true;
 }
 
@@ -351,7 +429,7 @@ bool EmporiaVueComponent::calculate_ct_current_(const MeteringFrame &frame, cons
     return false;
   }
   const float scalar = port < 3 ? (775.0f / 42624.0f) : (775.0f / 170496.0f);
-  *current = frame.clamps[port].current_raw * scalar;
+  *current = frame.clamps[port].current_raw * scalar * ct_clamp->get_current_gain();
   return true;
 }
 
@@ -406,44 +484,14 @@ bool EmporiaVueComponent::calculate_ct_fundamental_analysis_(const MeteringFrame
     return false;
   }
 
-  const uint8_t port = ct_clamp->get_input_port();
-  const MeteringPhaseConfig *phase_a = ct_clamp->get_phase();
-  if (port >= 19 || phase_a == nullptr || phase_a->get_input_wire() >= 3 ||
-      !frame.clamps[port].current_fundamental_valid) {
-    return false;
-  }
-
-  auto voltage_phasor = [&frame](const MeteringPhaseConfig *phase, float *i, float *q) -> bool {
-    if (phase == nullptr || i == nullptr || q == nullptr || phase->get_input_wire() >= 3) {
-      return false;
-    }
-    const auto &value = frame.phases[phase->get_input_wire()];
-    if (!value.voltage_fundamental_valid) {
-      return false;
-    }
-    *i = value.voltage_fundamental_i_raw * phase->get_calibration();
-    *q = value.voltage_fundamental_q_raw * phase->get_calibration();
-    return true;
-  };
-
   float voltage_i = 0.0f;
   float voltage_q = 0.0f;
-  if (!voltage_phasor(phase_a, &voltage_i, &voltage_q)) {
+  float current_i = 0.0f;
+  float current_q = 0.0f;
+  if (!this->calculate_ct_fundamental_phasors_(frame, ct_clamp, &voltage_i, &voltage_q, &current_i, &current_q,
+                                               true)) {
     return false;
   }
-  if (ct_clamp->is_line_pair()) {
-    float voltage_b_i = 0.0f;
-    float voltage_b_q = 0.0f;
-    if (!voltage_phasor(ct_clamp->get_line_pair_phase_b(), &voltage_b_i, &voltage_b_q)) {
-      return false;
-    }
-    voltage_i -= voltage_b_i;
-    voltage_q -= voltage_b_q;
-  }
-
-  const float current_scalar = port < 3 ? (775.0f / 42624.0f) : (775.0f / 170496.0f);
-  const float current_i = frame.clamps[port].current_fundamental_i_raw * current_scalar;
-  const float current_q = frame.clamps[port].current_fundamental_q_raw * current_scalar;
   const float fundamental_current = std::hypot(current_i, current_q);
   measurement->has_fundamental_analysis = true;
   measurement->fundamental_current = fundamental_current;
@@ -730,7 +778,7 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
     if (ct_clamp->has_peak_analysis() && frame.transport == MeteringTransport::SPI && measurement.has_current &&
         frame.clamps[port].current_peak_valid) {
       const float current_scalar = port < 3 ? (775.0f / 42624.0f) : (775.0f / 170496.0f);
-      float current_peak = frame.clamps[port].current_peak_raw * current_scalar;
+      float current_peak = frame.clamps[port].current_peak_raw * current_scalar * ct_clamp->get_current_gain();
       float current_crest_factor = unavailable;
       if (measurement.current >= this->minimum_fundamental_current_ && measurement.current > 0.0f) {
         current_crest_factor = current_peak / measurement.current;

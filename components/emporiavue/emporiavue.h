@@ -45,6 +45,8 @@ class MeteringCTClampConfig;
 class MeteringGroupConfig;
 class MeteringVirtualLineConfig;
 class MeteringCalibrationNumber;
+class MeteringCurrentGainNumber;
+class MeteringCurrentPhaseNumber;
 
 class MeteringPowerFilters {
  public:
@@ -748,6 +750,9 @@ class EmporiaVueComponent : public Component
   void fail_backup_(const std::string &error);
   void finish_backup_success_();
   bool calculate_ct_power_(const MeteringFrame &frame, const MeteringCTClampConfig *ct_clamp, float *power) const;
+  bool calculate_ct_fundamental_phasors_(const MeteringFrame &frame, const MeteringCTClampConfig *ct_clamp,
+                                         float *voltage_i, float *voltage_q, float *current_i,
+                                         float *current_q, bool apply_phase_correction) const;
   bool calculate_phase_voltage_(const MeteringFrame &frame, const MeteringPhaseConfig *phase, float *voltage) const;
   bool calculate_line_to_line_voltage_(const MeteringFrame &frame, const MeteringPhaseConfig *line_a,
                                        const MeteringPhaseConfig *line_b, float *voltage) const;
@@ -963,6 +968,34 @@ class MeteringCalibrationNumber : public number::Number, public Parented<Meterin
   bool pref_initialized_{false};
 };
 
+class MeteringCurrentGainNumber : public number::Number, public Parented<MeteringCTClampConfig> {
+ public:
+  void set_initial_value(float initial_value) { this->initial_value_ = initial_value; }
+  void setup_value();
+
+ protected:
+  void control(float value) override;
+  void ensure_preference_();
+
+  float initial_value_{1.0f};
+  ESPPreferenceObject pref_{};
+  bool pref_initialized_{false};
+};
+
+class MeteringCurrentPhaseNumber : public number::Number, public Parented<MeteringCTClampConfig> {
+ public:
+  void set_initial_value(float initial_value) { this->initial_value_ = initial_value; }
+  void setup_value();
+
+ protected:
+  void control(float value) override;
+  void ensure_preference_();
+
+  float initial_value_{0.0f};
+  ESPPreferenceObject pref_{};
+  bool pref_initialized_{false};
+};
+
 class MeteringCTClampConfig {
  public:
   struct PhaseDetectionCandidate {
@@ -985,6 +1018,15 @@ class MeteringCTClampConfig {
   bool is_line_pair() const { return this->line_pair_; }
   void set_input_port(uint8_t input_port) { this->input_port_ = input_port; }
   uint8_t get_input_port() const { return this->input_port_; }
+  void set_current_gain(float gain) { this->current_gain_ = gain; }
+  float get_current_gain() const { return this->current_gain_; }
+  void set_current_phase_correction(float degrees) { this->current_phase_correction_degrees_ = degrees; }
+  float get_current_phase_correction() const { return this->current_phase_correction_degrees_; }
+  void set_current_gain_number(MeteringCurrentGainNumber *number) { this->current_gain_number_ = number; }
+  MeteringCurrentGainNumber *get_current_gain_number() const { return this->current_gain_number_; }
+  void set_current_phase_number(MeteringCurrentPhaseNumber *number) { this->current_phase_number_ = number; }
+  MeteringCurrentPhaseNumber *get_current_phase_number() const { return this->current_phase_number_; }
+  void setup_current_calibration_numbers();
   void add_power_output(uint8_t direction, sensor::Sensor *raw_power_sensor, sensor::Sensor *power_sensor) {
     this->power_outputs_.emplace_back(direction, raw_power_sensor, power_sensor);
   }
@@ -1116,6 +1158,10 @@ class MeteringCTClampConfig {
   MeteringPhaseConfig *line_pair_phase_b_{nullptr};
   bool line_pair_{false};
   uint8_t input_port_{0};
+  float current_gain_{1.0f};
+  float current_phase_correction_degrees_{0.0f};
+  MeteringCurrentGainNumber *current_gain_number_{nullptr};
+  MeteringCurrentPhaseNumber *current_phase_number_{nullptr};
   std::vector<MeteringPowerOutput> power_outputs_{};
   sensor::Sensor *current_sensor_{nullptr};
   MeteringPeakTracker peak_tracker_{};

@@ -8,6 +8,7 @@ firmware.
 
 | Version | Changes |
 |---|---|
+| 2026.07.7 | Renamed voltage calibration options and added optional per-CT current gain and SPI phase calibration. |
 | 2026.07.6 | Added time-windowed SPI current peak and current crest factor entities. |
 | 2026.07.5 | Added configurable rolling power/current demand and daily maximum demand for mains, circuits, and groups. |
 | 2026.07.4 | Added sample-derived SPI line-to-line RMS voltage plus optional fundamental current, fundamental reactive power, fundamental power factor, displacement angle, and current THD entities. |
@@ -550,18 +551,52 @@ emporiavue:
 
 ### Runtime voltage calibration
 
-Each configured main line gets a Home Assistant calibration number. The YAML value is the initial value; a value changed
-in Home Assistant is restored after reboot.
+`voltage_calibration` is the authoritative YAML value. Add `voltage_calibration_number:` only when that line should also
+have an adjustable Home Assistant Number. The YAML value initializes the Number; a value changed in Home Assistant is
+stored and restored after reboot.
 
 ```yaml
 emporiavue:
   mains:
     line_1:
-      calibration: 0.022
+      voltage_calibration: 0.022
+      voltage_calibration_number:
+        name: "Line 1 Voltage Calibration"
 ```
 
-Calibration affects voltage and all power quantities using that voltage reference. Validate changes against a trusted
-meter and a known load.
+Voltage calibration affects voltage and all power quantities using that voltage reference. Validate changes against a
+trusted meter and a known load.
+
+Existing configurations must rename `calibration` to `voltage_calibration`. Runtime adjustment is no longer created
+automatically; add `voltage_calibration_number:` explicitly when it is wanted.
+
+### Current calibration
+
+Current calibration is optional and belongs directly to a main or circuit. `gain` works with I2C and SPI. `phase` is an
+SPI-only correction added to the measured fundamental current angle.
+
+```yaml
+emporiavue:
+  mains:
+    line_1:
+      current_calibration:
+        gain: 1.005
+
+  circuits:
+    cir2:
+      name: "Heat Pump"
+      current_calibration:
+        gain: 1.012
+        phase: -0.35°
+        gain_number:
+        phase_number:
+```
+
+When `current_calibration` is absent, `gain: 1.0` and `phase: 0°` are implied. `gain_number` and `phase_number` are
+optional persistent Home Assistant controls; without them, only YAML is used. Gain consistently scales current, power,
+apparent power, reactive power, peak, demand, energy, and groups. On SPI, phase calibration rotates the fundamental
+current phasor and corrects the fundamental contribution to active power, keeping P, Q, PF, and displacement angle
+consistent. Leave the defaults unchanged without a trusted meter and a suitable reference load.
 
 ### Phase detection helper
 

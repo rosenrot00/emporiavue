@@ -10,7 +10,7 @@ emporiavue:
     line_1:
       voltage_input: BLACK
       main_clamp: A
-      calibration: 0.022
+      voltage_calibration: 0.022
       voltage:
         id: line_1_voltage
         name: "Line 1 Voltage"
@@ -23,7 +23,7 @@ emporiavue:
     line_2:
       voltage_input: RED
       main_clamp: B
-      calibration: 0.022
+      voltage_calibration: 0.022
       voltage:
         id: line_2_voltage
         name: "Line 2 Voltage"
@@ -36,7 +36,7 @@ emporiavue:
     line_3:
       voltage_input: BLUE
       main_clamp: C
-      calibration: 0.022
+      voltage_calibration: 0.022
       voltage:
         id: line_3_voltage
         name: "Line 3 Voltage"

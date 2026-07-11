@@ -20,6 +20,7 @@ void EmporiaVueComponent::setup() {
     phase->setup_calibration_number();
   }
   for (auto *ct_clamp : this->metering_ct_clamps_) {
+    ct_clamp->setup_current_calibration_numbers();
     ct_clamp->setup_demand();
   }
   for (auto *group : this->metering_groups_) {
@@ -114,8 +115,8 @@ void EmporiaVueComponent::dump_config() {
   for (auto *phase : this->metering_phases_) {
     ESP_LOGCONFIG(TAG, "  Metering phase");
     ESP_LOGCONFIG(TAG, "    Input: %u", static_cast<unsigned>(phase->get_input_wire()));
-    ESP_LOGCONFIG(TAG, "    Calibration: %.6f", phase->get_calibration());
-    LOG_NUMBER("    ", "Calibration", phase->get_calibration_number());
+    ESP_LOGCONFIG(TAG, "    Voltage calibration: %.6f", phase->get_calibration());
+    LOG_NUMBER("    ", "Voltage calibration", phase->get_calibration_number());
     LOG_SENSOR("    ", "Voltage", phase->get_voltage_sensor());
     LOG_SENSOR("    ", "Frequency", phase->get_frequency_sensor());
     LOG_SENSOR("    ", "Phase angle", phase->get_phase_angle_sensor());
@@ -136,6 +137,10 @@ void EmporiaVueComponent::dump_config() {
                     static_cast<unsigned>(ct_clamp->get_phase()->get_input_wire()));
     }
     ESP_LOGCONFIG(TAG, "    Internal power filters: %u", static_cast<unsigned>(ct_clamp->get_power_filter_count()));
+    ESP_LOGCONFIG(TAG, "    Current gain: %.6f", ct_clamp->get_current_gain());
+    ESP_LOGCONFIG(TAG, "    Current phase correction: %.3f deg", ct_clamp->get_current_phase_correction());
+    LOG_NUMBER("    ", "Current gain calibration", ct_clamp->get_current_gain_number());
+    LOG_NUMBER("    ", "Current phase calibration", ct_clamp->get_current_phase_number());
     ESP_LOGCONFIG(TAG, "    Power outputs: %u", static_cast<unsigned>(ct_clamp->get_power_outputs().size()));
     for (const auto &output : ct_clamp->get_power_outputs()) {
       LOG_SENSOR("      ", "Raw power", output.get_raw_power_sensor());
@@ -221,6 +226,71 @@ void MeteringCalibrationNumber::control(float value) {
 }
 
 void MeteringCalibrationNumber::ensure_preference_() {
+  if (this->pref_initialized_) {
+    return;
+  }
+  this->pref_ = global_preferences->make_preference<float>(this->get_object_id_hash());
+  this->pref_initialized_ = true;
+}
+
+void MeteringCTClampConfig::setup_current_calibration_numbers() {
+  if (this->current_gain_number_ != nullptr) {
+    this->current_gain_number_->setup_value();
+  }
+  if (this->current_phase_number_ != nullptr) {
+    this->current_phase_number_->setup_value();
+  }
+}
+
+void MeteringCurrentGainNumber::setup_value() {
+  float value = this->initial_value_;
+  this->ensure_preference_();
+  this->pref_.load(&value);
+  if (this->parent_ != nullptr) {
+    this->parent_->set_current_gain(value);
+  }
+  this->publish_state(value);
+}
+
+void MeteringCurrentGainNumber::control(float value) {
+  if (this->parent_ != nullptr) {
+    this->parent_->set_current_gain(value);
+  }
+  this->ensure_preference_();
+  this->pref_.save(&value);
+  global_preferences->sync();
+  this->publish_state(value);
+}
+
+void MeteringCurrentGainNumber::ensure_preference_() {
+  if (this->pref_initialized_) {
+    return;
+  }
+  this->pref_ = global_preferences->make_preference<float>(this->get_object_id_hash());
+  this->pref_initialized_ = true;
+}
+
+void MeteringCurrentPhaseNumber::setup_value() {
+  float value = this->initial_value_;
+  this->ensure_preference_();
+  this->pref_.load(&value);
+  if (this->parent_ != nullptr) {
+    this->parent_->set_current_phase_correction(value);
+  }
+  this->publish_state(value);
+}
+
+void MeteringCurrentPhaseNumber::control(float value) {
+  if (this->parent_ != nullptr) {
+    this->parent_->set_current_phase_correction(value);
+  }
+  this->ensure_preference_();
+  this->pref_.save(&value);
+  global_preferences->sync();
+  this->publish_state(value);
+}
+
+void MeteringCurrentPhaseNumber::ensure_preference_() {
   if (this->pref_initialized_) {
     return;
   }

@@ -10,7 +10,6 @@ from esphome import pins
 from esphome.components import button, i2c, number, sensor, text_sensor, time
 from esphome.const import (
     CONF_ACCURACY_DECIMALS,
-    CONF_CALIBRATION,
     CONF_CURRENT,
     CONF_ID,
     CONF_INPUT,
@@ -66,6 +65,12 @@ MeteringGroupConfig = emporiavue_ns.class_("MeteringGroupConfig")
 MeteringVirtualLineConfig = emporiavue_ns.class_("MeteringVirtualLineConfig")
 MeteringCalibrationNumber = emporiavue_ns.class_(
     "MeteringCalibrationNumber", number.Number
+)
+MeteringCurrentGainNumber = emporiavue_ns.class_(
+    "MeteringCurrentGainNumber", number.Number
+)
+MeteringCurrentPhaseNumber = emporiavue_ns.class_(
+    "MeteringCurrentPhaseNumber", number.Number
 )
 total_daily_energy_ns = cg.esphome_ns.namespace("total_daily_energy")
 TotalDailyEnergyMethod = total_daily_energy_ns.enum("TotalDailyEnergyMethod")
@@ -145,7 +150,13 @@ CONF_CURRENT_PEAK = "current_peak"
 CONF_CURRENT_CREST_FACTOR = "current_crest_factor"
 CONF_POWER_SPLIT = "power_split"
 CONF_PHASE_ID = "phase_id"
-CONF_CALIBRATION_NUMBER = "calibration_number"
+CONF_VOLTAGE_CALIBRATION = "voltage_calibration"
+CONF_VOLTAGE_CALIBRATION_NUMBER = "voltage_calibration_number"
+CONF_CURRENT_CALIBRATION = "current_calibration"
+CONF_GAIN = "gain"
+CONF_PHASE = "phase"
+CONF_GAIN_NUMBER = "gain_number"
+CONF_PHASE_NUMBER = "phase_number"
 CONF_MAIN_CLAMP = "main_clamp"
 CONF_CT_ID = "ct_id"
 CONF_VOLTAGE_INPUT = "voltage_input"
@@ -382,13 +393,17 @@ def _apply_mains_defaults(config):
         else:
             phase_config = dict(phase_config)
 
-        calibration_number_config = phase_config.get(CONF_CALIBRATION_NUMBER)
-        default_name = f"{defaults['label']} Calibration"
-        if calibration_number_config is None:
+        if CONF_VOLTAGE_CALIBRATION_NUMBER not in phase_config:
+            normalized_mains[phase_key] = phase_config
+            continue
+
+        calibration_number_config = phase_config[CONF_VOLTAGE_CALIBRATION_NUMBER]
+        default_name = f"{defaults['label']} Voltage Calibration"
+        if calibration_number_config is None or calibration_number_config is True:
             calibration_number_config = {CONF_NAME: default_name}
             name_is_default = True
         elif not isinstance(calibration_number_config, dict):
-            raise cv.Invalid(f"mains.{phase_key}.calibration_number must be a mapping")
+            raise cv.Invalid(f"mains.{phase_key}.voltage_calibration_number must be a mapping")
         else:
             calibration_number_config = dict(calibration_number_config)
             name_is_default = calibration_number_config.get(CONF_NAME) in (None, default_name)
@@ -397,10 +412,10 @@ def _apply_mains_defaults(config):
             calibration_number_config[CONF_NAME] = default_name
         if prefix and name_is_default:
             calibration_number_config[CONF_NAME] = _prefixed_entity_name(prefix, default_name)
-        if CONF_INITIAL_VALUE not in calibration_number_config and CONF_CALIBRATION in phase_config:
-            calibration_number_config[CONF_INITIAL_VALUE] = phase_config[CONF_CALIBRATION]
+        if CONF_INITIAL_VALUE not in calibration_number_config and CONF_VOLTAGE_CALIBRATION in phase_config:
+            calibration_number_config[CONF_INITIAL_VALUE] = phase_config[CONF_VOLTAGE_CALIBRATION]
         calibration_number_config.setdefault(CONF_MODE, "BOX")
-        phase_config[CONF_CALIBRATION_NUMBER] = calibration_number_config
+        phase_config[CONF_VOLTAGE_CALIBRATION_NUMBER] = calibration_number_config
         normalized_mains[phase_key] = phase_config
 
     config[CONF_MAINS] = normalized_mains
@@ -803,6 +818,37 @@ def _apply_peak_default_names(parent_config, base_name):
     return parent_config
 
 
+def _apply_current_calibration_defaults(parent_config, base_name):
+    if CONF_CURRENT_CALIBRATION not in parent_config:
+        return parent_config
+    calibration = parent_config[CONF_CURRENT_CALIBRATION]
+    if not isinstance(calibration, dict):
+        return parent_config
+
+    calibration = dict(calibration)
+    for number_key, value_key, default_name, default_value in (
+        (CONF_GAIN_NUMBER, CONF_GAIN, f"{base_name} Current Gain Calibration", 1.0),
+        (CONF_PHASE_NUMBER, CONF_PHASE, f"{base_name} Current Phase Calibration", 0.0),
+    ):
+        if number_key not in calibration:
+            continue
+        number_config = calibration[number_key]
+        if number_config is None or number_config is True:
+            number_config = {}
+        elif not isinstance(number_config, dict):
+            continue
+        else:
+            number_config = dict(number_config)
+        number_config.setdefault(CONF_NAME, default_name)
+        number_config.setdefault(CONF_INITIAL_VALUE, calibration.get(value_key, default_value))
+        number_config.setdefault(CONF_MODE, "BOX")
+        calibration[number_key] = number_config
+
+    parent_config = dict(parent_config)
+    parent_config[CONF_CURRENT_CALIBRATION] = calibration
+    return parent_config
+
+
 def _copy_filter_default(filter_defaults, key):
     if not isinstance(filter_defaults, dict) or key not in filter_defaults:
         return None
@@ -1049,6 +1095,7 @@ def _apply_raw_power_defaults(config):
                 )
                 main_config = _apply_demand_default_names(main_config, default_base_name)
                 main_config = _apply_peak_default_names(main_config, default_base_name)
+                main_config = _apply_current_calibration_defaults(main_config, default_base_name)
                 mains[main_key] = main_config
         config[CONF_MAINS] = mains
 
@@ -1100,6 +1147,9 @@ def _apply_raw_power_defaults(config):
                     circuits[circuit_key], default_base_name
                 )
                 circuits[circuit_key] = _apply_peak_default_names(
+                    circuits[circuit_key], default_base_name
+                )
+                circuits[circuit_key] = _apply_current_calibration_defaults(
                     circuits[circuit_key], default_base_name
                 )
                 circuits[circuit_key] = _apply_power_split_defaults(
@@ -1165,6 +1215,7 @@ def _apply_raw_power_defaults(config):
                 )
                 ct_config = _apply_demand_default_names(ct_config, default_base_name)
                 ct_config = _apply_peak_default_names(ct_config, default_base_name)
+                ct_config = _apply_current_calibration_defaults(ct_config, default_base_name)
                 ct_clamps.append(ct_config)
             else:
                 ct_clamps.append(ct_config)
@@ -1559,13 +1610,43 @@ def _write_external_samd_firmware_header(firmwares=None):
         raise cv.Invalid(f"external_samd_firmware header generation failed: {err}") from err
 
 
-CALIBRATION_NUMBER_SCHEMA = number.number_schema(
+VOLTAGE_CALIBRATION_NUMBER_SCHEMA = number.number_schema(
     MeteringCalibrationNumber,
     icon="mdi:tune",
     entity_category=ENTITY_CATEGORY_CONFIG,
 ).extend(
     {
         cv.Optional(CONF_INITIAL_VALUE): cv.positive_float,
+    }
+)
+
+CURRENT_GAIN_NUMBER_SCHEMA = number.number_schema(
+    MeteringCurrentGainNumber,
+    icon="mdi:tune",
+    entity_category=ENTITY_CATEGORY_CONFIG,
+).extend(
+    {
+        cv.Optional(CONF_INITIAL_VALUE): cv.float_range(min=0.5, max=2.0),
+    }
+)
+
+CURRENT_PHASE_NUMBER_SCHEMA = number.number_schema(
+    MeteringCurrentPhaseNumber,
+    unit_of_measurement=UNIT_DEGREES,
+    icon="mdi:angle-acute",
+    entity_category=ENTITY_CATEGORY_CONFIG,
+).extend(
+    {
+        cv.Optional(CONF_INITIAL_VALUE): cv.All(cv.angle, cv.float_range(min=-10.0, max=10.0)),
+    }
+)
+
+CURRENT_CALIBRATION_SCHEMA = cv.Schema(
+    {
+        cv.Optional(CONF_GAIN, default=1.0): cv.float_range(min=0.5, max=2.0),
+        cv.Optional(CONF_PHASE, default=0.0): cv.All(cv.angle, cv.float_range(min=-10.0, max=10.0)),
+        cv.Optional(CONF_GAIN_NUMBER): CURRENT_GAIN_NUMBER_SCHEMA,
+        cv.Optional(CONF_PHASE_NUMBER): CURRENT_PHASE_NUMBER_SCHEMA,
     }
 )
 
@@ -1870,8 +1951,8 @@ def _validate_metering_phases(value):
             {
                 cv.Required(CONF_ID): cv.declare_id(MeteringPhaseConfig),
                 cv.Required(CONF_INPUT): cv.one_of(*PHASE_INPUTS.keys(), upper=True),
-                cv.Optional(CONF_CALIBRATION, default=0.022): cv.positive_float,
-                cv.Optional(CONF_CALIBRATION_NUMBER): CALIBRATION_NUMBER_SCHEMA,
+                cv.Optional(CONF_VOLTAGE_CALIBRATION, default=0.022): cv.positive_float,
+                cv.Optional(CONF_VOLTAGE_CALIBRATION_NUMBER): VOLTAGE_CALIBRATION_NUMBER_SCHEMA,
                 cv.Optional(CONF_VOLTAGE): PHASE_VOLTAGE_SENSOR_SCHEMA,
                 cv.Optional(CONF_FREQUENCY): PHASE_FREQUENCY_SENSOR_SCHEMA,
                 cv.Optional(CONF_PHASE_ANGLE): PHASE_ANGLE_SENSOR_SCHEMA,
@@ -1888,10 +1969,10 @@ def _validate_metering_phases(value):
 
     for index, phase in enumerate(phases):
         input_wire = phase[CONF_INPUT]
-        if CONF_CALIBRATION_NUMBER in phase:
-            calibration_number_config = dict(phase[CONF_CALIBRATION_NUMBER])
-            calibration_number_config.setdefault(CONF_INITIAL_VALUE, phase[CONF_CALIBRATION])
-            phase[CONF_CALIBRATION_NUMBER] = calibration_number_config
+        if CONF_VOLTAGE_CALIBRATION_NUMBER in phase:
+            calibration_number_config = dict(phase[CONF_VOLTAGE_CALIBRATION_NUMBER])
+            calibration_number_config.setdefault(CONF_INITIAL_VALUE, phase[CONF_VOLTAGE_CALIBRATION])
+            phase[CONF_VOLTAGE_CALIBRATION_NUMBER] = calibration_number_config
         if input_wire == "BLACK" and CONF_PHASE_ANGLE in phase:
             raise cv.Invalid(
                 "Phase angle is not supported for the black wire, only for red and blue",
@@ -1913,8 +1994,9 @@ METERING_MAIN_SCHEMA = cv.Schema(
         cv.Required(CONF_VOLTAGE_INPUT): cv.one_of(*PHASE_INPUTS.keys(), upper=True),
         cv.Required(CONF_MAIN_CLAMP): cv.one_of("A", "B", "C", upper=True),
         cv.Optional(CONF_NAME): cv.string_strict,
-        cv.Required(CONF_CALIBRATION): cv.positive_float,
-        cv.Optional(CONF_CALIBRATION_NUMBER): CALIBRATION_NUMBER_SCHEMA,
+        cv.Required(CONF_VOLTAGE_CALIBRATION): cv.positive_float,
+        cv.Optional(CONF_VOLTAGE_CALIBRATION_NUMBER): VOLTAGE_CALIBRATION_NUMBER_SCHEMA,
+        cv.Optional(CONF_CURRENT_CALIBRATION): CURRENT_CALIBRATION_SCHEMA,
         cv.Optional(CONF_VOLTAGE): PHASE_VOLTAGE_SENSOR_SCHEMA,
         cv.Optional(CONF_FREQUENCY): PHASE_FREQUENCY_SENSOR_SCHEMA,
         cv.Optional(CONF_PHASE_ANGLE): PHASE_ANGLE_SENSOR_SCHEMA,
@@ -2010,6 +2092,7 @@ METERING_CIRCUIT_SCHEMA = cv.Schema(
         cv.Required(CONF_INPUT): cv.one_of(*BRANCH_CT_INPUTS.keys(), upper=True),
         cv.Required(CONF_LINE): _validate_metering_line,
         cv.Optional(CONF_NAME): cv.string_strict,
+        cv.Optional(CONF_CURRENT_CALIBRATION): CURRENT_CALIBRATION_SCHEMA,
         cv.Optional(CONF_FILTERS): INTERNAL_POWER_FILTER_SCHEMA,
         cv.Optional(CONF_POWER): _validate_power_outputs,
         cv.Optional(CONF_CURRENT): CURRENT_SENSOR_SCHEMA,
@@ -2101,6 +2184,14 @@ def _validate_metering_topology(config):
             for key in SPI_ANALYSIS_SENSOR_KEYS:
                 if key in node:
                     raise cv.Invalid(f"{path}.{key} is only supported in SPI mode")
+            current_calibration = node.get(CONF_CURRENT_CALIBRATION)
+            if current_calibration and (
+                current_calibration.get(CONF_PHASE, 0.0) != 0.0
+                or CONF_PHASE_NUMBER in current_calibration
+            ):
+                raise cv.Invalid(
+                    f"{path}.current_calibration.phase is only supported in SPI mode"
+                )
 
     for circuit_key, circuit_config in circuits.items():
         if CONF_PHASE_DETECTION in circuit_config and isinstance(circuit_config[CONF_LINE], list):
@@ -2183,6 +2274,7 @@ METERING_CT_CLAMP_SCHEMA = cv.Schema(
         cv.Required(CONF_PHASE_ID): cv.use_id(MeteringPhaseConfig),
         cv.Required(CONF_INPUT): cv.one_of(*CT_INPUTS.keys(), upper=True),
         cv.Optional(CONF_NAME): cv.string_strict,
+        cv.Optional(CONF_CURRENT_CALIBRATION): CURRENT_CALIBRATION_SCHEMA,
         cv.Optional(CONF_FILTERS): INTERNAL_POWER_FILTER_SCHEMA,
         cv.Optional(CONF_POWER): _validate_power_outputs,
         cv.Optional(CONF_CURRENT): CURRENT_SENSOR_SCHEMA,
@@ -2447,6 +2539,36 @@ async def _add_peak_sensors(var, config, default_interval):
         cg.add(var.set_current_crest_factor_sensor(sens))
 
 
+async def _add_current_calibration(var, config):
+    calibration = config.get(CONF_CURRENT_CALIBRATION)
+    if not calibration:
+        return
+    cg.add(var.set_current_gain(calibration[CONF_GAIN]))
+    cg.add(var.set_current_phase_correction(calibration[CONF_PHASE]))
+
+    if number_config := calibration.get(CONF_GAIN_NUMBER):
+        gain_number = await number.new_number(
+            number_config,
+            min_value=0.5,
+            max_value=2.0,
+            step=0.0001,
+        )
+        cg.add(gain_number.set_initial_value(number_config[CONF_INITIAL_VALUE]))
+        await cg.register_parented(gain_number, var)
+        cg.add(var.set_current_gain_number(gain_number))
+
+    if number_config := calibration.get(CONF_PHASE_NUMBER):
+        phase_number = await number.new_number(
+            number_config,
+            min_value=-10.0,
+            max_value=10.0,
+            step=0.01,
+        )
+        cg.add(phase_number.set_initial_value(number_config[CONF_INITIAL_VALUE]))
+        await cg.register_parented(phase_number, var)
+        cg.add(var.set_current_phase_number(phase_number))
+
+
 async def to_code(config):
     external_firmwares = []
     for external_firmware_config in config.get(CONF_EXTERNAL_SAMD_FIRMWARE, []):
@@ -2529,11 +2651,11 @@ async def to_code(config):
     for phase_key, main_config in config.get(CONF_MAINS, {}).items():
         phase_var = cg.new_Pvariable(main_config[CONF_ID], MeteringPhaseConfig())
         cg.add(phase_var.set_input_wire(PHASE_INPUTS[main_config[CONF_VOLTAGE_INPUT]]))
-        cg.add(phase_var.set_calibration(main_config[CONF_CALIBRATION]))
+        cg.add(phase_var.set_calibration(main_config[CONF_VOLTAGE_CALIBRATION]))
         line_number = int(phase_key.rsplit("_", 1)[1])
         main_phase_vars_by_line[line_number] = phase_var
 
-        if calibration_number_config := main_config.get(CONF_CALIBRATION_NUMBER):
+        if calibration_number_config := main_config.get(CONF_VOLTAGE_CALIBRATION_NUMBER):
             cal_num = await number.new_number(
                 calibration_number_config,
                 min_value=0.001,
@@ -2564,6 +2686,7 @@ async def to_code(config):
             )
         )
         await _add_internal_power_filters(ct_clamp_var, main_config.get(CONF_FILTERS))
+        await _add_current_calibration(ct_clamp_var, main_config)
         await _add_power_outputs(ct_clamp_var, main_config.get(CONF_POWER))
         if current_config := main_config.get(CONF_CURRENT):
             sens = await sensor.new_sensor(current_config)
@@ -2592,6 +2715,7 @@ async def to_code(config):
             cg.add(ct_clamp_var.set_phase(phase_var))
         cg.add(ct_clamp_var.set_input_port(BRANCH_CT_INPUTS[circuit_config[CONF_INPUT]]))
         await _add_internal_power_filters(ct_clamp_var, circuit_config.get(CONF_FILTERS))
+        await _add_current_calibration(ct_clamp_var, circuit_config)
 
         await _add_power_outputs(ct_clamp_var, circuit_config.get(CONF_POWER))
         if current_config := circuit_config.get(CONF_CURRENT):
@@ -2648,9 +2772,9 @@ async def to_code(config):
     for phase_config in config.get(CONF_PHASES, []):
         phase_var = cg.new_Pvariable(phase_config[CONF_ID], MeteringPhaseConfig())
         cg.add(phase_var.set_input_wire(PHASE_INPUTS[phase_config[CONF_INPUT]]))
-        cg.add(phase_var.set_calibration(phase_config[CONF_CALIBRATION]))
+        cg.add(phase_var.set_calibration(phase_config[CONF_VOLTAGE_CALIBRATION]))
 
-        if calibration_number_config := phase_config.get(CONF_CALIBRATION_NUMBER):
+        if calibration_number_config := phase_config.get(CONF_VOLTAGE_CALIBRATION_NUMBER):
             cal_num = await number.new_number(
                 calibration_number_config,
                 min_value=0.001,
@@ -2681,6 +2805,7 @@ async def to_code(config):
         cg.add(ct_clamp_var.set_phase(phase_var))
         cg.add(ct_clamp_var.set_input_port(CT_INPUTS[ct_config[CONF_INPUT]]))
         await _add_internal_power_filters(ct_clamp_var, ct_config.get(CONF_FILTERS))
+        await _add_current_calibration(ct_clamp_var, ct_config)
 
         await _add_power_outputs(ct_clamp_var, ct_config.get(CONF_POWER))
         if current_config := ct_config.get(CONF_CURRENT):
