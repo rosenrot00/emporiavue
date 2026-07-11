@@ -142,6 +142,32 @@ class MeteringDemandTracker {
   bool daily_maximum_valid_{false};
 };
 
+class MeteringPeakTracker {
+ public:
+  void set_interval(uint32_t interval_ms) { this->interval_ms_ = interval_ms; }
+  uint32_t get_interval() const { return this->interval_ms_; }
+  void set_current_peak_sensor(sensor::Sensor *sensor) { this->current_peak_sensor_ = sensor; }
+  sensor::Sensor *get_current_peak_sensor() const { return this->current_peak_sensor_; }
+  void set_current_crest_factor_sensor(sensor::Sensor *sensor) { this->current_crest_factor_sensor_ = sensor; }
+  sensor::Sensor *get_current_crest_factor_sensor() const { return this->current_crest_factor_sensor_; }
+  bool enabled() const { return this->current_peak_sensor_ != nullptr || this->current_crest_factor_sensor_ != nullptr; }
+  void loop(uint32_t now_ms);
+  void add_sample(float current_peak, float current_crest_factor, uint32_t now_ms);
+
+ protected:
+  void finish_window_(uint32_t now_ms);
+
+  uint32_t interval_ms_{5000};
+  sensor::Sensor *current_peak_sensor_{nullptr};
+  sensor::Sensor *current_crest_factor_sensor_{nullptr};
+  uint32_t window_start_ms_{0};
+  float maximum_current_peak_{0.0f};
+  float maximum_current_crest_factor_{0.0f};
+  bool window_initialized_{false};
+  bool current_peak_valid_{false};
+  bool current_crest_factor_valid_{false};
+};
+
 class EmporiaVueComponent : public Component
 #ifdef USE_I2C
                              ,
@@ -419,6 +445,8 @@ class EmporiaVueComponent : public Component
 
   struct MeteringClamp {
     uint16_t current_raw{0};
+    uint16_t current_peak_raw{0};
+    bool current_peak_valid{false};
     float current_fundamental_i_raw{0.0f};
     float current_fundamental_q_raw{0.0f};
     bool current_fundamental_valid{false};
@@ -486,6 +514,7 @@ class EmporiaVueComponent : public Component
     int64_t voltage_product_sum[3]{};
     int32_t voltage_sum[3]{};
     int64_t current_square_sum[19]{};
+    uint32_t current_peak_abs[19]{};
     int64_t raw_power_sum[19][3]{};
     float current_fund_i[19]{};
     float current_fund_q[19]{};
@@ -765,6 +794,7 @@ class EmporiaVueComponent : public Component
   uint32_t metering_interval_ms_{0};
   bool metering_started_{false};
   uint32_t last_demand_day_check_ms_{0};
+  uint32_t last_peak_check_ms_{0};
   uint32_t last_metering_sequence_{0};
   MeteringTransport last_metering_transport_{MeteringTransport::UNKNOWN};
   bool last_metering_sequence_valid_{false};
@@ -961,6 +991,21 @@ class MeteringCTClampConfig {
   const std::vector<MeteringPowerOutput> &get_power_outputs() const { return this->power_outputs_; }
   void set_current_sensor(sensor::Sensor *sensor) { this->current_sensor_ = sensor; }
   sensor::Sensor *get_current_sensor() const { return this->current_sensor_; }
+  void set_peak_interval(uint32_t interval_ms) { this->peak_tracker_.set_interval(interval_ms); }
+  uint32_t get_peak_interval() const { return this->peak_tracker_.get_interval(); }
+  void set_current_peak_sensor(sensor::Sensor *sensor) { this->peak_tracker_.set_current_peak_sensor(sensor); }
+  sensor::Sensor *get_current_peak_sensor() const { return this->peak_tracker_.get_current_peak_sensor(); }
+  void set_current_crest_factor_sensor(sensor::Sensor *sensor) {
+    this->peak_tracker_.set_current_crest_factor_sensor(sensor);
+  }
+  sensor::Sensor *get_current_crest_factor_sensor() const {
+    return this->peak_tracker_.get_current_crest_factor_sensor();
+  }
+  bool has_peak_analysis() const { return this->peak_tracker_.enabled(); }
+  void loop_peak(uint32_t now_ms) { this->peak_tracker_.loop(now_ms); }
+  void add_peak_sample(float current_peak, float current_crest_factor, uint32_t now_ms) {
+    this->peak_tracker_.add_sample(current_peak, current_crest_factor, now_ms);
+  }
   void set_apparent_power_sensor(sensor::Sensor *sensor) { this->apparent_power_sensor_ = sensor; }
   sensor::Sensor *get_apparent_power_sensor() const { return this->apparent_power_sensor_; }
   void set_power_factor_sensor(sensor::Sensor *sensor) { this->power_factor_sensor_ = sensor; }
@@ -1073,6 +1118,7 @@ class MeteringCTClampConfig {
   uint8_t input_port_{0};
   std::vector<MeteringPowerOutput> power_outputs_{};
   sensor::Sensor *current_sensor_{nullptr};
+  MeteringPeakTracker peak_tracker_{};
   sensor::Sensor *apparent_power_sensor_{nullptr};
   sensor::Sensor *power_factor_sensor_{nullptr};
   MeteringDemandTracker power_demand_{};

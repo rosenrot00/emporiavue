@@ -115,6 +115,7 @@ CONF_METERING_INTERVAL = "metering_interval"
 CONF_MINIMUM_APPARENT_POWER = "minimum_apparent_power"
 CONF_MINIMUM_FUNDAMENTAL_CURRENT = "minimum_fundamental_current"
 CONF_DEMAND_INTERVAL = "demand_interval"
+CONF_PEAK_INTERVAL = "peak_interval"
 CONF_PHASE_DETECTION = "phase_detection"
 CONF_POWER_MIN = "power_min"
 CONF_CONFIDENCE_RATIO = "confidence_ratio"
@@ -140,6 +141,8 @@ CONF_POWER_DEMAND = "power_demand"
 CONF_MAXIMUM_POWER_DEMAND = "maximum_power_demand"
 CONF_CURRENT_DEMAND = "current_demand"
 CONF_MAXIMUM_CURRENT_DEMAND = "maximum_current_demand"
+CONF_CURRENT_PEAK = "current_peak"
+CONF_CURRENT_CREST_FACTOR = "current_crest_factor"
 CONF_POWER_SPLIT = "power_split"
 CONF_PHASE_ID = "phase_id"
 CONF_CALIBRATION_NUMBER = "calibration_number"
@@ -163,6 +166,8 @@ SPI_ANALYSIS_SENSOR_KEYS = (
     CONF_FUNDAMENTAL_POWER_FACTOR,
     CONF_DISPLACEMENT_ANGLE,
     CONF_CURRENT_THD,
+    CONF_CURRENT_PEAK,
+    CONF_CURRENT_CREST_FACTOR,
 )
 
 HARDWARE_CUSTOM = "custom"
@@ -789,6 +794,15 @@ def _apply_demand_default_names(parent_config, base_name, include_current=True):
     return parent_config
 
 
+def _apply_peak_default_names(parent_config, base_name):
+    for key, default_name in (
+        (CONF_CURRENT_PEAK, f"{base_name} Current Peak"),
+        (CONF_CURRENT_CREST_FACTOR, f"{base_name} Current Crest Factor"),
+    ):
+        parent_config = _apply_optional_sensor_default_name(parent_config, key, default_name)
+    return parent_config
+
+
 def _copy_filter_default(filter_defaults, key):
     if not isinstance(filter_defaults, dict) or key not in filter_defaults:
         return None
@@ -884,6 +898,8 @@ def _apply_filter_defaults_to_metering_node(node_config, filter_defaults, path, 
         CONF_MAXIMUM_POWER_DEMAND,
         CONF_CURRENT_DEMAND,
         CONF_MAXIMUM_CURRENT_DEMAND,
+        CONF_CURRENT_PEAK,
+        CONF_CURRENT_CREST_FACTOR,
     ):
         node_config = _apply_filter_default_to_sensor(node_config, key, filter_defaults, path)
     node_config = _apply_filter_defaults_to_power_outputs(node_config, filter_defaults, path)
@@ -1032,6 +1048,7 @@ def _apply_raw_power_defaults(config):
                     main_config, CONF_CURRENT_THD, f"{default_base_name} Current THD"
                 )
                 main_config = _apply_demand_default_names(main_config, default_base_name)
+                main_config = _apply_peak_default_names(main_config, default_base_name)
                 mains[main_key] = main_config
         config[CONF_MAINS] = mains
 
@@ -1080,6 +1097,9 @@ def _apply_raw_power_defaults(config):
                     circuits[circuit_key], CONF_CURRENT_THD, f"{default_base_name} Current THD"
                 )
                 circuits[circuit_key] = _apply_demand_default_names(
+                    circuits[circuit_key], default_base_name
+                )
+                circuits[circuit_key] = _apply_peak_default_names(
                     circuits[circuit_key], default_base_name
                 )
                 circuits[circuit_key] = _apply_power_split_defaults(
@@ -1144,6 +1164,7 @@ def _apply_raw_power_defaults(config):
                     ct_config, CONF_CURRENT_THD, f"{default_base_name} Current THD"
                 )
                 ct_config = _apply_demand_default_names(ct_config, default_base_name)
+                ct_config = _apply_peak_default_names(ct_config, default_base_name)
                 ct_clamps.append(ct_config)
             else:
                 ct_clamps.append(ct_config)
@@ -1618,6 +1639,14 @@ CURRENT_THD_SENSOR_SCHEMA = sensor.sensor_schema(
     accuracy_decimals=1,
 )
 
+CURRENT_PEAK_SENSOR_SCHEMA = CURRENT_SENSOR_SCHEMA
+
+CURRENT_CREST_FACTOR_SENSOR_SCHEMA = sensor.sensor_schema(
+    icon="mdi:pulse",
+    state_class=STATE_CLASS_MEASUREMENT,
+    accuracy_decimals=2,
+)
+
 POWER_DEMAND_SENSOR_SCHEMA = POWER_SENSOR_SCHEMA
 CURRENT_DEMAND_SENSOR_SCHEMA = CURRENT_SENSOR_SCHEMA
 
@@ -1663,6 +1692,8 @@ FILTER_DEFAULTS_SCHEMA = cv.Schema(
         cv.Optional(CONF_MAXIMUM_POWER_DEMAND): FILTER_DEFAULT_VALUE_SCHEMA,
         cv.Optional(CONF_CURRENT_DEMAND): FILTER_DEFAULT_VALUE_SCHEMA,
         cv.Optional(CONF_MAXIMUM_CURRENT_DEMAND): FILTER_DEFAULT_VALUE_SCHEMA,
+        cv.Optional(CONF_CURRENT_PEAK): FILTER_DEFAULT_VALUE_SCHEMA,
+        cv.Optional(CONF_CURRENT_CREST_FACTOR): FILTER_DEFAULT_VALUE_SCHEMA,
         cv.Optional(CONF_ENERGY): FILTER_DEFAULT_VALUE_SCHEMA,
     }
 )
@@ -1772,6 +1803,14 @@ def _validate_demand_interval(value):
         raise cv.Invalid("demand_interval must be between 1min and 60min")
     if milliseconds % 5000 != 0:
         raise cv.Invalid("demand_interval must be a multiple of 5s")
+    return value
+
+
+def _validate_peak_interval(value):
+    value = cv.positive_time_period_milliseconds(value)
+    milliseconds = value.total_milliseconds
+    if milliseconds < 1000 or milliseconds > 60000:
+        raise cv.Invalid("peak_interval must be between 1s and 60s")
     return value
 
 
@@ -1889,6 +1928,9 @@ METERING_MAIN_SCHEMA = cv.Schema(
         cv.Optional(CONF_FUNDAMENTAL_POWER_FACTOR): POWER_FACTOR_SENSOR_SCHEMA,
         cv.Optional(CONF_DISPLACEMENT_ANGLE): DISPLACEMENT_ANGLE_SENSOR_SCHEMA,
         cv.Optional(CONF_CURRENT_THD): CURRENT_THD_SENSOR_SCHEMA,
+        cv.Optional(CONF_PEAK_INTERVAL): _validate_peak_interval,
+        cv.Optional(CONF_CURRENT_PEAK): CURRENT_PEAK_SENSOR_SCHEMA,
+        cv.Optional(CONF_CURRENT_CREST_FACTOR): CURRENT_CREST_FACTOR_SENSOR_SCHEMA,
         cv.Optional(CONF_DEMAND_INTERVAL): _validate_demand_interval,
         cv.Optional(CONF_POWER_DEMAND): POWER_DEMAND_SENSOR_SCHEMA,
         cv.Optional(CONF_MAXIMUM_POWER_DEMAND): MAXIMUM_POWER_DEMAND_SENSOR_SCHEMA,
@@ -1978,6 +2020,9 @@ METERING_CIRCUIT_SCHEMA = cv.Schema(
         cv.Optional(CONF_FUNDAMENTAL_POWER_FACTOR): POWER_FACTOR_SENSOR_SCHEMA,
         cv.Optional(CONF_DISPLACEMENT_ANGLE): DISPLACEMENT_ANGLE_SENSOR_SCHEMA,
         cv.Optional(CONF_CURRENT_THD): CURRENT_THD_SENSOR_SCHEMA,
+        cv.Optional(CONF_PEAK_INTERVAL): _validate_peak_interval,
+        cv.Optional(CONF_CURRENT_PEAK): CURRENT_PEAK_SENSOR_SCHEMA,
+        cv.Optional(CONF_CURRENT_CREST_FACTOR): CURRENT_CREST_FACTOR_SENSOR_SCHEMA,
         cv.Optional(CONF_DEMAND_INTERVAL): _validate_demand_interval,
         cv.Optional(CONF_POWER_DEMAND): POWER_DEMAND_SENSOR_SCHEMA,
         cv.Optional(CONF_MAXIMUM_POWER_DEMAND): MAXIMUM_POWER_DEMAND_SENSOR_SCHEMA,
@@ -2148,6 +2193,9 @@ METERING_CT_CLAMP_SCHEMA = cv.Schema(
         cv.Optional(CONF_FUNDAMENTAL_POWER_FACTOR): POWER_FACTOR_SENSOR_SCHEMA,
         cv.Optional(CONF_DISPLACEMENT_ANGLE): DISPLACEMENT_ANGLE_SENSOR_SCHEMA,
         cv.Optional(CONF_CURRENT_THD): CURRENT_THD_SENSOR_SCHEMA,
+        cv.Optional(CONF_PEAK_INTERVAL): _validate_peak_interval,
+        cv.Optional(CONF_CURRENT_PEAK): CURRENT_PEAK_SENSOR_SCHEMA,
+        cv.Optional(CONF_CURRENT_CREST_FACTOR): CURRENT_CREST_FACTOR_SENSOR_SCHEMA,
         cv.Optional(CONF_DEMAND_INTERVAL): _validate_demand_interval,
         cv.Optional(CONF_POWER_DEMAND): POWER_DEMAND_SENSOR_SCHEMA,
         cv.Optional(CONF_MAXIMUM_POWER_DEMAND): MAXIMUM_POWER_DEMAND_SENSOR_SCHEMA,
@@ -2182,6 +2230,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_DIAGNOSTICS_INTERVAL): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_METERING_INTERVAL, default="220ms"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_DEMAND_INTERVAL, default="15min"): _validate_demand_interval,
+        cv.Optional(CONF_PEAK_INTERVAL, default="5s"): _validate_peak_interval,
         cv.Optional(CONF_MINIMUM_APPARENT_POWER, default="5VA"): _validate_volt_amps,
         cv.Optional(CONF_MINIMUM_FUNDAMENTAL_CURRENT, default="20mA"): _validate_amperes,
         cv.Optional(CONF_PHASE_DETECTION, default={}): PHASE_DETECTION_GLOBAL_SCHEMA,
@@ -2388,6 +2437,16 @@ async def _add_demand_sensors(var, config, default_interval, include_current=Tru
         cg.add(var.set_current_demand_restore(sensor_config[CONF_RESTORE]))
 
 
+async def _add_peak_sensors(var, config, default_interval):
+    cg.add(var.set_peak_interval(config.get(CONF_PEAK_INTERVAL, default_interval)))
+    if sensor_config := config.get(CONF_CURRENT_PEAK):
+        sens = await sensor.new_sensor(sensor_config)
+        cg.add(var.set_current_peak_sensor(sens))
+    if sensor_config := config.get(CONF_CURRENT_CREST_FACTOR):
+        sens = await sensor.new_sensor(sensor_config)
+        cg.add(var.set_current_crest_factor_sensor(sens))
+
+
 async def to_code(config):
     external_firmwares = []
     for external_firmware_config in config.get(CONF_EXTERNAL_SAMD_FIRMWARE, []):
@@ -2517,6 +2576,7 @@ async def to_code(config):
             cg.add(ct_clamp_var.set_power_factor_sensor(sens))
         await _add_fundamental_analysis_sensors(ct_clamp_var, main_config)
         await _add_demand_sensors(ct_clamp_var, main_config, config[CONF_DEMAND_INTERVAL])
+        await _add_peak_sensors(ct_clamp_var, main_config, config[CONF_PEAK_INTERVAL])
         ct_clamps.append(ct_clamp_var)
         power_source_ct_clamps_by_key[phase_key] = ct_clamp_var
 
@@ -2545,6 +2605,7 @@ async def to_code(config):
             cg.add(ct_clamp_var.set_power_factor_sensor(sens))
         await _add_fundamental_analysis_sensors(ct_clamp_var, circuit_config)
         await _add_demand_sensors(ct_clamp_var, circuit_config, config[CONF_DEMAND_INTERVAL])
+        await _add_peak_sensors(ct_clamp_var, circuit_config, config[CONF_PEAK_INTERVAL])
         if power_split_config := circuit_config.get(CONF_POWER_SPLIT):
             line_a_key = _power_split_line_key(line_config[0])
             line_b_key = _power_split_line_key(line_config[1])
@@ -2633,6 +2694,7 @@ async def to_code(config):
             cg.add(ct_clamp_var.set_power_factor_sensor(sens))
         await _add_fundamental_analysis_sensors(ct_clamp_var, ct_config)
         await _add_demand_sensors(ct_clamp_var, ct_config, config[CONF_DEMAND_INTERVAL])
+        await _add_peak_sensors(ct_clamp_var, ct_config, config[CONF_PEAK_INTERVAL])
 
         ct_clamps.append(ct_clamp_var)
     if ct_clamps:

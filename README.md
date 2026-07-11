@@ -8,6 +8,7 @@ firmware.
 
 | Version | Changes |
 |---|---|
+| 2026.07.6 | Added time-windowed SPI current peak and current crest factor entities. |
 | 2026.07.5 | Added configurable rolling power/current demand and daily maximum demand for mains, circuits, and groups. |
 | 2026.07.4 | Added sample-derived SPI line-to-line RMS voltage plus optional fundamental current, fundamental reactive power, fundamental power factor, displacement angle, and current THD entities. |
 | 2026.07.3 | Improved SPI frequency and phase-angle stability with complete interpolated line cycles and a shared period reference. |
@@ -178,12 +179,13 @@ cir8:
 ## Optional ESPHome SPI Analysis
 
 ESPHome SPI exposes the raw voltage and current sample stream. The component can therefore separate the fundamental
-component from the total RMS waveform and optionally publish five additional entities per main or branch CT.
+component from the total RMS waveform and optionally publish additional analysis entities per main or branch CT.
 
 ```yaml
 emporiavue:
   minimum_apparent_power: 5VA
   minimum_fundamental_current: 20mA
+  peak_interval: 5s
 
   circuits:
     cir2:
@@ -195,6 +197,8 @@ emporiavue:
       fundamental_power_factor:
       displacement_angle:
       current_thd:
+      current_peak:
+      current_crest_factor:
 ```
 
 This creates:
@@ -205,6 +209,8 @@ Heat Pump Fundamental Reactive Power
 Heat Pump Fundamental Power Factor
 Heat Pump Displacement Angle
 Heat Pump Current THD
+Heat Pump Current Peak
+Heat Pump Current Crest Factor
 ```
 
 The keys are optional; only configured entities are created. They are rejected during YAML validation when `mode: i2c`
@@ -217,6 +223,8 @@ is selected.
 | `fundamental_power_factor` | — | Fundamental power factor `abs(P1) / S1`, from 0 to 1 |
 | `displacement_angle` | ° | Voltage-current displacement angle; with correct CT orientation, positive is lagging/inductive for normal import |
 | `current_thd` | % | Estimated residual current relative to the fundamental current |
+| `current_peak` | A | Highest sampled absolute current during the completed peak interval |
+| `current_crest_factor` | — | Highest waveform crest factor `Current Peak / RMS Current` during the completed peak interval |
 
 At low current, a PF, angle, or THD number would be dominated by noise. The behavior is therefore deliberate:
 
@@ -230,6 +238,12 @@ Current THD                  unknown
 
 `minimum_fundamental_current` controls that boundary globally. `minimum_apparent_power` is the global cutoff for the
 existing apparent-power and total-power-factor outputs.
+
+`peak_interval` controls a separate time window for `current_peak` and `current_crest_factor`. The default is `5s`, and
+supported values are 1 to 60 seconds. Each complete SPI metering window is about 220 ms. During the peak interval, the
+component keeps the highest current peak and the highest crest factor and publishes them only when the interval ends.
+The same `minimum_fundamental_current` threshold suppresses noise-only results: below it, Current Peak is `0 A` and
+Current Crest Factor is `unknown`. A local `peak_interval` on a main or circuit overrides the global value.
 
 > [!NOTE]
 > Existing configurations from before version 2026.07.4 must rename `power_apparent_min` to
@@ -293,6 +307,7 @@ time:
 emporiavue:
   minimum_apparent_power: 5VA
   minimum_fundamental_current: 20mA
+  peak_interval: 5s
 
   filter_defaults:
     voltage: [*fast_average]
@@ -330,6 +345,8 @@ emporiavue:
       fundamental_power_factor:
       displacement_angle:
       current_thd:
+      current_peak:
+      current_crest_factor:
 
     cir8:
       name: "Wallbox"

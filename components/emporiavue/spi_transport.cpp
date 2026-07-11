@@ -33,6 +33,7 @@ static constexpr uint16_t SPI_REFERENCE_WINDOW_MS = 500;
 static constexpr uint32_t SPI_RX_TASK_STACK_SIZE = 8192;
 static constexpr uint32_t SPI_MAIN_RMS_SCALE_NUMERATOR = 100;
 static constexpr uint32_t SPI_CURRENT_RMS_SCALE_NUMERATOR = 100;
+static constexpr uint32_t SPI_CURRENT_PEAK_SCALE_MULTIPLIER = 10;
 static constexpr float SPI_VOLTAGE_STATISTIC_SCALE_MULTIPLIER = 100.0f;
 static constexpr uint32_t SPI_POWER_SCALE_MULTIPLIER = 10;
 static constexpr uint8_t SPI_ADC_OFFSET_CHANNEL_COUNT = 22;
@@ -963,6 +964,8 @@ void EmporiaVueComponent::process_spi_raw_scan_(const SpiRawScan &scan) {
     const int32_t current_difference =
         static_cast<int32_t>(main_current_scan.value[current_index_for_phase]) - this->spi_adc_offsets_[3 + phase];
     acc.current_square_sum[phase] += static_cast<int64_t>(current_difference) * current_difference;
+    acc.current_peak_abs[phase] =
+        std::max(acc.current_peak_abs[phase], static_cast<uint32_t>(std::abs(current_difference)));
     for (uint8_t voltage_phase = 0; voltage_phase < 3; voltage_phase++) {
       acc.raw_power_sum[phase][voltage_phase] -=
           static_cast<int64_t>(current_difference) * voltage_differences[voltage_phase];
@@ -986,6 +989,8 @@ void EmporiaVueComponent::process_spi_raw_scan_(const SpiRawScan &scan) {
       acc.mux_sample_count[internal_index]++;
       const int32_t current_difference = static_cast<int32_t>(current_raw) - this->spi_adc_offsets_[offset_index];
       acc.current_square_sum[clamp_index] += static_cast<int64_t>(current_difference) * current_difference;
+      acc.current_peak_abs[clamp_index] =
+          std::max(acc.current_peak_abs[clamp_index], static_cast<uint32_t>(std::abs(current_difference)));
       for (uint8_t voltage_phase = 0; voltage_phase < 3; voltage_phase++) {
         acc.raw_power_sum[clamp_index][voltage_phase] -=
             static_cast<int64_t>(current_difference) * voltage_differences[voltage_phase];
@@ -1258,6 +1263,16 @@ void EmporiaVueComponent::finish_spi_metering_window_(uint32_t sequence, uint32_
         acc.current_fund_q[source_index] * SPI_FUNDAMENTAL_RMS_COMPONENT_SCALE / weight;
     clamp.current_fundamental_valid = true;
   };
+  auto set_current_peak = [this, &acc](MeteringClamp &clamp, uint8_t source_index) {
+    if (this->spi_offset_warmup_windows_ < SPI_ADC_OFFSET_STARTUP_WINDOWS) {
+      return;
+    }
+    const uint64_t scaled =
+        static_cast<uint64_t>(acc.current_peak_abs[source_index]) * SPI_CURRENT_PEAK_SCALE_MULTIPLIER;
+    clamp.current_peak_raw =
+        scaled >= UINT16_MAX ? UINT16_MAX : static_cast<uint16_t>(scaled);
+    clamp.current_peak_valid = true;
+  };
 
   for (uint8_t phase = 0; phase < 3; phase++) {
     frame.phases[phase].voltage_raw =
@@ -1266,6 +1281,7 @@ void EmporiaVueComponent::finish_spi_metering_window_(uint32_t sequence, uint32_
     frame.clamps[phase].current_raw =
         scale_spi_rms_(static_cast<uint64_t>(acc.current_square_sum[phase]), SPI_CURRENT_RMS_SCALE_NUMERATOR,
                        acc.sample_count);
+    set_current_peak(frame.clamps[phase], phase);
     set_current_fundamental(frame.clamps[phase], phase);
     for (uint8_t voltage_phase = 0; voltage_phase < 3; voltage_phase++) {
       frame.clamps[phase].power_raw_by_phase[voltage_phase] =
@@ -1296,6 +1312,7 @@ void EmporiaVueComponent::finish_spi_metering_window_(uint32_t sequence, uint32_
     frame.clamps[output_port].current_raw =
         scale_spi_rms_(static_cast<uint64_t>(acc.current_square_sum[source_index]), SPI_CURRENT_RMS_SCALE_NUMERATOR,
                        mux_count);
+    set_current_peak(frame.clamps[output_port], source_index);
     set_current_fundamental(frame.clamps[output_port], source_index);
     for (uint8_t voltage_phase = 0; voltage_phase < 3; voltage_phase++) {
       frame.clamps[output_port].power_raw_by_phase[voltage_phase] =

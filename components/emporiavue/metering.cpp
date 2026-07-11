@@ -167,6 +167,52 @@ void MeteringDemandTracker::add_sample(float value, uint32_t now_ms) {
   this->last_value_ = value;
 }
 
+void MeteringPeakTracker::finish_window_(uint32_t now_ms) {
+  if (this->current_peak_sensor_ != nullptr) {
+    this->current_peak_sensor_->publish_state(this->current_peak_valid_ ? this->maximum_current_peak_ : NAN);
+  }
+  if (this->current_crest_factor_sensor_ != nullptr) {
+    this->current_crest_factor_sensor_->publish_state(
+        this->current_crest_factor_valid_ ? this->maximum_current_crest_factor_ : NAN);
+  }
+  this->window_start_ms_ = now_ms;
+  this->maximum_current_peak_ = 0.0f;
+  this->maximum_current_crest_factor_ = 0.0f;
+  this->window_initialized_ = false;
+  this->current_peak_valid_ = false;
+  this->current_crest_factor_valid_ = false;
+}
+
+void MeteringPeakTracker::loop(uint32_t now_ms) {
+  if (this->window_initialized_ && (now_ms - this->window_start_ms_) >= this->interval_ms_) {
+    this->finish_window_(now_ms);
+  }
+}
+
+void MeteringPeakTracker::add_sample(float current_peak, float current_crest_factor, uint32_t now_ms) {
+  if (!this->enabled()) {
+    return;
+  }
+  if (this->window_initialized_ && (now_ms - this->window_start_ms_) >= this->interval_ms_) {
+    this->finish_window_(now_ms);
+  }
+  if (!this->window_initialized_) {
+    this->window_start_ms_ = now_ms;
+    this->window_initialized_ = true;
+  }
+  if (!std::isnan(current_peak)) {
+    this->maximum_current_peak_ =
+        this->current_peak_valid_ ? std::max(this->maximum_current_peak_, current_peak) : current_peak;
+    this->current_peak_valid_ = true;
+  }
+  if (!std::isnan(current_crest_factor)) {
+    this->maximum_current_crest_factor_ = this->current_crest_factor_valid_
+                                              ? std::max(this->maximum_current_crest_factor_, current_crest_factor)
+                                              : current_crest_factor;
+    this->current_crest_factor_valid_ = true;
+  }
+}
+
 void EmporiaVueComponent::submit_metering_frame_(const MeteringFrame &frame) {
   if (!frame.valid) {
     return;
@@ -661,6 +707,7 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
     this->calculate_ct_measurement_(frame, ct_clamp, &measurement);
     const bool has_fundamental_analysis =
         this->calculate_ct_fundamental_analysis_(frame, ct_clamp, &measurement);
+    const float unavailable = std::numeric_limits<float>::quiet_NaN();
     if (measurement.has_power) {
       ct_clamp->add_power_demand_sample(measurement.power, demand_now_ms);
       publish_power_outputs_(ct_clamp->get_power_outputs(), measurement.power);
@@ -680,6 +727,18 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
     if (measurement.has_current) {
       ct_clamp->add_current_demand_sample(measurement.current, demand_now_ms);
     }
+    if (ct_clamp->has_peak_analysis() && frame.transport == MeteringTransport::SPI && measurement.has_current &&
+        frame.clamps[port].current_peak_valid) {
+      const float current_scalar = port < 3 ? (775.0f / 42624.0f) : (775.0f / 170496.0f);
+      float current_peak = frame.clamps[port].current_peak_raw * current_scalar;
+      float current_crest_factor = unavailable;
+      if (measurement.current >= this->minimum_fundamental_current_ && measurement.current > 0.0f) {
+        current_crest_factor = current_peak / measurement.current;
+      } else {
+        current_peak = 0.0f;
+      }
+      ct_clamp->add_peak_sample(current_peak, current_crest_factor, demand_now_ms);
+    }
 
     if (ct_clamp->get_apparent_power_sensor() != nullptr && measurement.has_apparent_power) {
       const bool above_threshold = measurement.apparent_power >= this->minimum_apparent_power_;
@@ -688,7 +747,6 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
     if (ct_clamp->get_power_factor_sensor() != nullptr && measurement.has_power_factor) {
       ct_clamp->get_power_factor_sensor()->publish_state(measurement.power_factor);
     }
-    const float unavailable = std::numeric_limits<float>::quiet_NaN();
     if (ct_clamp->get_fundamental_current_sensor() != nullptr) {
       ct_clamp->get_fundamental_current_sensor()->publish_state(
           has_fundamental_analysis ? measurement.fundamental_current : unavailable);

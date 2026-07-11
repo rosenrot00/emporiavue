@@ -34,6 +34,12 @@ void EmporiaVueComponent::setup() {
 
 void EmporiaVueComponent::loop() {
   const uint32_t now = millis();
+  if ((now - this->last_peak_check_ms_) >= 50) {
+    this->last_peak_check_ms_ = now;
+    for (auto *ct_clamp : this->metering_ct_clamps_) {
+      ct_clamp->loop_peak(now);
+    }
+  }
   if ((now - this->last_demand_day_check_ms_) >= 1000) {
     this->last_demand_day_check_ms_ = now;
     for (auto *ct_clamp : this->metering_ct_clamps_) {
@@ -144,6 +150,11 @@ void EmporiaVueComponent::dump_config() {
       LOG_SENSOR("    ", "Today's maximum power demand", ct_clamp->get_maximum_power_demand_sensor());
       LOG_SENSOR("    ", "Current demand", ct_clamp->get_current_demand_sensor());
       LOG_SENSOR("    ", "Today's maximum current demand", ct_clamp->get_maximum_current_demand_sensor());
+    }
+    if (ct_clamp->has_peak_analysis()) {
+      ESP_LOGCONFIG(TAG, "    Peak interval: %.1f s", ct_clamp->get_peak_interval() / 1000.0f);
+      LOG_SENSOR("    ", "Current peak", ct_clamp->get_current_peak_sensor());
+      LOG_SENSOR("    ", "Current crest factor", ct_clamp->get_current_crest_factor_sensor());
     }
     LOG_SENSOR("    ", "Fundamental current", ct_clamp->get_fundamental_current_sensor());
     LOG_SENSOR("    ", "Fundamental reactive power", ct_clamp->get_fundamental_reactive_power_sensor());
