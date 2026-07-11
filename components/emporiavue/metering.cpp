@@ -304,7 +304,7 @@ void EmporiaVueComponent::update_phase_detection_(const MeteringFrame &frame, Me
     state = "low load";
     ct_clamp->reset_phase_detection_stability();
     ct_clamp->get_phase_detection_sensor()->publish_state(state);
-    ESP_LOGD(TAG, "%s: low load window=%" PRIu32 "ms power_min=%.1fW",
+    ESP_LOGV(TAG, "%s: low load window=%" PRIu32 "ms power_min=%.1fW",
              ct_clamp->get_phase_detection_name().c_str(), now - window_start,
              ct_clamp->get_phase_detection_power_min());
     ct_clamp->reset_phase_detection();
@@ -347,7 +347,7 @@ void EmporiaVueComponent::update_phase_detection_(const MeteringFrame &frame, Me
   ct_clamp->get_phase_detection_sensor()->publish_state(state);
 
   const float divisor = samples == 0 ? 1.0f : static_cast<float>(samples);
-  ESP_LOGD(TAG,
+  ESP_LOGV(TAG,
            "%s: state=%s window=%" PRIu32 "ms samples=%" PRIu32
            " scores L1=%.1fW L2=%.1fW L3=%.1fW confidence=%.0f%% power_min=%.1fW",
            ct_clamp->get_phase_detection_name().c_str(), state.c_str(), now - window_start, samples,
