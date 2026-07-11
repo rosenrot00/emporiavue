@@ -395,16 +395,21 @@ class EmporiaVueComponent : public Component
     int16_t value[3]{};
   };
 
+  struct SpiCrossingPosition {
+    uint64_t sample_counter{0};
+    float fraction{0.0f};
+  };
+
   struct SpiMeteringAccumulator {
     int32_t current_sum[19]{};
     int64_t voltage_square_sum[3]{};
     int32_t voltage_sum[3]{};
     int64_t current_square_sum[19]{};
     int64_t raw_power_sum[19][3]{};
-    double voltage_fund_i[3]{};
-    double voltage_fund_q[3]{};
-    double voltage_fund_weight{0.0};
-    double cycle_sum[3]{};
+    float voltage_fund_i[3]{};
+    float voltage_fund_q[3]{};
+    float voltage_fund_weight{0.0f};
+    float cycle_sum[3]{};
     float line1_periods[64]{};
     uint16_t cycle_count[3]{};
     uint16_t voltage_fund_cycle_count{0};
@@ -578,7 +583,9 @@ class EmporiaVueComponent : public Component
   void decode_spi_raw_frame_(const uint8_t *frame, uint32_t sequence, uint32_t flags, uint32_t sample_counter);
   void process_spi_raw_scan_(const SpiRawScan &scan);
   void push_spi_voltage_sample_(const SpiRawScan &scan);
-  bool accumulate_spi_voltage_cycle_(double start_cross_sample, double end_cross_sample);
+  static float spi_crossing_difference_(const SpiCrossingPosition &end, const SpiCrossingPosition &start);
+  bool accumulate_spi_voltage_cycle_(const SpiCrossingPosition &start_cross_sample,
+                                     const SpiCrossingPosition &end_cross_sample);
   void finish_spi_metering_window_(uint32_t sequence, uint32_t flags);
   uint32_t spi_metering_target_samples_() const;
   uint16_t spi_metering_target_periods_(float period_samples) const;
@@ -705,14 +712,14 @@ class EmporiaVueComponent : public Component
   int32_t spi_adc_offset_estimate_q8_[22]{};
   uint8_t spi_offset_warmup_windows_{0};
   bool spi_last_cross_sample_valid_[3]{};
-  double spi_last_cross_sample_[3]{};
+  SpiCrossingPosition spi_last_cross_sample_[3]{};
   bool spi_line1_period_valid_{false};
   float spi_line1_period_samples_{0.0f};
   bool spi_last_voltage_sample_valid_[3]{};
   int32_t spi_last_voltage_difference_[3]{};
   uint64_t spi_last_voltage_sample_counter_[3]{};
   bool spi_pending_cross_sample_valid_[3]{};
-  double spi_pending_cross_sample_[3]{};
+  SpiCrossingPosition spi_pending_cross_sample_[3]{};
   uint8_t spi_cycle_state_[3]{};
   volatile uint16_t spi_rx_inflight_{0};
   uint32_t spi_rx_frames_{0};
