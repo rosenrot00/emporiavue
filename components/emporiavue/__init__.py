@@ -7,7 +7,7 @@ import urllib.request
 import esphome.codegen as cg
 import esphome.config_validation as cv
 from esphome import pins
-from esphome.components import button, i2c, number, sensor, text_sensor, time
+from esphome.components import button, i2c, number, select, sensor, text_sensor, time
 from esphome.const import (
     CONF_ACCURACY_DECIMALS,
     CONF_CURRENT,
@@ -41,7 +41,7 @@ from esphome.const import (
 )
 
 DEPENDENCIES = ["esp32"]
-AUTO_LOAD = ["button", "number", "sensor", "text_sensor", "time", "total_daily_energy"]
+AUTO_LOAD = ["button", "number", "select", "sensor", "text_sensor", "time", "total_daily_energy"]
 
 emporiavue_ns = cg.esphome_ns.namespace("emporiavue")
 EmporiaVueComponent = emporiavue_ns.class_(
@@ -72,6 +72,7 @@ MeteringCurrentGainNumber = emporiavue_ns.class_(
 MeteringCurrentPhaseNumber = emporiavue_ns.class_(
     "MeteringCurrentPhaseNumber", number.Number
 )
+MeteringLineSelect = emporiavue_ns.class_("MeteringLineSelect", select.Select)
 total_daily_energy_ns = cg.esphome_ns.namespace("total_daily_energy")
 TotalDailyEnergyMethod = total_daily_energy_ns.enum("TotalDailyEnergyMethod")
 TOTAL_DAILY_ENERGY_METHODS = {
@@ -122,6 +123,7 @@ CONF_MINIMUM_FUNDAMENTAL_CURRENT = "minimum_fundamental_current"
 CONF_DEMAND_INTERVAL = "demand_interval"
 CONF_PEAK_INTERVAL = "peak_interval"
 CONF_PHASE_DETECTION = "phase_detection"
+CONF_LINE_SELECT = "line_select"
 CONF_POWER_MIN = "power_min"
 CONF_CONFIDENCE_RATIO = "confidence_ratio"
 CONF_UPDATE_INTERVAL = "update_interval"
@@ -1266,7 +1268,28 @@ def _apply_phase_detection_defaults(config):
     prefix = config.get(CONF_ENTITY_PREFIX, "")
     circuits = dict(config[CONF_CIRCUITS])
     for circuit_key, circuit_config in list(circuits.items()):
-        if not isinstance(circuit_config, dict) or CONF_PHASE_DETECTION not in circuit_config:
+        if not isinstance(circuit_config, dict):
+            continue
+
+        circuit_config = dict(circuit_config)
+        if CONF_LINE_SELECT in circuit_config:
+            default_name = f"{_circuit_default_base_name(circuit_key, circuit_config)} Line"
+            line_select_config = circuit_config.get(CONF_LINE_SELECT)
+            if line_select_config is None or line_select_config is True:
+                line_select_config = {CONF_NAME: default_name}
+                name_is_default = True
+            elif not isinstance(line_select_config, dict):
+                raise cv.Invalid(f"circuits.{circuit_key}.line_select must be a mapping")
+            else:
+                line_select_config = dict(line_select_config)
+                name_is_default = line_select_config.get(CONF_NAME) in (None, default_name)
+                line_select_config.setdefault(CONF_NAME, default_name)
+            if prefix and name_is_default:
+                line_select_config[CONF_NAME] = _prefixed_entity_name(prefix, default_name)
+            circuit_config[CONF_LINE_SELECT] = line_select_config
+
+        if CONF_PHASE_DETECTION not in circuit_config:
+            circuits[circuit_key] = circuit_config
             continue
 
         phase_detection_config = circuit_config[CONF_PHASE_DETECTION]
@@ -1934,6 +1957,12 @@ PHASE_DETECTION_SENSOR_SCHEMA = text_sensor.text_sensor_schema(
     }
 )
 
+LINE_SELECT_SCHEMA = select.select_schema(
+    MeteringLineSelect,
+    icon="mdi:transmission-tower",
+    entity_category=ENTITY_CATEGORY_CONFIG,
+)
+
 
 def _validate_phase_detection_sensor(value):
     if value is True:
@@ -2024,6 +2053,8 @@ METERING_MAIN_SCHEMA = cv.Schema(
 
 
 def _validate_metering_line(value):
+    if isinstance(value, str) and value.lower() == "auto":
+        return "auto"
     if not isinstance(value, list):
         return cv.int_range(min=1, max=3)(value)
 
@@ -2050,6 +2081,8 @@ def _validate_virtual_line_lines(value):
 def _metering_line_numbers(value):
     if isinstance(value, list):
         return value
+    if value == "auto":
+        return []
     return [value]
 
 
@@ -2091,6 +2124,7 @@ METERING_CIRCUIT_SCHEMA = cv.Schema(
         cv.GenerateID(CONF_CT_ID): cv.declare_id(MeteringCTClampConfig),
         cv.Required(CONF_INPUT): cv.one_of(*BRANCH_CT_INPUTS.keys(), upper=True),
         cv.Required(CONF_LINE): _validate_metering_line,
+        cv.Optional(CONF_LINE_SELECT): LINE_SELECT_SCHEMA,
         cv.Optional(CONF_NAME): cv.string_strict,
         cv.Optional(CONF_CURRENT_CALIBRATION): CURRENT_CALIBRATION_SCHEMA,
         cv.Optional(CONF_FILTERS): INTERNAL_POWER_FILTER_SCHEMA,
@@ -2194,6 +2228,16 @@ def _validate_metering_topology(config):
                 )
 
     for circuit_key, circuit_config in circuits.items():
+        if (
+            circuit_config[CONF_LINE] == "auto" or CONF_LINE_SELECT in circuit_config
+        ) and len(mains) < 2:
+            raise cv.Invalid(
+                f"circuits.{circuit_key} automatic line selection needs at least two configured mains lines"
+            )
+        if CONF_LINE_SELECT in circuit_config and isinstance(circuit_config[CONF_LINE], list):
+            raise cv.Invalid(
+                f"circuits.{circuit_key}.line_select is only available for single-line circuits"
+            )
         if CONF_PHASE_DETECTION in circuit_config and isinstance(circuit_config[CONF_LINE], list):
             raise cv.Invalid(
                 f"circuits.{circuit_key}.phase_detection is only supported for single-line circuits"
@@ -2710,7 +2754,7 @@ async def to_code(config):
             phase_a_var = main_phase_vars_by_line[line_config[0]]
             phase_b_var = main_phase_vars_by_line[line_config[1]]
             cg.add(ct_clamp_var.set_line_pair(phase_a_var, phase_b_var))
-        else:
+        elif line_config != "auto":
             phase_var = main_phase_vars_by_line[line_config]
             cg.add(ct_clamp_var.set_phase(phase_var))
         cg.add(ct_clamp_var.set_input_port(BRANCH_CT_INPUTS[circuit_config[CONF_INPUT]]))
@@ -2739,7 +2783,30 @@ async def to_code(config):
             if line_b_config := power_split_config.get(line_b_key):
                 sens = await sensor.new_sensor(line_b_config)
                 cg.add(ct_clamp_var.set_power_split_line_b_sensor(sens))
-        if phase_detection_sensor_config := circuit_config.get(CONF_PHASE_DETECTION):
+        is_auto_line = line_config == "auto"
+        has_line_select = CONF_LINE_SELECT in circuit_config
+        if is_auto_line or has_line_select:
+            preference_key = int.from_bytes(
+                hashlib.sha256(
+                    f"emporiavue.line.{config[CONF_ID]}.{circuit_key}".encode()
+                ).digest()[:4],
+                "little",
+            )
+            initial_line = 0 if is_auto_line else line_config
+            cg.add(ct_clamp_var.configure_dynamic_line(initial_line, preference_key))
+
+        if has_line_select:
+            line_options = ["Auto"] + [
+                f"L{line_number}" for line_number in sorted(main_phase_vars_by_line)
+            ]
+            line_select = await select.new_select(
+                circuit_config[CONF_LINE_SELECT], options=line_options
+            )
+            await cg.register_parented(line_select, ct_clamp_var)
+            cg.add(ct_clamp_var.set_line_select(line_select))
+
+        phase_detection_sensor_config = circuit_config.get(CONF_PHASE_DETECTION)
+        if phase_detection_sensor_config:
             phase_detection_text_sensor_config = dict(phase_detection_sensor_config)
             phase_detection_text_sensor_config.pop(CONF_POWER_MIN, None)
             sens = await text_sensor.new_text_sensor(phase_detection_text_sensor_config)
@@ -2752,6 +2819,13 @@ async def to_code(config):
                     )
                 )
             )
+        if is_auto_line or has_line_select or phase_detection_sensor_config:
+            if not phase_detection_sensor_config:
+                cg.add(
+                    ct_clamp_var.set_phase_detection_power_min(
+                        phase_detection_config[CONF_POWER_MIN]
+                    )
+                )
             for line_number, phase_var in sorted(main_phase_vars_by_line.items()):
                 cg.add(ct_clamp_var.add_phase_detection_candidate(phase_var, line_number))
 

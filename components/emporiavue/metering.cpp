@@ -526,6 +526,9 @@ bool EmporiaVueComponent::calculate_ct_fundamental_analysis_(const MeteringFrame
 }
 
 float EmporiaVueComponent::apply_power_direction_(float power, uint8_t direction) {
+  if (std::isnan(power)) {
+    return power;
+  }
   switch (direction) {
     case MeteringPowerOutput::DIRECTION_POSITIVE:
       return power > 0.0f ? power : 0.0f;
@@ -563,19 +566,21 @@ bool EmporiaVueComponent::calculate_group_power_(const MeteringFrame &frame, con
   for (const auto &term : group->get_terms()) {
     if (term.ct_clamp != nullptr) {
       float power = 0.0f;
-      if (this->calculate_ct_power_(frame, term.ct_clamp, &power)) {
-        sum += term.sign * power;
-        has_power = true;
+      if (!this->calculate_ct_power_(frame, term.ct_clamp, &power)) {
+        return false;
       }
+      sum += term.sign * power;
+      has_power = true;
       continue;
     }
 
     if (term.group != nullptr) {
       float power = 0.0f;
-      if (this->calculate_group_power_(frame, term.group, &power, depth + 1)) {
-        sum += term.sign * power;
-        has_power = true;
+      if (!this->calculate_group_power_(frame, term.group, &power, depth + 1)) {
+        return false;
       }
+      sum += term.sign * power;
+      has_power = true;
     }
   }
   if (!has_power) {
@@ -587,9 +592,14 @@ bool EmporiaVueComponent::calculate_group_power_(const MeteringFrame &frame, con
 }
 
 void EmporiaVueComponent::update_phase_detection_(const MeteringFrame &frame, MeteringCTClampConfig *ct_clamp) {
-  if (ct_clamp == nullptr || ct_clamp->get_phase_detection_sensor() == nullptr) {
+  if (ct_clamp == nullptr ||
+      (ct_clamp->get_phase_detection_sensor() == nullptr && !ct_clamp->is_auto_line_detection_active())) {
     return;
   }
+
+  const char *detection_name = ct_clamp->get_phase_detection_name().empty()
+                                   ? "Automatic line detection"
+                                   : ct_clamp->get_phase_detection_name().c_str();
 
   const uint8_t port = ct_clamp->get_input_port();
   const auto &candidates = ct_clamp->get_phase_detection_candidates();
@@ -618,7 +628,8 @@ void EmporiaVueComponent::update_phase_detection_(const MeteringFrame &frame, Me
       continue;
     }
     const int32_t raw_power = frame.clamps[port].power_raw_by_phase[input];
-    const float power = raw_power * candidate.phase->get_calibration() / correction_factor;
+    const float power = raw_power * candidate.phase->get_calibration() / correction_factor *
+                        ct_clamp->get_current_gain();
     const float score = std::fabs(power);
     sample_scores[candidate.line - 1] = score;
     max_sample_score = std::max(max_sample_score, score);
@@ -645,10 +656,11 @@ void EmporiaVueComponent::update_phase_detection_(const MeteringFrame &frame, Me
   if (samples == 0) {
     state = "low load";
     ct_clamp->reset_phase_detection_stability();
-    ct_clamp->get_phase_detection_sensor()->publish_state(state);
+    if (ct_clamp->get_phase_detection_sensor() != nullptr) {
+      ct_clamp->get_phase_detection_sensor()->publish_state(state);
+    }
     ESP_LOGV(TAG, "%s: low load window=%" PRIu32 "ms power_min=%.1fW",
-             ct_clamp->get_phase_detection_name().c_str(), now - window_start,
-             ct_clamp->get_phase_detection_power_min());
+             detection_name, now - window_start, ct_clamp->get_phase_detection_power_min());
     ct_clamp->reset_phase_detection();
     ct_clamp->set_phase_detection_window_start_ms(now);
     return;
@@ -674,6 +686,7 @@ void EmporiaVueComponent::update_phase_detection_(const MeteringFrame &frame, Me
   const float ratio = second_score > 0.0f ? best_score / second_score : 999.0f;
   const float confidence = (best_score + second_score) > 0.0f ? best_score * 100.0f / (best_score + second_score)
                                                               : 0.0f;
+  bool auto_detection_complete = false;
   if (ratio < this->phase_detection_confidence_ratio_) {
     ct_clamp->reset_phase_detection_stability();
     state = str_sprintf("ambiguous L%u/L%u", static_cast<unsigned>(best_line), static_cast<unsigned>(second_line));
@@ -681,23 +694,31 @@ void EmporiaVueComponent::update_phase_detection_(const MeteringFrame &frame, Me
     const uint8_t stable_windows = ct_clamp->update_phase_detection_candidate(best_line);
     if (stable_windows >= 3) {
       state = str_sprintf("L%u", static_cast<unsigned>(best_line));
+      auto_detection_complete = ct_clamp->is_auto_line_detection_active();
     } else {
       state = str_sprintf("L%u weak", static_cast<unsigned>(best_line));
     }
   }
 
-  ct_clamp->get_phase_detection_sensor()->publish_state(state);
+  if (ct_clamp->get_phase_detection_sensor() != nullptr) {
+    ct_clamp->get_phase_detection_sensor()->publish_state(state);
+  }
 
   const float divisor = samples == 0 ? 1.0f : static_cast<float>(samples);
   ESP_LOGV(TAG,
            "%s: state=%s window=%" PRIu32 "ms samples=%" PRIu32
            " scores L1=%.1fW L2=%.1fW L3=%.1fW confidence=%.0f%% power_min=%.1fW",
-           ct_clamp->get_phase_detection_name().c_str(), state.c_str(), now - window_start, samples,
+           detection_name, state.c_str(), now - window_start, samples,
            scores[0] / divisor, scores[1] / divisor, scores[2] / divisor,
            confidence, ct_clamp->get_phase_detection_power_min());
 
   ct_clamp->reset_phase_detection();
   ct_clamp->set_phase_detection_window_start_ms(now);
+  if (auto_detection_complete) {
+    ESP_LOGI(TAG, "%s: selected L%u and stored the assignment", detection_name,
+             static_cast<unsigned>(best_line));
+    ct_clamp->complete_auto_line_detection(best_line);
+  }
 }
 
 void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
@@ -746,8 +767,9 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
 
   for (auto *ct_clamp : this->metering_ct_clamps_) {
     const uint8_t port = ct_clamp->get_input_port();
+    this->update_phase_detection_(frame, ct_clamp);
     const MeteringPhaseConfig *phase = ct_clamp->get_phase();
-    if (port >= 19 || phase == nullptr || phase->get_input_wire() >= 3) {
+    if (port >= 19) {
       continue;
     }
 
@@ -768,6 +790,8 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
           ct_clamp->get_power_split_line_b_sensor()->publish_state(split_power);
         }
       }
+    } else if (phase == nullptr) {
+      publish_power_outputs_(ct_clamp->get_power_outputs(), unavailable);
     }
     if (ct_clamp->get_current_sensor() != nullptr && measurement.has_current) {
       ct_clamp->get_current_sensor()->publish_state(measurement.current);
@@ -791,9 +815,13 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
     if (ct_clamp->get_apparent_power_sensor() != nullptr && measurement.has_apparent_power) {
       const bool above_threshold = measurement.apparent_power >= this->minimum_apparent_power_;
       ct_clamp->get_apparent_power_sensor()->publish_state(above_threshold ? measurement.apparent_power : 0.0f);
+    } else if (ct_clamp->get_apparent_power_sensor() != nullptr && phase == nullptr) {
+      ct_clamp->get_apparent_power_sensor()->publish_state(unavailable);
     }
     if (ct_clamp->get_power_factor_sensor() != nullptr && measurement.has_power_factor) {
       ct_clamp->get_power_factor_sensor()->publish_state(measurement.power_factor);
+    } else if (ct_clamp->get_power_factor_sensor() != nullptr && phase == nullptr) {
+      ct_clamp->get_power_factor_sensor()->publish_state(unavailable);
     }
     if (ct_clamp->get_fundamental_current_sensor() != nullptr) {
       ct_clamp->get_fundamental_current_sensor()->publish_state(
@@ -815,7 +843,6 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
       ct_clamp->get_current_thd_sensor()->publish_state(
           has_fundamental_analysis ? measurement.current_thd : unavailable);
     }
-    this->update_phase_detection_(frame, ct_clamp);
   }
 
   for (auto *group : this->metering_groups_) {
@@ -827,6 +854,8 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
     if (this->calculate_group_power_(frame, group, &group_power)) {
       group->add_power_demand_sample(group_power, demand_now_ms);
       publish_power_outputs_(group->get_power_outputs(), group_power);
+    } else {
+      publish_power_outputs_(group->get_power_outputs(), std::numeric_limits<float>::quiet_NaN());
     }
   }
 }

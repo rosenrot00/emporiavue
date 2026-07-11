@@ -8,6 +8,7 @@ firmware.
 
 | Version | Changes |
 |---|---|
+| 2026.07.8 | Added persistent automatic circuit line assignment with an optional Home Assistant line selector. |
 | 2026.07.7 | Renamed voltage calibration options and added optional per-CT current gain and SPI phase calibration. |
 | 2026.07.6 | Added time-windowed SPI current peak and current crest factor entities. |
 | 2026.07.5 | Added configurable rolling power/current demand and daily maximum demand for mains, circuits, and groups. |
@@ -163,8 +164,41 @@ utility label printed on the conductor. If the black Vue voltage lead is physica
 measures that real L2. Assign every circuit from the actual installation rather than assuming CT socket order determines
 the phase.
 
-If you do not know the correct `line`, use the [phase detection helper](#phase-detection-helper) to detect the most likely
-assignment automatically. It reports the result but never changes your YAML.
+If you do not know the correct line, use `line: auto`. The existing phase-detection logic waits for three stable
+measurement windows, applies the detected line, and stores it for the next restart. Automatic assignment does not
+require a Home Assistant entity:
+
+```yaml
+cir2:
+  name: "Heat Pump"
+  line: auto
+```
+
+Add `line_select:` only when Home Assistant should also provide a dropdown:
+
+```yaml
+cir2:
+  name: "Heat Pump"
+  line: auto
+  line_select:
+```
+
+The optional `Heat Pump Line` selector offers `Auto` and every configured line, for example `L1`, `L2`, and `L3`.
+It stays on `Auto` until detection is reliable and then changes to the selected line. Choosing `Auto` later starts a
+new detection; choosing a line applies and stores it immediately.
+
+| Circuit YAML | Assignment | Home Assistant dropdown |
+|---|---|---|
+| `line: 1` | Fixed by YAML | No |
+| `line: auto` | Detected once and stored | No |
+| `line: 1` plus `line_select:` | Starts with L1; stored dropdown choice wins | Yes |
+| `line: auto` plus `line_select:` | Starts with Auto; changes to the detected line | Yes |
+
+`line_select:` is only the optional Home Assistant control, just like `voltage_calibration_number:`. Removing it makes
+a numeric `line:` authoritative again. With `line: auto`, detection and storage continue to work without the dropdown.
+
+On the first automatic run, phase-dependent values remain unknown until a line is detected; current values remain
+available. Once detected, the stored line is restored immediately after subsequent restarts.
 
 For a load connected between two lines, use a pair:
 
@@ -601,7 +635,8 @@ consistent. Leave the defaults unchanged without a trusted meter and a suitable 
 ### Phase detection helper
 
 Phase detection compares a single-line CT with all configured voltage references and suggests the most likely logical
-line. It never rewrites YAML automatically.
+line. This diagnostic helper only reports its findings and never changes the assignment. Use `line: auto` instead when
+the component should apply and store the result automatically.
 
 ```yaml
 emporiavue:

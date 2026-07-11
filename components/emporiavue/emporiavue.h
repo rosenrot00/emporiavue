@@ -5,6 +5,7 @@
 #include "esphome/components/i2c/i2c.h"
 #endif
 #include "esphome/components/number/number.h"
+#include "esphome/components/select/select.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/text_sensor/text_sensor.h"
 #include "esphome/components/time/real_time_clock.h"
@@ -47,6 +48,7 @@ class MeteringVirtualLineConfig;
 class MeteringCalibrationNumber;
 class MeteringCurrentGainNumber;
 class MeteringCurrentPhaseNumber;
+class MeteringLineSelect;
 
 class MeteringPowerFilters {
  public:
@@ -101,6 +103,7 @@ class MeteringDemandTracker {
   void setup();
   void loop();
   void add_sample(float value, uint32_t now_ms);
+  void invalidate_window() { this->reset_window_(true); }
 
  protected:
   struct RestoreState {
@@ -996,6 +999,11 @@ class MeteringCurrentPhaseNumber : public number::Number, public Parented<Meteri
   bool pref_initialized_{false};
 };
 
+class MeteringLineSelect : public select::Select, public Parented<MeteringCTClampConfig> {
+ protected:
+  void control(const std::string &value) override;
+};
+
 class MeteringCTClampConfig {
  public:
   struct PhaseDetectionCandidate {
@@ -1027,6 +1035,18 @@ class MeteringCTClampConfig {
   void set_current_phase_number(MeteringCurrentPhaseNumber *number) { this->current_phase_number_ = number; }
   MeteringCurrentPhaseNumber *get_current_phase_number() const { return this->current_phase_number_; }
   void setup_current_calibration_numbers();
+  void set_line_select(MeteringLineSelect *line_select) { this->line_select_ = line_select; }
+  MeteringLineSelect *get_line_select() const { return this->line_select_; }
+  void configure_dynamic_line(uint8_t initial_line, uint32_t preference_key) {
+    this->dynamic_line_enabled_ = true;
+    this->initial_line_ = initial_line;
+    this->line_preference_key_ = preference_key;
+  }
+  void setup_line_assignment();
+  void start_auto_line_detection(bool save = true);
+  bool select_line(uint8_t line, bool save = true);
+  void complete_auto_line_detection(uint8_t line);
+  bool is_auto_line_detection_active() const { return this->auto_line_detection_active_; }
   void add_power_output(uint8_t direction, sensor::Sensor *raw_power_sensor, sensor::Sensor *power_sensor) {
     this->power_outputs_.emplace_back(direction, raw_power_sensor, power_sensor);
   }
@@ -1154,6 +1174,8 @@ class MeteringCTClampConfig {
   uint32_t get_phase_detection_window_start_ms() const { return this->phase_detection_window_start_ms_; }
 
  protected:
+  void save_line_assignment_(uint8_t line);
+
   MeteringPhaseConfig *phase_{nullptr};
   MeteringPhaseConfig *line_pair_phase_b_{nullptr};
   bool line_pair_{false};
@@ -1162,6 +1184,13 @@ class MeteringCTClampConfig {
   float current_phase_correction_degrees_{0.0f};
   MeteringCurrentGainNumber *current_gain_number_{nullptr};
   MeteringCurrentPhaseNumber *current_phase_number_{nullptr};
+  MeteringLineSelect *line_select_{nullptr};
+  bool dynamic_line_enabled_{false};
+  uint8_t initial_line_{0};
+  uint32_t line_preference_key_{0};
+  ESPPreferenceObject line_pref_{};
+  bool line_pref_initialized_{false};
+  bool auto_line_detection_active_{false};
   std::vector<MeteringPowerOutput> power_outputs_{};
   sensor::Sensor *current_sensor_{nullptr};
   MeteringPeakTracker peak_tracker_{};

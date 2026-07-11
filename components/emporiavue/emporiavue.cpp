@@ -21,6 +21,7 @@ void EmporiaVueComponent::setup() {
   }
   for (auto *ct_clamp : this->metering_ct_clamps_) {
     ct_clamp->setup_current_calibration_numbers();
+    ct_clamp->setup_line_assignment();
     ct_clamp->setup_demand();
   }
   for (auto *group : this->metering_groups_) {
@@ -137,6 +138,8 @@ void EmporiaVueComponent::dump_config() {
                     static_cast<unsigned>(ct_clamp->get_phase()->get_input_wire()));
     }
     ESP_LOGCONFIG(TAG, "    Internal power filters: %u", static_cast<unsigned>(ct_clamp->get_power_filter_count()));
+    LOG_SELECT("    ", "Line", ct_clamp->get_line_select());
+    ESP_LOGCONFIG(TAG, "    Automatic line detection: %s", YESNO(ct_clamp->is_auto_line_detection_active()));
     ESP_LOGCONFIG(TAG, "    Current gain: %.6f", ct_clamp->get_current_gain());
     ESP_LOGCONFIG(TAG, "    Current phase correction: %.3f deg", ct_clamp->get_current_phase_correction());
     LOG_NUMBER("    ", "Current gain calibration", ct_clamp->get_current_gain_number());
@@ -296,6 +299,94 @@ void MeteringCurrentPhaseNumber::ensure_preference_() {
   }
   this->pref_ = global_preferences->make_preference<float>(this->get_object_id_hash());
   this->pref_initialized_ = true;
+}
+
+void MeteringLineSelect::control(const std::string &value) {
+  if (this->parent_ == nullptr) {
+    return;
+  }
+  if (value == "Auto") {
+    this->parent_->start_auto_line_detection();
+    return;
+  }
+  if (value.size() == 2 && value[0] == 'L' && value[1] >= '1' && value[1] <= '3') {
+    this->parent_->select_line(static_cast<uint8_t>(value[1] - '0'));
+  }
+}
+
+void MeteringCTClampConfig::setup_line_assignment() {
+  if (!this->dynamic_line_enabled_) {
+    return;
+  }
+
+  this->line_pref_ = global_preferences->make_preference<uint8_t>(this->line_preference_key_);
+  this->line_pref_initialized_ = true;
+  uint8_t line = this->initial_line_;
+  this->line_pref_.load(&line);
+  if (line >= 1 && line <= 3 && this->select_line(line, false)) {
+    return;
+  }
+  this->start_auto_line_detection(false);
+}
+
+void MeteringCTClampConfig::save_line_assignment_(uint8_t line) {
+  if (!this->dynamic_line_enabled_) {
+    return;
+  }
+  if (!this->line_pref_initialized_) {
+    this->line_pref_ = global_preferences->make_preference<uint8_t>(this->line_preference_key_);
+    this->line_pref_initialized_ = true;
+  }
+  this->line_pref_.save(&line);
+  global_preferences->sync();
+}
+
+void MeteringCTClampConfig::start_auto_line_detection(bool save) {
+  if (!this->dynamic_line_enabled_) {
+    return;
+  }
+  this->phase_ = nullptr;
+  this->line_pair_phase_b_ = nullptr;
+  this->line_pair_ = false;
+  this->auto_line_detection_active_ = true;
+  this->reset_phase_detection();
+  this->reset_phase_detection_stability();
+  this->phase_detection_window_start_ms_ = 0;
+  this->power_demand_.invalidate_window();
+  if (save) {
+    this->save_line_assignment_(0);
+  }
+  if (this->line_select_ != nullptr) {
+    this->line_select_->publish_state("Auto");
+  }
+}
+
+bool MeteringCTClampConfig::select_line(uint8_t line, bool save) {
+  for (const auto &candidate : this->phase_detection_candidates_) {
+    if (candidate.line != line || candidate.phase == nullptr) {
+      continue;
+    }
+    this->set_phase(candidate.phase);
+    this->auto_line_detection_active_ = false;
+    this->reset_phase_detection();
+    this->reset_phase_detection_stability();
+    this->phase_detection_window_start_ms_ = 0;
+    this->power_demand_.invalidate_window();
+    if (save) {
+      this->save_line_assignment_(line);
+    }
+    if (this->line_select_ != nullptr) {
+      this->line_select_->publish_state(str_sprintf("L%u", static_cast<unsigned>(line)));
+    }
+    return true;
+  }
+  return false;
+}
+
+void MeteringCTClampConfig::complete_auto_line_detection(uint8_t line) {
+  if (this->auto_line_detection_active_) {
+    this->select_line(line);
+  }
 }
 
 void EmporiaVueComponent::set_error_(const std::string &error) {
