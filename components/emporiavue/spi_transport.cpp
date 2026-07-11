@@ -30,6 +30,7 @@ static constexpr uint32_t SPI_RX_SAMD_RESET_MIN_INTERVAL_MS = 2000;
 static constexpr uint16_t SPI_RX_SAMD_RESET_BOOT_DELAY_MS = 20;
 static constexpr uint32_t SPI_MAIN_SAMPLE_COUNT = 12987;
 static constexpr uint16_t SPI_REFERENCE_WINDOW_MS = 500;
+static constexpr uint32_t SPI_RX_TASK_STACK_SIZE = 6144;
 static constexpr uint32_t SPI_MAIN_RMS_SCALE_NUMERATOR = 100;
 static constexpr uint32_t SPI_CURRENT_RMS_SCALE_NUMERATOR = 100;
 static constexpr uint32_t SPI_POWER_SCALE_MULTIPLIER = 10;
@@ -110,7 +111,7 @@ void EmporiaVueComponent::setup_spi_receiver_(bool reset_statistics) {
       }
     }
     const BaseType_t task_result =
-        xTaskCreate(EmporiaVueComponent::spi_rx_task_trampoline_, "samd_spi_rx", 4096, this, 5,
+        xTaskCreate(EmporiaVueComponent::spi_rx_task_trampoline_, "samd_spi_rx", SPI_RX_TASK_STACK_SIZE, this, 5,
                     &this->spi_rx_task_handle_);
     if (task_result != pdPASS) {
       ESP_LOGE(TAG, "SAMD09 SPI receiver task restart failed");
@@ -225,7 +226,7 @@ void EmporiaVueComponent::setup_spi_receiver_(bool reset_statistics) {
   this->spi_rx_last_log_ms_ = millis();
   this->spi_rx_last_valid_frame_ms_ = this->spi_rx_last_log_ms_;
   const BaseType_t task_result =
-      xTaskCreate(EmporiaVueComponent::spi_rx_task_trampoline_, "samd_spi_rx", 4096, this, 5,
+      xTaskCreate(EmporiaVueComponent::spi_rx_task_trampoline_, "samd_spi_rx", SPI_RX_TASK_STACK_SIZE, this, 5,
                   &this->spi_rx_task_handle_);
   if (task_result != pdPASS) {
     ESP_LOGE(TAG, "SAMD09 SPI receiver task start failed");
@@ -339,20 +340,16 @@ void EmporiaVueComponent::restart_spi_receiver_() {
              reset_samd ? "resetting SAMD09" : "resyncing ESP32 SPI", this->spi_rx_recoveries_);
   }
 
-  this->spi_rx_invalid_streak_ = 0;
-  this->spi_rx_recover_requested_ = false;
-  this->spi_rx_stall_recovery_ = false;
-  this->reset_spi_metering_state_();
-#ifdef USE_ESP32
-  if (this->spi_metering_queue_ != nullptr) {
-    xQueueReset(this->spi_metering_queue_);
-  }
-#endif
-
   if (!this->stop_spi_receiver_(true)) {
+    this->spi_rx_recover_requested_ = true;
     return;
   }
 
+  // The receive task owns the raw-scan rings and metering accumulator. Do not
+  // clear either while it can still be decoding an in-flight transaction.
+  this->spi_rx_invalid_streak_ = 0;
+  this->spi_rx_recover_requested_ = false;
+  this->spi_rx_stall_recovery_ = false;
   this->reset_spi_metering_state_();
 
   if (reset_samd) {
