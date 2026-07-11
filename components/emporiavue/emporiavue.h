@@ -7,6 +7,7 @@
 #include "esphome/components/number/number.h"
 #include "esphome/components/sensor/sensor.h"
 #include "esphome/components/text_sensor/text_sensor.h"
+#include "esphome/components/time/real_time_clock.h"
 #include "esphome/core/component.h"
 #include "esphome/core/hal.h"
 #include "esphome/core/helpers.h"
@@ -82,6 +83,63 @@ class MeteringPowerOutput {
   uint8_t direction_{DIRECTION_SIGNED};
   sensor::Sensor *raw_power_sensor_{nullptr};
   sensor::Sensor *power_sensor_{nullptr};
+};
+
+class MeteringDemandTracker {
+ public:
+  void set_interval(uint32_t interval_ms) { this->interval_ms_ = interval_ms; }
+  uint32_t get_interval() const { return this->interval_ms_; }
+  void set_demand_sensor(sensor::Sensor *sensor) { this->demand_sensor_ = sensor; }
+  sensor::Sensor *get_demand_sensor() const { return this->demand_sensor_; }
+  void set_maximum_sensor(sensor::Sensor *sensor) { this->maximum_sensor_ = sensor; }
+  sensor::Sensor *get_maximum_sensor() const { return this->maximum_sensor_; }
+  void set_time(time::RealTimeClock *time) { this->time_ = time; }
+  void set_restore(bool restore) { this->restore_ = restore; }
+  bool enabled() const { return this->demand_sensor_ != nullptr || this->maximum_sensor_ != nullptr; }
+  void setup();
+  void loop();
+  void add_sample(float value, uint32_t now_ms);
+
+ protected:
+  struct RestoreState {
+    uint32_t day_key{0};
+    float maximum{NAN};
+  };
+
+  static constexpr uint32_t BUCKET_DURATION_MS = 5000;
+  static constexpr uint32_t MAX_SAMPLE_GAP_MS = 30000;
+
+  void reset_window_(bool publish_unavailable);
+  void finish_bucket_(uint32_t now_ms);
+  void check_day_(uint32_t now_ms);
+  void reset_daily_maximum_(uint32_t day_key, uint32_t now_ms);
+  void publish_and_save_maximum_(float value);
+  static uint32_t day_key_(const ESPTime &now);
+
+  uint32_t interval_ms_{900000};
+  sensor::Sensor *demand_sensor_{nullptr};
+  sensor::Sensor *maximum_sensor_{nullptr};
+  time::RealTimeClock *time_{nullptr};
+  bool restore_{true};
+  ESPPreferenceObject pref_{};
+  bool pref_initialized_{false};
+  RestoreState restored_state_{};
+  bool restored_state_valid_{false};
+
+  std::vector<float> buckets_{};
+  size_t bucket_index_{0};
+  size_t bucket_count_{0};
+  double window_sum_{0.0};
+  double current_bucket_integral_{0.0};
+  uint32_t current_bucket_elapsed_ms_{0};
+  uint32_t last_sample_ms_{0};
+  float last_value_{0.0f};
+  bool sample_initialized_{false};
+
+  uint32_t current_day_key_{0};
+  uint32_t daily_window_start_ms_{0};
+  float daily_maximum_{NAN};
+  bool daily_maximum_valid_{false};
 };
 
 class EmporiaVueComponent : public Component
@@ -706,6 +764,7 @@ class EmporiaVueComponent : public Component
   bool firmware_mode_mismatch_log_started_{false};
   uint32_t metering_interval_ms_{0};
   bool metering_started_{false};
+  uint32_t last_demand_day_check_ms_{0};
   uint32_t last_metering_sequence_{0};
   MeteringTransport last_metering_transport_{MeteringTransport::UNKNOWN};
   bool last_metering_sequence_valid_{false};
@@ -906,6 +965,35 @@ class MeteringCTClampConfig {
   sensor::Sensor *get_apparent_power_sensor() const { return this->apparent_power_sensor_; }
   void set_power_factor_sensor(sensor::Sensor *sensor) { this->power_factor_sensor_ = sensor; }
   sensor::Sensor *get_power_factor_sensor() const { return this->power_factor_sensor_; }
+  void set_demand_interval(uint32_t interval_ms) {
+    this->power_demand_.set_interval(interval_ms);
+    this->current_demand_.set_interval(interval_ms);
+  }
+  uint32_t get_demand_interval() const { return this->power_demand_.get_interval(); }
+  void set_power_demand_sensor(sensor::Sensor *sensor) { this->power_demand_.set_demand_sensor(sensor); }
+  sensor::Sensor *get_power_demand_sensor() const { return this->power_demand_.get_demand_sensor(); }
+  void set_maximum_power_demand_sensor(sensor::Sensor *sensor) { this->power_demand_.set_maximum_sensor(sensor); }
+  sensor::Sensor *get_maximum_power_demand_sensor() const { return this->power_demand_.get_maximum_sensor(); }
+  void set_power_demand_time(time::RealTimeClock *time) { this->power_demand_.set_time(time); }
+  void set_power_demand_restore(bool restore) { this->power_demand_.set_restore(restore); }
+  void set_current_demand_sensor(sensor::Sensor *sensor) { this->current_demand_.set_demand_sensor(sensor); }
+  sensor::Sensor *get_current_demand_sensor() const { return this->current_demand_.get_demand_sensor(); }
+  void set_maximum_current_demand_sensor(sensor::Sensor *sensor) { this->current_demand_.set_maximum_sensor(sensor); }
+  sensor::Sensor *get_maximum_current_demand_sensor() const { return this->current_demand_.get_maximum_sensor(); }
+  void set_current_demand_time(time::RealTimeClock *time) { this->current_demand_.set_time(time); }
+  void set_current_demand_restore(bool restore) { this->current_demand_.set_restore(restore); }
+  bool has_power_demand() const { return this->power_demand_.enabled(); }
+  bool has_demand() const { return this->power_demand_.enabled() || this->current_demand_.enabled(); }
+  void setup_demand() {
+    this->power_demand_.setup();
+    this->current_demand_.setup();
+  }
+  void loop_demand() {
+    this->power_demand_.loop();
+    this->current_demand_.loop();
+  }
+  void add_power_demand_sample(float value, uint32_t now_ms) { this->power_demand_.add_sample(value, now_ms); }
+  void add_current_demand_sample(float value, uint32_t now_ms) { this->current_demand_.add_sample(value, now_ms); }
   void set_fundamental_current_sensor(sensor::Sensor *sensor) { this->fundamental_current_sensor_ = sensor; }
   sensor::Sensor *get_fundamental_current_sensor() const { return this->fundamental_current_sensor_; }
   void set_fundamental_reactive_power_sensor(sensor::Sensor *sensor) {
@@ -987,6 +1075,8 @@ class MeteringCTClampConfig {
   sensor::Sensor *current_sensor_{nullptr};
   sensor::Sensor *apparent_power_sensor_{nullptr};
   sensor::Sensor *power_factor_sensor_{nullptr};
+  MeteringDemandTracker power_demand_{};
+  MeteringDemandTracker current_demand_{};
   sensor::Sensor *fundamental_current_sensor_{nullptr};
   sensor::Sensor *fundamental_reactive_power_sensor_{nullptr};
   sensor::Sensor *fundamental_power_factor_sensor_{nullptr};
@@ -1025,6 +1115,18 @@ class MeteringGroupConfig {
     this->power_outputs_.emplace_back(direction, raw_power_sensor, power_sensor);
   }
   const std::vector<MeteringPowerOutput> &get_power_outputs() const { return this->power_outputs_; }
+  void set_demand_interval(uint32_t interval_ms) { this->power_demand_.set_interval(interval_ms); }
+  uint32_t get_demand_interval() const { return this->power_demand_.get_interval(); }
+  void set_power_demand_sensor(sensor::Sensor *sensor) { this->power_demand_.set_demand_sensor(sensor); }
+  sensor::Sensor *get_power_demand_sensor() const { return this->power_demand_.get_demand_sensor(); }
+  void set_maximum_power_demand_sensor(sensor::Sensor *sensor) { this->power_demand_.set_maximum_sensor(sensor); }
+  sensor::Sensor *get_maximum_power_demand_sensor() const { return this->power_demand_.get_maximum_sensor(); }
+  void set_power_demand_time(time::RealTimeClock *time) { this->power_demand_.set_time(time); }
+  void set_power_demand_restore(bool restore) { this->power_demand_.set_restore(restore); }
+  bool has_power_demand() const { return this->power_demand_.enabled(); }
+  void setup_demand() { this->power_demand_.setup(); }
+  void loop_demand() { this->power_demand_.loop(); }
+  void add_power_demand_sample(float value, uint32_t now_ms) { this->power_demand_.add_sample(value, now_ms); }
   void add_power_multiply_filter(float multiplier) { this->power_filters_.add_multiply_filter(multiplier); }
   void add_power_lambda_filter(std::function<float(float)> filter) {
     this->power_filters_.add_lambda_filter(std::move(filter));
@@ -1036,6 +1138,7 @@ class MeteringGroupConfig {
   std::vector<Term> terms_{};
   std::vector<MeteringPowerOutput> power_outputs_{};
   MeteringPowerFilters power_filters_{};
+  MeteringDemandTracker power_demand_{};
 };
 
 class MeteringVirtualLineConfig {

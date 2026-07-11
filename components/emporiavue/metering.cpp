@@ -11,6 +11,162 @@
 namespace esphome {
 namespace emporiavue {
 
+void MeteringDemandTracker::setup() {
+  if (!this->enabled()) {
+    return;
+  }
+  const size_t buckets = std::max<size_t>(1, this->interval_ms_ / BUCKET_DURATION_MS);
+  this->buckets_.assign(buckets, 0.0f);
+  this->reset_window_(false);
+
+  if (this->maximum_sensor_ != nullptr && this->restore_) {
+    this->pref_ = global_preferences->make_preference<RestoreState>(this->maximum_sensor_->get_object_id_hash());
+    this->pref_initialized_ = true;
+    this->restored_state_valid_ = this->pref_.load(&this->restored_state_);
+  }
+}
+
+void MeteringDemandTracker::loop() {
+  if (this->maximum_sensor_ != nullptr) {
+    this->check_day_(millis());
+  }
+}
+
+void MeteringDemandTracker::reset_window_(bool publish_unavailable) {
+  std::fill(this->buckets_.begin(), this->buckets_.end(), 0.0f);
+  this->bucket_index_ = 0;
+  this->bucket_count_ = 0;
+  this->window_sum_ = 0.0;
+  this->current_bucket_integral_ = 0.0;
+  this->current_bucket_elapsed_ms_ = 0;
+  this->sample_initialized_ = false;
+  if (publish_unavailable && this->demand_sensor_ != nullptr) {
+    this->demand_sensor_->publish_state(NAN);
+  }
+}
+
+uint32_t MeteringDemandTracker::day_key_(const ESPTime &now) {
+  return static_cast<uint32_t>(now.year) * 1000U + now.day_of_year;
+}
+
+void MeteringDemandTracker::publish_and_save_maximum_(float value) {
+  this->daily_maximum_ = value;
+  this->daily_maximum_valid_ = !std::isnan(value);
+  if (this->maximum_sensor_ != nullptr) {
+    this->maximum_sensor_->publish_state(value);
+  }
+  if (this->pref_initialized_) {
+    const RestoreState state{this->current_day_key_, value};
+    this->pref_.save(&state);
+  }
+}
+
+void MeteringDemandTracker::reset_daily_maximum_(uint32_t day_key, uint32_t now_ms) {
+  this->current_day_key_ = day_key;
+  this->daily_window_start_ms_ = now_ms;
+  this->publish_and_save_maximum_(NAN);
+}
+
+void MeteringDemandTracker::check_day_(uint32_t now_ms) {
+  if (this->maximum_sensor_ == nullptr || this->time_ == nullptr) {
+    return;
+  }
+  const ESPTime now = this->time_->now();
+  if (!now.is_valid()) {
+    return;
+  }
+  const uint32_t day_key = day_key_(now);
+  if (this->current_day_key_ == 0) {
+    if (this->restored_state_valid_ && this->restored_state_.day_key == day_key) {
+      this->current_day_key_ = day_key;
+      this->daily_maximum_ = this->restored_state_.maximum;
+      this->daily_maximum_valid_ = !std::isnan(this->daily_maximum_);
+      this->daily_window_start_ms_ =
+          this->daily_maximum_valid_ ? now_ms - this->interval_ms_ : now_ms;
+      this->maximum_sensor_->publish_state(this->daily_maximum_);
+    } else {
+      this->reset_daily_maximum_(day_key, now_ms);
+    }
+    return;
+  }
+  if (day_key != this->current_day_key_) {
+    this->reset_daily_maximum_(day_key, now_ms);
+  }
+}
+
+void MeteringDemandTracker::finish_bucket_(uint32_t now_ms) {
+  if (this->buckets_.empty()) {
+    return;
+  }
+  const float average = static_cast<float>(this->current_bucket_integral_ / BUCKET_DURATION_MS);
+  if (this->bucket_count_ == this->buckets_.size()) {
+    this->window_sum_ -= this->buckets_[this->bucket_index_];
+  } else {
+    this->bucket_count_++;
+  }
+  this->buckets_[this->bucket_index_] = average;
+  this->window_sum_ += average;
+  this->bucket_index_ = (this->bucket_index_ + 1) % this->buckets_.size();
+  this->current_bucket_integral_ = 0.0;
+  this->current_bucket_elapsed_ms_ = 0;
+
+  if (this->bucket_count_ != this->buckets_.size()) {
+    return;
+  }
+  const float demand = static_cast<float>(this->window_sum_ / this->buckets_.size());
+  if (this->demand_sensor_ != nullptr) {
+    this->demand_sensor_->publish_state(demand);
+  }
+  if (this->maximum_sensor_ == nullptr) {
+    return;
+  }
+  this->check_day_(now_ms);
+  if (this->current_day_key_ == 0 || (now_ms - this->daily_window_start_ms_) < this->interval_ms_) {
+    return;
+  }
+  if (!this->daily_maximum_valid_ || demand > this->daily_maximum_) {
+    this->publish_and_save_maximum_(demand);
+  }
+}
+
+void MeteringDemandTracker::add_sample(float value, uint32_t now_ms) {
+  if (!this->enabled()) {
+    return;
+  }
+  if (std::isnan(value)) {
+    this->reset_window_(true);
+    return;
+  }
+  if (!this->sample_initialized_) {
+    this->last_sample_ms_ = now_ms;
+    this->last_value_ = value;
+    this->sample_initialized_ = true;
+    return;
+  }
+
+  uint32_t elapsed_ms = now_ms - this->last_sample_ms_;
+  this->last_sample_ms_ = now_ms;
+  if (elapsed_ms > MAX_SAMPLE_GAP_MS) {
+    this->reset_window_(true);
+    this->last_sample_ms_ = now_ms;
+    this->last_value_ = value;
+    this->sample_initialized_ = true;
+    return;
+  }
+
+  while (elapsed_ms > 0) {
+    const uint32_t remaining_ms = BUCKET_DURATION_MS - this->current_bucket_elapsed_ms_;
+    const uint32_t chunk_ms = std::min(elapsed_ms, remaining_ms);
+    this->current_bucket_integral_ += static_cast<double>(this->last_value_) * chunk_ms;
+    this->current_bucket_elapsed_ms_ += chunk_ms;
+    elapsed_ms -= chunk_ms;
+    if (this->current_bucket_elapsed_ms_ == BUCKET_DURATION_MS) {
+      this->finish_bucket_(now_ms - elapsed_ms);
+    }
+  }
+  this->last_value_ = value;
+}
+
 void EmporiaVueComponent::submit_metering_frame_(const MeteringFrame &frame) {
   if (!frame.valid) {
     return;
@@ -454,6 +610,7 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
   if (!frame.valid) {
     return;
   }
+  const uint32_t demand_now_ms = millis();
 
   for (auto *phase : this->metering_phases_) {
     const uint8_t input = phase->get_input_wire();
@@ -505,6 +662,7 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
     const bool has_fundamental_analysis =
         this->calculate_ct_fundamental_analysis_(frame, ct_clamp, &measurement);
     if (measurement.has_power) {
+      ct_clamp->add_power_demand_sample(measurement.power, demand_now_ms);
       publish_power_outputs_(ct_clamp->get_power_outputs(), measurement.power);
       if (ct_clamp->is_line_pair()) {
         const float split_power = measurement.power * 0.5f;
@@ -518,6 +676,9 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
     }
     if (ct_clamp->get_current_sensor() != nullptr && measurement.has_current) {
       ct_clamp->get_current_sensor()->publish_state(measurement.current);
+    }
+    if (measurement.has_current) {
+      ct_clamp->add_current_demand_sample(measurement.current, demand_now_ms);
     }
 
     if (ct_clamp->get_apparent_power_sensor() != nullptr && measurement.has_apparent_power) {
@@ -552,12 +713,13 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
   }
 
   for (auto *group : this->metering_groups_) {
-    if (group->get_power_outputs().empty()) {
+    if (group->get_power_outputs().empty() && !group->has_power_demand()) {
       continue;
     }
 
     float group_power = 0.0f;
     if (this->calculate_group_power_(frame, group, &group_power)) {
+      group->add_power_demand_sample(group_power, demand_now_ms);
       publish_power_outputs_(group->get_power_outputs(), group_power);
     }
   }

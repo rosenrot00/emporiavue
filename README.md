@@ -7,6 +7,7 @@ Vue 2 SPI path when you specifically want raw-waveform analysis and are comforta
 
 | Version | Changes |
 |---|---|
+| 2026.07.5 | Added configurable rolling power/current demand and daily maximum demand for mains, circuits, and groups. |
 | 2026.07.4 | Added sample-derived SPI line-to-line RMS voltage plus optional fundamental current, fundamental reactive power, fundamental power factor, displacement angle, and current THD entities. |
 | 2026.07.3 | Improved SPI frequency and phase-angle stability with complete interpolated line cycles and a shared period reference. |
 | 2026.07.2 | Added fundamental-voltage phase measurement over the SPI metering window. |
@@ -22,7 +23,7 @@ Vue 2 SPI path when you specifically want raw-waveform analysis and are comforta
 |---|---|---|---|
 | **Best for** | Official Emporia experience | Normal daily monitoring | Enthusiasts and development |
 | **You get** | Emporia app and cloud | Local Home Assistant entities | Local entities plus waveform detail |
-| **Measurements** | Official Emporia feature set | Voltage, current, power, energy, groups and import/export | Same core values plus optional fundamental and waveform analysis |
+| **Measurements** | Official Emporia feature set | Voltage, current, power, energy, demand, groups and import/export | Same core values plus optional fundamental and waveform analysis |
 | **Firmware** |  | Stock SAMD09 firmware works; custom ESPHome firmware calculates line-to-line voltage without a fixed `√3` assumption | Experimental; custom SAMD09 firmware required |
 
 The short decision is:
@@ -410,6 +411,43 @@ Simple daily energy defaults to `state_class: total_increasing`. Explicit signed
 output: `both` is signed/net, `positive` keeps positive power, and `negative` exposes negative power as a positive value.
 An `energy:` directly under the circuit uses `both`. Use separate positive/import and negative/export energy rather than
 signed net energy in the Home Assistant Energy Dashboard.
+
+### Demand
+
+Demand is the time-weighted average power or RMS current over a moving interval. The default is 15 minutes. Set
+`demand_interval` globally, or override it for an individual main, circuit, or group. A local value wins over the global
+value; when neither is set, 15 minutes is used. Supported intervals are 1 to 60 minutes.
+
+```yaml
+emporiavue:
+  demand_interval: 15min
+
+  circuits:
+    cir2:
+      name: "Heat Pump"
+      power_demand:
+      maximum_power_demand:
+      current_demand:
+      maximum_current_demand:
+
+    cir8:
+      name: "Wallbox"
+      demand_interval: 5min
+      power_demand:
+      maximum_power_demand:
+
+  groups:
+    grid:
+      sources: [line_1, line_2, line_3]
+      power_demand:
+      maximum_power_demand:
+```
+
+This creates names such as `Heat Pump Power Demand` and `Today's Heat Pump Maximum Power Demand`. The rolling demand
+does not reset; it always represents the latest complete interval and stays `unknown` until that first interval is
+available. The daily maximum resets at midnight and only starts again after a complete interval from the new day. Like
+daily energy, its state is restored after a restart by default. The maximum entities need an ESPHome `time:` source.
+All Demand entities are optional and work with both I2C and SPI.
 
 ### Groups
 

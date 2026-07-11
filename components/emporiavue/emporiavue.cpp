@@ -19,6 +19,12 @@ void EmporiaVueComponent::setup() {
   for (auto *phase : this->metering_phases_) {
     phase->setup_calibration_number();
   }
+  for (auto *ct_clamp : this->metering_ct_clamps_) {
+    ct_clamp->setup_demand();
+  }
+  for (auto *group : this->metering_groups_) {
+    group->setup_demand();
+  }
   if (!this->install_active_) {
     this->start_i2c_diagnostics_();
     this->start_metering_();
@@ -27,6 +33,16 @@ void EmporiaVueComponent::setup() {
 }
 
 void EmporiaVueComponent::loop() {
+  const uint32_t now = millis();
+  if ((now - this->last_demand_day_check_ms_) >= 1000) {
+    this->last_demand_day_check_ms_ = now;
+    for (auto *ct_clamp : this->metering_ct_clamps_) {
+      ct_clamp->loop_demand();
+    }
+    for (auto *group : this->metering_groups_) {
+      group->loop_demand();
+    }
+  }
   if (this->backup_active_) {
     this->process_backup_();
     return;
@@ -122,6 +138,13 @@ void EmporiaVueComponent::dump_config() {
     LOG_SENSOR("    ", "Current", ct_clamp->get_current_sensor());
     LOG_SENSOR("    ", "Apparent power", ct_clamp->get_apparent_power_sensor());
     LOG_SENSOR("    ", "Power factor", ct_clamp->get_power_factor_sensor());
+    if (ct_clamp->has_demand()) {
+      ESP_LOGCONFIG(TAG, "    Demand interval: %.0f min", ct_clamp->get_demand_interval() / 60000.0f);
+      LOG_SENSOR("    ", "Power demand", ct_clamp->get_power_demand_sensor());
+      LOG_SENSOR("    ", "Today's maximum power demand", ct_clamp->get_maximum_power_demand_sensor());
+      LOG_SENSOR("    ", "Current demand", ct_clamp->get_current_demand_sensor());
+      LOG_SENSOR("    ", "Today's maximum current demand", ct_clamp->get_maximum_current_demand_sensor());
+    }
     LOG_SENSOR("    ", "Fundamental current", ct_clamp->get_fundamental_current_sensor());
     LOG_SENSOR("    ", "Fundamental reactive power", ct_clamp->get_fundamental_reactive_power_sensor());
     LOG_SENSOR("    ", "Fundamental power factor", ct_clamp->get_fundamental_power_factor_sensor());
@@ -139,6 +162,11 @@ void EmporiaVueComponent::dump_config() {
     for (const auto &output : group->get_power_outputs()) {
       LOG_SENSOR("      ", "Raw power", output.get_raw_power_sensor());
       LOG_SENSOR("      ", "Power", output.get_power_sensor());
+    }
+    if (group->has_power_demand()) {
+      ESP_LOGCONFIG(TAG, "    Demand interval: %.0f min", group->get_demand_interval() / 60000.0f);
+      LOG_SENSOR("    ", "Power demand", group->get_power_demand_sensor());
+      LOG_SENSOR("    ", "Today's maximum power demand", group->get_maximum_power_demand_sensor());
     }
   }
   for (auto *virtual_line : this->metering_virtual_lines_) {
