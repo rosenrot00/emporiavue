@@ -44,6 +44,7 @@ static constexpr uint16_t SPI_MIN_METERING_SAMPLES = 512;
 static constexpr uint16_t SPI_MAX_METERING_SAMPLES = SPI_MAIN_SAMPLE_COUNT;
 static constexpr double SPI_TWO_PI = 6.28318530717958647692;
 static constexpr float SPI_MIN_VOLTAGE_FUNDAMENTAL_AMPLITUDE = 16.0f;
+static constexpr uint16_t SPI_FRAME_FLAG_OVERRUN = 0x0001;
 static constexpr uint16_t SPI_FRAME_FLAG_DMA_ERROR = 0x0002;
 static_assert(SPI_RAW_SCAN_SIZE * SPI_RAW_SCAN_COUNT == SPI_RAW_FRAME_PAYLOAD_SIZE,
               "SPI raw scan payload must fill the 1024-byte frame payload");
@@ -65,7 +66,7 @@ void EmporiaVueComponent::publish_spi_diagnostics_() {
         static_cast<float>(this->spi_rx_queue_errors_ + this->spi_rx_dma_errors_));
   }
   if (this->diag_frame_overruns_sensor_ != nullptr) {
-    this->diag_frame_overruns_sensor_->publish_state(static_cast<float>(this->spi_rx_frame_gaps_));
+    this->diag_frame_overruns_sensor_->publish_state(static_cast<float>(this->spi_rx_samd_overruns_));
   }
   if (this->diag_recoveries_sensor_ != nullptr &&
       (!this->spi_diag_recoveries_published_ ||
@@ -197,6 +198,7 @@ void EmporiaVueComponent::setup_spi_receiver_(bool reset_statistics) {
     this->spi_rx_crc_errors_ = 0;
     this->spi_rx_queue_errors_ = 0;
     this->spi_rx_dma_errors_ = 0;
+    this->spi_rx_samd_overruns_ = 0;
     this->spi_rx_frame_gaps_ = 0;
     this->spi_rx_recoveries_ = 0;
     this->spi_rx_last_sequence_ = 0;
@@ -219,6 +221,7 @@ void EmporiaVueComponent::setup_spi_receiver_(bool reset_statistics) {
   this->spi_rx_logged_crc_errors_ = this->spi_rx_crc_errors_;
   this->spi_rx_logged_queue_errors_ = this->spi_rx_queue_errors_;
   this->spi_rx_logged_dma_errors_ = this->spi_rx_dma_errors_;
+  this->spi_rx_logged_samd_overruns_ = this->spi_rx_samd_overruns_;
   this->spi_rx_logged_frame_gaps_ = this->spi_rx_frame_gaps_;
   this->spi_rx_logged_recoveries_ = this->spi_rx_recoveries_;
   this->spi_rx_logged_flags_ = this->spi_rx_last_flags_;
@@ -409,6 +412,9 @@ void EmporiaVueComponent::process_spi_transaction_(spi_slave_transaction_t *tran
       transaction->trans_len == SPI_RAW_FRAME_SIZE * 8 &&
       this->validate_spi_frame_(static_cast<const uint8_t *>(transaction->rx_buffer), &sequence, &flags,
                                 &sample_counter, &sample_period_ticks);
+  if (protocol_valid && (flags & SPI_FRAME_FLAG_OVERRUN) != 0) {
+    this->spi_rx_samd_overruns_++;
+  }
   const bool samd_dma_error = protocol_valid && (flags & SPI_FRAME_FLAG_DMA_ERROR) != 0;
   if (protocol_valid && !samd_dma_error) {
     if (this->spi_rx_frames_ > 0) {
@@ -1213,15 +1219,25 @@ void EmporiaVueComponent::process_spi_receiver_() {
 #ifdef USE_ESP32
   this->publish_queued_spi_metering_();
 
+  // Read the cross-task timestamp before millis(). If the receive task updates
+  // it afterwards, the confirmation below suppresses a stale timeout instead
+  // of underflowing an unsigned subtraction and reporting a 1 ms stall.
+  const uint32_t last_valid_frame_ms = this->spi_rx_last_valid_frame_ms_;
   const uint32_t now = millis();
-  if (!this->spi_rx_recover_requested_ && this->spi_rx_last_valid_frame_ms_ != 0 &&
-      now - this->spi_rx_last_valid_frame_ms_ >= SPI_RX_VALID_FRAME_TIMEOUT_MS) {
+  if (!this->spi_rx_recover_requested_ && last_valid_frame_ms != 0 &&
+      now - last_valid_frame_ms >= SPI_RX_VALID_FRAME_TIMEOUT_MS &&
+      this->spi_rx_last_valid_frame_ms_ == last_valid_frame_ms) {
     this->spi_rx_stall_recovery_ = true;
     this->spi_rx_recover_requested_ = true;
   }
   if (this->spi_rx_recover_requested_) {
-    this->restart_spi_receiver_();
-    return;
+    if (this->spi_rx_stall_recovery_ && this->spi_rx_last_valid_frame_ms_ != last_valid_frame_ms) {
+      this->spi_rx_stall_recovery_ = false;
+      this->spi_rx_recover_requested_ = false;
+    } else {
+      this->restart_spi_receiver_();
+      return;
+    }
   }
 
   const bool status_changed =
@@ -1229,6 +1245,7 @@ void EmporiaVueComponent::process_spi_receiver_() {
       this->spi_rx_crc_errors_ != this->spi_rx_logged_crc_errors_ ||
       this->spi_rx_queue_errors_ != this->spi_rx_logged_queue_errors_ ||
       this->spi_rx_dma_errors_ != this->spi_rx_logged_dma_errors_ ||
+      this->spi_rx_samd_overruns_ != this->spi_rx_logged_samd_overruns_ ||
       this->spi_rx_frame_gaps_ != this->spi_rx_logged_frame_gaps_ ||
       this->spi_rx_recoveries_ != this->spi_rx_logged_recoveries_ ||
       this->spi_rx_last_flags_ != this->spi_rx_logged_flags_;
@@ -1236,16 +1253,17 @@ void EmporiaVueComponent::process_spi_receiver_() {
     this->spi_rx_last_log_ms_ = now;
     ESP_LOGD(TAG,
              "SAMD09 SPI rx status: sync_errors=%" PRIu32 " crc_errors=%" PRIu32 " queue_errors=%" PRIu32
-             " dma_errors=%" PRIu32 " seq_gaps=%" PRIu32 " recoveries=%" PRIu32 " inflight=%" PRIu16
-             " flags=0x%04" PRIx32 " sample_counter=%" PRIu32,
+             " dma_errors=%" PRIu32 " samd_overruns=%" PRIu32 " seq_gaps=%" PRIu32 " recoveries=%" PRIu32
+             " inflight=%" PRIu16 " flags=0x%04" PRIx32 " sample_counter=%" PRIu32,
              this->spi_rx_sync_errors_, this->spi_rx_crc_errors_, this->spi_rx_queue_errors_, this->spi_rx_dma_errors_,
-             this->spi_rx_frame_gaps_, this->spi_rx_recoveries_, this->spi_rx_inflight_, this->spi_rx_last_flags_,
-             this->spi_rx_last_sample_counter_);
+             this->spi_rx_samd_overruns_, this->spi_rx_frame_gaps_, this->spi_rx_recoveries_, this->spi_rx_inflight_,
+             this->spi_rx_last_flags_, this->spi_rx_last_sample_counter_);
     this->spi_rx_logged_status_valid_ = true;
     this->spi_rx_logged_sync_errors_ = this->spi_rx_sync_errors_;
     this->spi_rx_logged_crc_errors_ = this->spi_rx_crc_errors_;
     this->spi_rx_logged_queue_errors_ = this->spi_rx_queue_errors_;
     this->spi_rx_logged_dma_errors_ = this->spi_rx_dma_errors_;
+    this->spi_rx_logged_samd_overruns_ = this->spi_rx_samd_overruns_;
     this->spi_rx_logged_frame_gaps_ = this->spi_rx_frame_gaps_;
     this->spi_rx_logged_recoveries_ = this->spi_rx_recoveries_;
     this->spi_rx_logged_flags_ = this->spi_rx_last_flags_;

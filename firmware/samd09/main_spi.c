@@ -256,6 +256,23 @@ volatile uint16_t SpiPendingFlags = 0;
 volatile uint32_t SpiSampleCounter = 0;
 volatile uint32_t SpiFrameOverruns = 0;
 
+static uint32_t spi_enter_critical(void)
+{
+	uint32_t primask;
+	__asm__ __volatile__(
+		"mrs %0, primask\n"
+		"cpsid i"
+		: "=r" (primask)
+		:
+		: "memory");
+	return primask;
+}
+
+static void spi_exit_critical(uint32_t primask)
+{
+	__asm__ __volatile__("msr primask, %0" : : "r" (primask) : "memory");
+}
+
 static uint8_t spi_ready_queue_contains(uint8_t frame_index)
 {
 	for (uint8_t offset = 0; offset < SpiReadyCount; offset++)
@@ -637,8 +654,10 @@ static void transmit_spi_frame_if_ready(void)
 	if ((REG_SERCOM1_INTFLAG & 4) != 0)
 		(void) REG_SERCOM1_DATA;
 	spi_frame_cs_deassert();
+	const uint32_t primask = spi_enter_critical();
 	SpiReadyHead = (uint8_t) ((SpiReadyHead + 1) % SPI_READY_QUEUE_CAPACITY);
 	SpiReadyCount--;
+	spi_exit_critical(primask);
 }
 
 void COnfigSerCom1 ()
