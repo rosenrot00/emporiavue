@@ -829,6 +829,9 @@ Home Assistant:
 2. **Write the managed firmware:** press `Flash SAMD Bundled Firmware` and wait until the ESPHome log reports
    `SAMD09 firmware update complete`. To return to the saved original firmware, press `Flash SAMD Backup Firmware`.
 
+`Read SAMD Firmware` always writes the complete firmware as offset-tagged hexadecimal chunks to the INFO log. When
+the `samd_bak` partition is available, the same verified image is also stored there for one-button restoration.
+
 `auto_update_samd` defaults to `false`.
 
 > [!WARNING]

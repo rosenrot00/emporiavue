@@ -147,7 +147,7 @@ void EmporiaVueComponent::backup_firmware() {
            "SAMD09 legacy firmware backup started: flash_size=%" PRIu32 ", page_size=%" PRIu32
            ", page_count=%" PRIu32 ", destination=%s",
            this->backup_flash_size_, this->backup_page_size_, this->backup_page_count_,
-           this->backup_log_only_ ? "log" : "partition");
+           this->backup_log_only_ ? "log" : "partition+log");
 }
 
 void EmporiaVueComponent::install_firmware() { this->start_firmware_action_(FirmwareAction::UPDATE_MANAGED, true); }
@@ -1416,6 +1416,16 @@ void EmporiaVueComponent::process_backup_() {
   const uint32_t remaining = this->backup_flash_size_ - this->backup_next_offset_;
   const uint16_t length = static_cast<uint16_t>(std::min<uint32_t>(sizeof(buffer), remaining));
 
+  auto log_dump_chunk = [this](uint32_t offset, const uint8_t *data, uint16_t data_length) {
+    std::string hex;
+    hex.reserve(data_length * 2U);
+    for (uint16_t i = 0; i < data_length; i++) {
+      append_hex_byte_(&hex, data[i]);
+    }
+    ESP_LOGI(TAG, "SAMD09 firmware dump: offset=0x%05" PRIx32 " length=%u data=%s", offset,
+             static_cast<unsigned>(data_length), hex.c_str());
+  };
+
   if (length == 0) {
     this->fail_backup_("internal backup state error");
     return;
@@ -1426,6 +1436,7 @@ void EmporiaVueComponent::process_backup_() {
       this->fail_backup_("flash read failed: " + this->last_error_);
       return;
     }
+    log_dump_chunk(this->backup_next_offset_, buffer, length);
     const esp_err_t err =
         esp_partition_write(this->backup_partition_, BACKUP_IMAGE_OFFSET + this->backup_next_offset_, buffer, length);
     if (err != ESP_OK) {
@@ -1445,6 +1456,7 @@ void EmporiaVueComponent::process_backup_() {
       this->backup_sha_ctx_active_ = true;
       this->backup_next_offset_ = 0;
       this->backup_stage_ = BackupStage::VERIFY_SECOND_READ;
+      ESP_LOGI(TAG, "SAMD09 firmware dump complete; verifying with second read");
     }
     return;
   }
@@ -1455,13 +1467,7 @@ void EmporiaVueComponent::process_backup_() {
       return;
     }
 
-    std::string hex;
-    hex.reserve(length * 2);
-    for (uint16_t i = 0; i < length; i++) {
-      append_hex_byte_(&hex, buffer[i]);
-    }
-    ESP_LOGI(TAG, "SAMD09 firmware dump: offset=0x%05" PRIx32 " length=%u data=%s", this->backup_next_offset_,
-             static_cast<unsigned>(length), hex.c_str());
+    log_dump_chunk(this->backup_next_offset_, buffer, length);
     mbedtls_sha256_update(&this->backup_sha_ctx_, buffer, length);
 
     this->backup_next_offset_ += length;
