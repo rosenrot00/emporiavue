@@ -16,8 +16,10 @@ namespace esphome {
 namespace emporiavue {
 
 static constexpr uint16_t SPI_RAW_FRAME_SIZE = 1024;
-static constexpr uint8_t SPI_RAW_FRAME_VERSION = 1;
-static constexpr uint8_t SPI_RAW_FRAME_TYPE_RAW_SAMPLES = 1;
+static constexpr uint8_t SPI_VUE2_RAW_FRAME_VERSION = 1;
+static constexpr uint8_t SPI_VUE2_RAW_FRAME_TYPE = 1;
+static constexpr uint8_t SPI_VUE3_RAW_FRAME_VERSION = 2;
+static constexpr uint8_t SPI_VUE3_RAW_FRAME_TYPE = 2;
 static constexpr uint16_t SPI_RAW_FRAME_PAYLOAD_SIZE = 1008;
 static constexpr uint16_t SPI_RAW_FRAME_HEADER_SIZE = 12;
 static constexpr uint8_t SPI_RAW_SCAN_SIZE = 18;
@@ -28,7 +30,8 @@ static constexpr uint32_t SPI_RX_VALID_FRAME_TIMEOUT_MS = 2000;
 static constexpr uint8_t SPI_RX_SOFT_RECOVERIES_BEFORE_SAMD_RESET = 3;
 static constexpr uint32_t SPI_RX_SAMD_RESET_MIN_INTERVAL_MS = 2000;
 static constexpr uint16_t SPI_RX_SAMD_RESET_BOOT_DELAY_MS = 20;
-static constexpr uint32_t SPI_MAIN_SAMPLE_COUNT = 12987;
+static constexpr uint32_t SPI_VUE2_MAIN_SAMPLE_COUNT = 12987;
+static constexpr uint32_t SPI_VUE3_MAIN_SAMPLE_COUNT = 10000;
 static constexpr uint16_t SPI_REFERENCE_WINDOW_MS = 500;
 static constexpr uint32_t SPI_RX_TASK_STACK_SIZE = 8192;
 static constexpr uint32_t SPI_MAIN_RMS_SCALE_NUMERATOR = 100;
@@ -43,15 +46,23 @@ static constexpr uint8_t SPI_ADC_OFFSET_STARTUP_WINDOWS = 4;
 static constexpr uint8_t SPI_ADC_OFFSET_SMOOTHING_SHIFT = 4;
 static constexpr int32_t SPI_ADC_OFFSET_MAX_STEP = 96;
 static constexpr uint16_t SPI_MIN_METERING_SAMPLES = 512;
-static constexpr uint16_t SPI_MAX_METERING_SAMPLES = SPI_MAIN_SAMPLE_COUNT;
+static constexpr uint16_t SPI_MAX_METERING_SAMPLES = SPI_VUE2_MAIN_SAMPLE_COUNT;
 static constexpr float SPI_TWO_PI = 6.28318530717958647692f;
 static constexpr float SPI_FUNDAMENTAL_RMS_COMPONENT_SCALE = 14.142135623730950488f;
 static constexpr float SPI_MIN_VOLTAGE_FUNDAMENTAL_AMPLITUDE = 16.0f;
 static constexpr uint16_t SPI_FRAME_FLAG_OVERRUN = 0x0001;
 static constexpr uint16_t SPI_FRAME_FLAG_DMA_ERROR = 0x0002;
+static constexpr uint16_t SPI_FRAME_FLAG_VOLTAGE_ERROR = 0x0004;
+static constexpr uint16_t SPI_FRAME_ERROR_FLAG_MASK =
+    SPI_FRAME_FLAG_OVERRUN | SPI_FRAME_FLAG_DMA_ERROR | SPI_FRAME_FLAG_VOLTAGE_ERROR;
 static_assert(SPI_RAW_SCAN_SIZE * SPI_RAW_SCAN_COUNT == SPI_RAW_FRAME_PAYLOAD_SIZE,
               "SPI raw scan payload must fill the 1024-byte frame payload");
-static constexpr uint8_t SPI_MUX_TABLE[16] = {12, 4, 13, 5, 14, 6, 11, 3, 15, 7, 18, 10, 16, 8, 17, 9};
+static constexpr uint8_t SPI_VUE2_MUX_TABLE[16] = {12, 4, 13, 5, 14, 6, 11, 3, 15, 7, 18, 10, 16, 8, 17, 9};
+static constexpr uint8_t SPI_VUE3_MUX_TABLE[16] = {16, 8, 17, 9, 12, 4, 13, 5, 14, 6, 11, 3, 15, 7, 18, 10};
+
+static uint8_t spi_mux_output_port(uint16_t hardware_id, uint8_t internal_index) {
+  return hardware_id == 3 ? SPI_VUE3_MUX_TABLE[internal_index] : SPI_VUE2_MUX_TABLE[internal_index];
+}
 static constexpr uint32_t SPI_CRC32_NIBBLE_TABLE[16] = {
     0x00000000UL, 0x1DB71064UL, 0x3B6E20C8UL, 0x26D930ACUL,
     0x76DC4190UL, 0x6B6B51F4UL, 0x4DB26158UL, 0x5005713CUL,
@@ -436,8 +447,9 @@ void EmporiaVueComponent::process_spi_transaction_(spi_slave_transaction_t *tran
   if (protocol_valid && (flags & SPI_FRAME_FLAG_OVERRUN) != 0) {
     this->spi_rx_samd_overruns_++;
   }
-  const bool samd_dma_error = protocol_valid && (flags & SPI_FRAME_FLAG_DMA_ERROR) != 0;
-  if (protocol_valid && !samd_dma_error) {
+  const bool samd_sample_error =
+      protocol_valid && (flags & (SPI_FRAME_FLAG_DMA_ERROR | SPI_FRAME_FLAG_VOLTAGE_ERROR)) != 0;
+  if (protocol_valid && !samd_sample_error) {
     if (this->spi_rx_frames_ > 0) {
       const uint16_t last_sequence = static_cast<uint16_t>(this->spi_rx_last_sequence_);
       const uint16_t current_sequence = static_cast<uint16_t>(sequence);
@@ -462,14 +474,16 @@ void EmporiaVueComponent::process_spi_transaction_(spi_slave_transaction_t *tran
     this->spi_sample_rate_hz_ = SPI_SAMPLE_TIMEBASE_HZ / static_cast<float>(sample_period_ticks);
     this->spi_rx_invalid_streak_ = 0;
     this->spi_rx_last_valid_frame_ms_ = millis();
-    this->decode_spi_raw_frame_(static_cast<const uint8_t *>(transaction->rx_buffer), sequence, flags, sample_counter);
+    this->decode_spi_raw_frame_(static_cast<const uint8_t *>(transaction->rx_buffer), sequence, flags,
+                                sample_counter);
   } else {
-    if (samd_dma_error) {
+    if (samd_sample_error) {
       this->spi_rx_dma_errors_++;
       this->spi_rx_last_flags_ = flags;
       this->reset_spi_metering_state_();
       if (this->spi_rx_invalid_streak_ == 0) {
-        ESP_LOGW(TAG, "Discarding SAMD09 SPI frame seq=%" PRIu32 " after SAMD DMA error", sequence);
+        ESP_LOGW(TAG, "Discarding SAMD09 SPI frame seq=%" PRIu32 " after SAMD sample error flags=0x%04" PRIX32,
+                 sequence, flags);
       }
     } else if (this->spi_rx_frames_ == 0) {
       this->spi_rx_sync_errors_++;
@@ -513,7 +527,9 @@ void EmporiaVueComponent::spi_rx_task_() {
 
 bool EmporiaVueComponent::validate_spi_frame_(const uint8_t *frame, uint32_t *sequence, uint32_t *flags,
                                               uint32_t *sample_counter, uint16_t *sample_period_ticks) const {
-  if (frame[0] != SPI_RAW_FRAME_VERSION || frame[1] != SPI_RAW_FRAME_TYPE_RAW_SAMPLES) {
+  const uint8_t expected_version = this->hardware_id_ == 3 ? SPI_VUE3_RAW_FRAME_VERSION : SPI_VUE2_RAW_FRAME_VERSION;
+  const uint8_t expected_type = this->hardware_id_ == 3 ? SPI_VUE3_RAW_FRAME_TYPE : SPI_VUE2_RAW_FRAME_TYPE;
+  if (frame[0] != expected_version || frame[1] != expected_type) {
     return false;
   }
 
@@ -538,13 +554,18 @@ bool EmporiaVueComponent::validate_spi_frame_(const uint8_t *frame, uint32_t *se
   }
 
   *sequence = static_cast<uint16_t>(frame[4]) | (static_cast<uint16_t>(frame[5]) << 8);
-  *flags = static_cast<uint16_t>(frame[6]) | (static_cast<uint16_t>(frame[7]) << 8);
+  const uint16_t raw_flags = static_cast<uint16_t>(frame[6]) | (static_cast<uint16_t>(frame[7]) << 8);
+  *flags = raw_flags & SPI_FRAME_ERROR_FLAG_MASK;
   *sample_counter = static_cast<uint32_t>(frame[8]) | (static_cast<uint32_t>(frame[9]) << 8) |
                     (static_cast<uint32_t>(frame[10]) << 16) | (static_cast<uint32_t>(frame[11]) << 24);
   if (sample_period_ticks != nullptr) {
-    const uint16_t reserved_low = frame[SPI_RAW_FRAME_HEADER_SIZE + 17];
-    const uint16_t reserved_high = frame[SPI_RAW_FRAME_HEADER_SIZE + SPI_RAW_SCAN_SIZE + 17];
-    *sample_period_ticks = static_cast<uint16_t>(reserved_low | (reserved_high << 8));
+    if (this->hardware_id_ == 3) {
+      *sample_period_ticks = raw_flags >> 3;
+    } else {
+      const uint16_t reserved_low = frame[SPI_RAW_FRAME_HEADER_SIZE + 17];
+      const uint16_t reserved_high = frame[SPI_RAW_FRAME_HEADER_SIZE + SPI_RAW_SCAN_SIZE + 17];
+      *sample_period_ticks = static_cast<uint16_t>(reserved_low | (reserved_high << 8));
+    }
     if (*sample_period_ticks == 0) {
       return false;
     }
@@ -626,7 +647,10 @@ int32_t EmporiaVueComponent::scale_spi_power_(int64_t raw, uint32_t multiplier, 
 
 uint32_t EmporiaVueComponent::spi_metering_target_samples_() const {
   const uint32_t interval_ms = this->metering_interval_ms_ == 0 ? SPI_REFERENCE_WINDOW_MS : this->metering_interval_ms_;
-  uint32_t samples = (SPI_MAIN_SAMPLE_COUNT * interval_ms + (SPI_REFERENCE_WINDOW_MS / 2)) / SPI_REFERENCE_WINDOW_MS;
+  const uint32_t reference_samples =
+      this->hardware_id_ == 3 ? SPI_VUE3_MAIN_SAMPLE_COUNT : SPI_VUE2_MAIN_SAMPLE_COUNT;
+  uint32_t samples =
+      (reference_samples * interval_ms + (SPI_REFERENCE_WINDOW_MS / 2)) / SPI_REFERENCE_WINDOW_MS;
   if (samples < SPI_MIN_METERING_SAMPLES) {
     samples = SPI_MIN_METERING_SAMPLES;
   }
@@ -1102,12 +1126,12 @@ void EmporiaVueComponent::finish_spi_metering_window_(uint32_t sequence, uint32_
 
   const char *invalid_reason = nullptr;
   uint32_t min_observed_mux_samples = std::numeric_limits<uint32_t>::max();
-  auto mux_samples_for_port = [&acc](uint8_t port) -> uint32_t {
+  auto mux_samples_for_port = [this, &acc](uint8_t port) -> uint32_t {
     if (port < 3) {
       return acc.sample_count;
     }
     for (uint8_t internal_index = 0; internal_index < 16; internal_index++) {
-      if (SPI_MUX_TABLE[internal_index] == port) {
+      if (spi_mux_output_port(this->hardware_id_, internal_index) == port) {
         return acc.mux_sample_count[internal_index];
       }
     }
@@ -1376,7 +1400,7 @@ void EmporiaVueComponent::finish_spi_metering_window_(uint32_t sequence, uint32_
   }
 
   for (uint8_t internal_index = 0; internal_index < 16; internal_index++) {
-    const uint8_t output_port = SPI_MUX_TABLE[internal_index];
+    const uint8_t output_port = spi_mux_output_port(this->hardware_id_, internal_index);
     if (output_port >= 19) {
       continue;
     }

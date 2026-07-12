@@ -19,6 +19,7 @@ FOOTER_FORMAT = "<HHI32s15s9s"
 FOOTER_SIZE = struct.calcsize(FOOTER_FORMAT)
 HARDWARE_SLUGS = {
     2: "vue2",
+    3: "vue3",
 }
 MODE_SLUGS = {
     1: "i2c",

@@ -1,0 +1,40 @@
+# Emporia Vue 3 raw-waveform SPI preset.
+#
+# This uses the verified Vue 3 SAMD09 connections. The managed firmware keeps
+# the stock SERCOM0 voltage-controller receiver and repurposes the stock I2C
+# PA22/PA23 link as SPI. SAMD auto-update remains disabled.
+
+esp32:
+  partitions:
+    - name: samd_bak
+      type: data
+      subtype: undefined
+      size: 0x10000
+
+emporiavue:
+  id: samd_reader
+  hardware: vue3
+  mode: spi
+  spi_clk_pin: GPIO18    # SAMD09 PA23/SERCOM1 PAD1
+  spi_data_pin: GPIO5    # SAMD09 PA22/SERCOM1 PAD0
+  spi_frame_pin: GPIO13  # TP8 -> SAMD09 PA31/SWDIO
+  spi_main_current_delay: 1
+  spi_mux_current_delay: 2
+  swdio_pin: GPIO13      # TP8 -> SAMD09 PA31/SWDIO
+  swclk_pin: GPIO14      # TP7 -> SAMD09 PA30/SWCLK
+  reset_pin: GPIO23      # TP6 -> SAMD09 PA28/RESET
+  connect_under_reset: true
+  auto_update_samd: false
+  backup_partition: samd_bak
+
+  firmware_version:
+    name: "SAMD Firmware Version"
+  bundled_firmware_version:
+    name: "SAMD Bundled Firmware Version"
+
+  backup_firmware_button:
+    name: "Read SAMD Firmware"
+  install_firmware_button:
+    name: "Flash SAMD Bundled Firmware"
+  restore_firmware_button:
+    name: "Flash SAMD Backup Firmware"

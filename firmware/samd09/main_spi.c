@@ -85,6 +85,7 @@ typedef volatile       uint32_t RoReg;   /**< Read only 32-bit register (volatil
 #define REG_TC1_COUNT16_CC0        (*(RwReg16*)0x42001818UL) /**< \brief (TC1) COUNT16 Compare/Capture 0 */
 
 #define REG_PORT_DIR	            (*(RwReg  *)0x41004400UL)
+#define REG_PORT_DIRSET             (*(RwReg  *)0x41004408UL)
 #define REG_PORT_OUT	            (*(RwReg  *)0x41004410UL)
 #define REG_PORT_OUTCLR            (*(RwReg  *)0x41004414UL) /**< \brief (PORT) Data Output Value Clear 0 */
 #define REG_PORT_OUTSET            (*(RwReg  *)0x41004418UL) /**< \brief (PORT) Data Output Value Set 0 */
@@ -138,6 +139,17 @@ typedef volatile       uint32_t RoReg;   /**< Read only 32-bit register (volatil
 #define REG_SERCOM1_SYNCBUSY       (*(RoReg  *)0x42000C1CUL)
 #define REG_SERCOM1_DATA           (*(RwReg8 *)0x42000C28UL)
 
+#ifdef EMPORIAVUE_TARGET_VUE3
+#define REG_SERCOM0_CTRLA          (*(RwReg  *)0x42000800UL)
+#define REG_SERCOM0_CTRLB          (*(RwReg  *)0x42000804UL)
+#define REG_SERCOM0_BAUD           (*(RwReg16*)0x4200080CUL)
+#define REG_SERCOM0_INTENSET       (*(RwReg8 *)0x42000816UL)
+#define REG_SERCOM0_INTFLAG        (*(RwReg8 *)0x42000818UL)
+#define REG_SERCOM0_STATUS         (*(RwReg16*)0x4200081AUL)
+#define REG_SERCOM0_SYNCBUSY       (*(RoReg  *)0x4200081CUL)
+#define REG_SERCOM0_DATA           (*(RoReg16*)0x42000828UL)
+#endif
+
 #define STATUS_SYNCBUSY_BIT        0x80
 
 #define SCB_VTOR_TBLOFF_Pos                 7                                             /*!< SCB VTOR: TBLOFF Position */
@@ -162,6 +174,7 @@ typedef volatile       uint32_t RoReg;   /**< Read only 32-bit register (volatil
 #define BOOT_STAGE_TC1_ENABLED 26
 #define BOOT_STAGE_SERCOM1_CONFIGURED 27
 #define BOOT_STAGE_MAIN_LOOP 28
+#define BOOT_STAGE_SERCOM0_CONFIGURED 29
 #define BOOT_STAGE_HARDFAULT 0xff
 
 struct BootDiagnosticType
@@ -187,24 +200,52 @@ static inline void set_boot_stage(uint32_t stage)
 
 bool dmabool = false;
 uint8_t DMAresultIndex = 0;
-int16_t DMAresults[6][8]; //We copy the 8 ADC results to this buffer using DMA
-			//Layout: MainCT1_V, MainCT1_A, MainCT2_V, MainCT2_A, MainCT_3_V, MainCT_3_A, Mux1_A, Mux2_A
+#ifdef EMPORIAVUE_TARGET_VUE3
+#define ADC_CHANNEL_COUNT 5
+int16_t DMAresults[6][ADC_CHANNEL_COUNT];
+// Vue 3 scans AIN3..AIN7: three main-current inputs followed by two multiplexed branch-current inputs.
+#else
+#define ADC_CHANNEL_COUNT 8
+int16_t DMAresults[6][ADC_CHANNEL_COUNT];
+// Vue 2 layout: MainCT1_V, MainCT1_A, MainCT2_V, MainCT2_A, MainCT3_V, MainCT3_A, Mux1_A, Mux2_A.
+#endif
 
 uint8_t MuxCounter = 0; //Varies between 0 and 7 to switch between the 8 muxes, each serving 2 50A CT's
+#ifdef EMPORIAVUE_TARGET_VUE3
+const uint32_t outputpinTable [8] = { 0, 0x10000, 0x20000, 0x30000, 0x1000000, 0x1010000, 0x1020000, 0x1030000 };
+#define MUX_SWITCH_GUARD_PIN_MASK 0x100UL // Vue 3 stock firmware changes the PA08 pull while switching.
+#else
 const uint32_t outputpinTable [8] = { 0x1000000, 0x1010000, 0x1020000, 0x1030000, 0, 0x10000, 0x20000, 0x30000 }; //all possible combinations of pin 16, 17 and 24.
+#define MUX_SWITCH_GUARD_PIN_MASK 0x2000000UL // PA25
+#endif
 
+#ifndef EMPORIAVUE_HARDWARE_ID
 #define EMPORIAVUE_HARDWARE_ID       2
-#define EMPORIAVUE_MODE_ID       2
+#endif
+#ifndef EMPORIAVUE_MODE_ID
+#define EMPORIAVUE_MODE_ID           2
+#endif
+#ifndef EMPORIAVUE_FIRMWARE_VERSION
 #define EMPORIAVUE_FIRMWARE_VERSION  10
+#endif
 
+#ifdef EMPORIAVUE_TARGET_VUE3
+#define TC1_ADC_TRIGGER_PERIOD         0x9F
+#define ADC_INPUTCTRL_SCAN_DIFF_GAIN2  0x1340000UL
+#define SPI_FRAME_VERSION              2
+#define SPI_FRAME_TYPE_RAW_SAMPLES     2
+#define SPI_SAMPLE_PERIOD_TICKS        816
+#else
 #define TC1_ADC_TRIGGER_PERIOD         0x4C
-#define ADC_SAMPLE_TIME_LENGTH         1
-#define ADC_REFCTRL_VREFA              3
-#define ADC_INPUTCTRL_SCAN8_DIFF_GAIN2 0x1270000UL
-#define ADC_CTRLB_DIV8_12BIT_DIFF      0x101
-
+#define ADC_INPUTCTRL_SCAN_DIFF_GAIN2  0x1270000UL
 #define SPI_FRAME_VERSION              1
 #define SPI_FRAME_TYPE_RAW_SAMPLES     1
+#define SPI_SAMPLE_PERIOD_TICKS        632
+#endif
+#define ADC_SAMPLE_TIME_LENGTH         1
+#define ADC_REFCTRL_VREFA              3
+#define ADC_CTRLB_DIV8_12BIT_DIFF      0x101
+
 #define SPI_FRAME_SIZE                 1024
 #define SPI_HEADER_SIZE                12
 #define SPI_CRC_SIZE                   4
@@ -212,8 +253,8 @@ const uint32_t outputpinTable [8] = { 0x1000000, 0x1010000, 0x1020000, 0x1030000
 #define SPI_RAW_SCAN_COUNT             56
 #define SPI_FLAG_OVERRUN               0x0001
 #define SPI_FLAG_DMA_ERROR             0x0002
+#define SPI_FLAG_VOLTAGE_ERROR         0x0004
 #define SPI_FRAME_CS_PIN_MASK          0x80000000UL  // PA31/SWDIO, active-low SPI frame/CS.
-#define SPI_SAMPLE_PERIOD_TICKS        632
 
 struct __attribute__((__packed__)) SpiFrameHeader
 {
@@ -255,6 +296,12 @@ volatile uint16_t SpiFrameSequence = 0;
 volatile uint16_t SpiPendingFlags = 0;
 volatile uint32_t SpiSampleCounter = 0;
 volatile uint32_t SpiFrameOverruns = 0;
+
+#ifdef EMPORIAVUE_TARGET_VUE3
+volatile uint8_t VoltagePacketBuild[6];
+volatile uint8_t VoltagePacketBuildLength = 0;
+int16_t DecodedVoltage[3];
+#endif
 
 static uint32_t spi_enter_critical(void)
 {
@@ -317,7 +364,12 @@ static void finalize_spi_frame(void)
 	frame->header.type = SPI_FRAME_TYPE_RAW_SAMPLES;
 	frame->header.length = SPI_PAYLOAD_SIZE;
 	frame->header.sequence = SpiFrameSequence++;
+#ifdef EMPORIAVUE_TARGET_VUE3
+	// Protocol v2 carries the measured scan period in flag bits 3..15.
+	frame->header.flags = (uint16_t) (SpiPendingFlags | (SPI_SAMPLE_PERIOD_TICKS << 3));
+#else
 	frame->header.flags = SpiPendingFlags;
+#endif
 	frame->crc32 = 0;
 	SpiPendingFlags = 0;
 
@@ -345,7 +397,21 @@ static void capture_spi_scan(uint8_t dma_result_index, uint8_t mux_index)
 		frame->header.sample_counter = SpiSampleCounter;
 
 	struct SpiRawScan* scan = &frame->scans[SpiBuildScanIndex];
-	for (uint8_t index = 0; index < 8; index++)
+#ifdef EMPORIAVUE_TARGET_VUE3
+	// Preserve the semantic Vue 2 scan layout so the ESP32 can share the same
+	// metering implementation: V1/I1, V2/I2, V3/I3, branch mux A/B.
+	scan->value[0] = DecodedVoltage[0];
+	scan->value[1] = DMAresults[dma_result_index][0];
+	scan->value[2] = DecodedVoltage[1];
+	scan->value[3] = DMAresults[dma_result_index][1];
+	scan->value[4] = DecodedVoltage[2];
+	scan->value[5] = DMAresults[dma_result_index][2];
+	scan->value[6] = DMAresults[dma_result_index][3];
+	scan->value[7] = DMAresults[dma_result_index][4];
+	scan->mux_index = mux_index;
+	scan->reserved = 0;
+#else
+	for (uint8_t index = 0; index < ADC_CHANNEL_COUNT; index++)
 		scan->value[index] = DMAresults[dma_result_index][index];
 	scan->mux_index = mux_index;
 	scan->reserved = 0;
@@ -353,6 +419,7 @@ static void capture_spi_scan(uint8_t dma_result_index, uint8_t mux_index)
 		scan->reserved = (uint8_t) (SPI_SAMPLE_PERIOD_TICKS & 0xFF);
 	else if (SpiBuildScanIndex == 1)
 		scan->reserved = (uint8_t) ((SPI_SAMPLE_PERIOD_TICKS >> 8) & 0xFF);
+#endif
 
 	SpiSampleCounter++;
 	SpiBuildScanIndex++;
@@ -395,7 +462,11 @@ DUMMY void irq_handler_rtc(void);
 DUMMY void irq_handler_eic(void);
 DUMMY void irq_handler_nvmctrl(void);
 DUMMY void irq_handler_evsys(void);
+#ifdef EMPORIAVUE_TARGET_VUE3
+void irq_handler_sercom0(void);
+#else
 DUMMY void irq_handler_sercom0(void);
+#endif
 DUMMY void irq_handler_tc1(void);
 DUMMY void irq_handler_tc2(void);
 DUMMY void irq_handler_adc(void);
@@ -527,16 +598,64 @@ void irq_handler_reset(void)
   while (1);
 }
 
-void irq_handler_sercom1(void)
+void irq_handler_sercom1(void) {}
+
+#ifdef EMPORIAVUE_TARGET_VUE3
+void irq_handler_sercom0(void)
 {
+	const uint8_t value = (uint8_t) REG_SERCOM0_DATA;
+
+	// The Vue 3 voltage controller emits fixed six-byte telegrams. The DMA
+	// completion handler consumes and resets this buffer, as in stock firmware.
+	if (VoltagePacketBuildLength > 5)
+		return;
+	if (VoltagePacketBuildLength == 0 && (value & 0xC0U) != 0xC0U)
+		return;
+
+	VoltagePacketBuild[VoltagePacketBuildLength++] = value;
 }
+
+static bool decode_vue3_voltage_packet(void)
+{
+	uint8_t phases_seen = 0;
+	int16_t decoded[3] = {0, 0, 0};
+	if (VoltagePacketBuildLength != 6)
+	{
+		VoltagePacketBuildLength = 0;
+		return false;
+	}
+
+	for (uint8_t pair = 0; pair < 3; pair++)
+	{
+		const uint8_t first = VoltagePacketBuild[pair * 2];
+		const uint8_t second = VoltagePacketBuild[pair * 2 + 1];
+		const uint8_t phase = second >> 6;
+		if (phase >= 3 || (phases_seen & (1U << phase)) != 0)
+		{
+			VoltagePacketBuildLength = 0;
+			return false;
+		}
+		int16_t value = (int16_t) ((((uint16_t) first & 0x3FU) << 6) | (second & 0x3FU));
+		if ((value & 0x0800) != 0)
+			value = (int16_t) (value | 0xF000);
+		decoded[phase] = value;
+		phases_seen |= (uint8_t) (1U << phase);
+	}
+	VoltagePacketBuildLength = 0;
+	if (phases_seen != 0x07)
+		return false;
+	for (uint8_t phase = 0; phase < 3; phase++)
+		DecodedVoltage[phase] = decoded[phase];
+	return true;
+}
+#endif
 
 void  enableDMA ()
 {
 	if (dmabool == false)
 	{
 		dmabool = true;
-		DMAdescriptor.BTCNT = 8;//BTCNT, number of beats per transaction. We're moving 8 ADC results each time.
+		DMAdescriptor.BTCNT = ADC_CHANNEL_COUNT;
 		DMAdescriptor.SRCADDR = (uint32_t) &REG_ADC_RESULT;//Source address
 		DMAdescriptor.DSTADDR = (uint32_t) &DMAresults[DMAresultIndex+1][0] ;//Destination address + (transaction length), see manual
 		DMAdescriptor.DESCADDR = 0;
@@ -575,14 +694,18 @@ void irq_handler_dmac(void) //We've configured it to enable Channel Transfer Com
 	MuxCounter++;
 	MuxCounter = MuxCounter & 7; //max 7
 
-	REG_PORT_OUTSET = 0x2000000;//00000010 00000000 00000000 00000000, so pin 25 high.
+	REG_PORT_OUTSET = MUX_SWITCH_GUARD_PIN_MASK;
 	REG_PORT_OUT = ((REG_PORT_OUT ^ outputpinTable[MuxCounter]) & 0x1030000) ^ REG_PORT_OUT; //0x1030000 = 00000001 00000011 00000000 00000000 = pins 16, 17, 24.
 
 	enableDMA();
 
+#ifdef EMPORIAVUE_TARGET_VUE3
+	if (!decode_vue3_voltage_packet())
+		SpiPendingFlags |= SPI_FLAG_VOLTAGE_ERROR;
+#endif
 	capture_spi_scan(lastindex, Muxnr);
 
-	REG_PORT_OUTCLR = 0x2000000;//set pin 25 low.
+	REG_PORT_OUTCLR = MUX_SWITCH_GUARD_PIN_MASK;
 }
 
 void enableADC()
@@ -678,12 +801,38 @@ void COnfigSerCom1 ()
 	} while (REG_SERCOM1_SYNCBUSY != 0);
 }
 
+#ifdef EMPORIAVUE_TARGET_VUE3
+void ConfigSerCom0VoltageReceiver(void)
+{
+	// Reproduce the stock Vue 3 receiver configuration. The external voltage
+	// controller is receive-only on SERCOM0 PAD0 (PA04).
+	REG_GCLK_CLKCTRL = 0x400E; // GCLK0, GCLK_SERCOM0_CORE = 48 MHz.
+	REG_SERCOM0_CTRLA = 1; // SWRST
+	do {
+	} while (REG_SERCOM0_SYNCBUSY != 0);
+
+	REG_SERCOM0_BAUD = 0x6AAB;
+	REG_SERCOM0_CTRLB = 0x00020000UL; // RXEN
+	do {
+	} while (REG_SERCOM0_SYNCBUSY != 0);
+
+	REG_SERCOM0_CTRLA = 0x40414104UL; // USART internal clock, RX=PAD0, LSB first.
+	REG_SERCOM0_CTRLA |= 2; // ENABLE
+	do {
+	} while (REG_SERCOM0_SYNCBUSY != 0);
+	REG_SERCOM0_INTENSET = 4; // RXC
+}
+#endif
+
 void configureNestedVectoredInterruptController ()
 {
 	__asm__ __volatile__("dmb sy");
 	__asm__ __volatile__("CPSIE I");
 	REG_NVIC_PRIO1 = (REG_NVIC_PRIO1 & 0xFF00FFFF) | 0x400000;
 	REG_NVIC_SETENA = 0x40; //Enable interrupt: 01000000 = int 6 = our DMA IRQ.
+#ifdef EMPORIAVUE_TARGET_VUE3
+	REG_NVIC_SETENA = 0x200; // SERCOM0 voltage-controller receive interrupt.
+#endif
 	REG_NVIC_PRIO3 = (REG_NVIC_PRIO3 & 0xFFFF00FF) | 0xC000;
 	REG_NVIC_SETENA = 0x2000; //Enable interrupt: 00100000 00000000 = int 13, why ??
 }
@@ -718,6 +867,33 @@ void configureDirectMemoryAccessController ()
 void config_PORT()
 {
 	REG_PORT_DIR = 0x83030000; // PA16, PA17, PA24, PA25 mux outputs plus PA31 FRAME/CS.
+#ifdef EMPORIAVUE_TARGET_VUE3
+	REG_PORT_OUT = SPI_FRAME_CS_PIN_MASK | 0x00C00000UL; // Match stock idle state on PA22/PA23.
+	REG_PINCFG2 = 1;
+	REG_PINCFG3 = 1;
+	REG_PINCFG4 = 1; // SERCOM0 PAD0 receives the external voltage telegram on PA04.
+	REG_PINCFG5 = 1;
+	REG_PINCFG7 = 1;
+	REG_PINCFG8 = 4;
+	REG_PINCFG9 = 4;
+	REG_PINCFG10 = 4;
+	REG_PINCFG11 = 4;
+	REG_PINCFG15 = 1;
+	REG_PINCFG22 = 5;
+	REG_PINCFG23 = 5;
+	REG_PINCFG25 = 4;
+	REG_PINCFG27 = 4;
+	REG_PINCFG28 = 4;
+	REG_PINCFG30 = 4;
+	REG_PINCFG31 = 0;
+	REG_PORT_PMUX1 = 0x11;
+	REG_PORT_PMUX2 = 0x13;
+	REG_PORT_PMUX3 = 0x10;
+	REG_PORT_PMUX5 = 0x11;
+	REG_PORT_PMUX7 = 0x10;
+	REG_PORT_PMUX11 = 0x22;
+	REG_PORT_DIRSET = 0x400UL; // Match stock Vue 3: PA10 is a low output.
+#else
 	REG_PORT_OUT = SPI_FRAME_CS_PIN_MASK; // FRAME/CS idle high, rest driven low.
 	REG_PINCFG2 = 1;
 	REG_PINCFG3 = 1;
@@ -744,6 +920,7 @@ void config_PORT()
 	REG_PORT_PMUX5 = 0x11;
 	REG_PORT_PMUX7 = 0x11;
 	REG_PORT_PMUX11 = 0x22;
+#endif
 }
 
 void ConfigureTimerCounter1 () {
@@ -800,11 +977,18 @@ void config_Sysctrl_PM_and_GCLK ()
 	} while ((REG_GCLK_STATUS & STATUS_SYNCBUSY_BIT) != 0);
 
 	REG_GCLK_CLKCTRL = 0x4007; //0100 0000 0000 0111, enable GCLK0 EVSYS_CHANNEL_0
+#ifdef EMPORIAVUE_TARGET_VUE3
+	REG_GCLK_CLKCTRL = 0x400E; // enable GCLK0 SERCOM0_CORE
+#endif
 	REG_GCLK_CLKCTRL = 0x410F; //0100 0001 0000 1111, enable GCLK1 SERCOM1_CORE
 	REG_GCLK_CLKCTRL = 0x4112; //0100 0001 0001 0010, enable GCLK1 TC2
 	REG_GCLK_CLKCTRL = 0x4113; //0100 0001 0001 0011, enable GCLK1 ADC
 
-	REG_PM_APBCMASK = 0x14A; //0000 0001 0100 1010 //enable: ADC, TC1, SERCOM1
+#ifdef EMPORIAVUE_TARGET_VUE3
+	REG_PM_APBCMASK = 0x14E; // enable ADC, TC1, SERCOM0 and SERCOM1
+#else
+	REG_PM_APBCMASK = 0x14A; // enable ADC, TC1 and SERCOM1
+#endif
 	REG_SYSCTRL_OSC8M = 0;
 }
 
@@ -819,10 +1003,14 @@ void adc_config() {
 	REG_ADC_CALIB = tmp;
 	REG_ADC_SAMPCTRL = ADC_SAMPLE_TIME_LENGTH; //Sampling Time Length
 	REG_ADC_REFCTRL = ADC_REFCTRL_VREFA; //VREFA as reference
-	REG_ADC_INPUTCTRL = ADC_INPUTCTRL_SCAN8_DIFF_GAIN2; // 00000001 00100111 00000000 00000000
+	REG_ADC_INPUTCTRL = ADC_INPUTCTRL_SCAN_DIFF_GAIN2;
+#ifdef EMPORIAVUE_TARGET_VUE3
+					// Vue 3: gain 2X, input offset 3, scan count 5 = AIN3..AIN7.
+#else
 					//  00000001 = GAIN 2X.
 					// 0010  =inputoffset: 2.
 					// 0111 = Inputscan= 7+1 = 8
+#endif
 	REG_ADC_CTRLB = ADC_CTRLB_DIV8_12BIT_DIFF; //0000 0001 0000 0001
 				//ADC clock : Peripheral clock = 1 : 8
 				//12 bits conversion
@@ -850,6 +1038,10 @@ int main(void)
 	set_boot_stage(BOOT_STAGE_NVM_MANUAL_WRITE);
 	config_EventSystem();
 	set_boot_stage(BOOT_STAGE_EVENT_SYSTEM_CONFIGURED);
+#ifdef EMPORIAVUE_TARGET_VUE3
+	ConfigSerCom0VoltageReceiver();
+	set_boot_stage(BOOT_STAGE_SERCOM0_CONFIGURED);
+#endif
 	configureDirectMemoryAccessController();
 	set_boot_stage(BOOT_STAGE_DMAC_CONFIGURED);
 	adc_config();
