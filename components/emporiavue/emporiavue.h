@@ -915,6 +915,7 @@ class EmporiaVueComponent : public Component
   bool backup_active_{false};
   bool backup_core_halted_{false};
   bool backup_header_written_{false};
+  bool backup_partition_finalized_{false};
   bool backup_log_only_{false};
   BackupStage backup_stage_{BackupStage::IDLE};
   uint32_t backup_next_offset_{0};

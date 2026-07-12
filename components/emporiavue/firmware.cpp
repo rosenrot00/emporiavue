@@ -25,6 +25,7 @@ void EmporiaVueComponent::backup_firmware() {
   this->backup_partition_ = nullptr;
   this->backup_core_halted_ = false;
   this->backup_header_written_ = false;
+  this->backup_partition_finalized_ = false;
   this->backup_log_only_ = false;
   this->backup_stage_ = BackupStage::IDLE;
   this->backup_next_offset_ = 0;
@@ -1451,12 +1452,24 @@ void EmporiaVueComponent::process_backup_() {
         this->fail_backup_("stored image hash failed");
         return;
       }
+      if (!this->write_backup_hash_and_footer_(this->backup_stored_hash_.data(), this->backup_flash_size_)) {
+        this->fail_backup_("failed to write backup hash/footer before verification");
+        return;
+      }
+      if (!this->write_backup_state_(BACKUP_STATE_VALID)) {
+        this->fail_backup_("failed to mark stored backup valid before verification");
+        return;
+      }
+      this->backup_partition_finalized_ = true;
+      const std::string stored_hash = sha256_hex_(this->backup_stored_hash_.data());
+      ESP_LOGI(TAG,
+               "SAMD09 partition backup valid before second read: size=%" PRIu32 ", sha256=%s; verifying SAMD",
+               this->backup_flash_size_, stored_hash.c_str());
       mbedtls_sha256_init(&this->backup_sha_ctx_);
       mbedtls_sha256_starts(&this->backup_sha_ctx_, 0);
       this->backup_sha_ctx_active_ = true;
       this->backup_next_offset_ = 0;
       this->backup_stage_ = BackupStage::VERIFY_SECOND_READ;
-      ESP_LOGI(TAG, "SAMD09 firmware dump complete; verifying with second read");
     }
     return;
   }
@@ -1519,7 +1532,9 @@ void EmporiaVueComponent::fail_backup_(const std::string &error) {
     this->backup_sha_ctx_active_ = false;
   }
   if (this->backup_header_written_) {
-    this->write_backup_state_(BACKUP_STATE_INVALID);
+    if (!this->write_backup_state_(BACKUP_STATE_INVALID)) {
+      ESP_LOGE(TAG, "Failed to mark SAMD09 backup invalid after verification failure");
+    }
   }
   if (this->backup_core_halted_ && !this->resume_core_()) {
     ESP_LOGW(TAG, "Failed to resume SAMD09 core after backup failure: %s", this->last_error_.c_str());
@@ -1527,6 +1542,7 @@ void EmporiaVueComponent::fail_backup_(const std::string &error) {
   this->backup_core_halted_ = false;
   this->backup_active_ = false;
   this->backup_stage_ = BackupStage::IDLE;
+  this->backup_partition_finalized_ = false;
   this->backup_log_only_ = false;
   this->release_pins_();
   this->start_i2c_diagnostics_();
@@ -1552,12 +1568,8 @@ void EmporiaVueComponent::finish_backup_success_() {
     return;
   }
 
-  if (!this->write_backup_hash_and_footer_(this->backup_stored_hash_.data(), this->backup_flash_size_)) {
-    this->fail_backup_("failed to write backup hash/footer");
-    return;
-  }
-  if (!this->write_backup_state_(BACKUP_STATE_VALID)) {
-    this->fail_backup_("failed to mark backup valid");
+  if (!this->backup_partition_finalized_) {
+    this->fail_backup_("stored backup was not finalized before verification");
     return;
   }
 
@@ -1567,6 +1579,7 @@ void EmporiaVueComponent::finish_backup_success_() {
   this->backup_core_halted_ = false;
   this->backup_active_ = false;
   this->backup_stage_ = BackupStage::IDLE;
+  this->backup_partition_finalized_ = false;
   this->release_pins_();
   this->start_i2c_diagnostics_();
   this->start_metering_();
