@@ -209,6 +209,7 @@ class EmporiaVueComponent : public Component
   void set_spi_mux_current_delay(uint8_t delay) { this->spi_mux_current_delay_ = delay; }
   void set_hardware_id(uint16_t hardware_id) { this->hardware_id_ = hardware_id; }
   void set_connect_under_reset(bool connect_under_reset) { this->connect_under_reset_ = connect_under_reset; }
+  void set_swd_on_boot(bool swd_on_boot) { this->swd_on_boot_ = swd_on_boot; }
   void set_reset_release_time(uint32_t reset_release_time) { this->reset_release_time_ms_ = reset_release_time; }
   void set_clock_delay_us(uint8_t clock_delay_us) { this->clock_delay_us_ = clock_delay_us; }
   void set_runtime_mode(uint8_t mode) {
@@ -801,6 +802,7 @@ class EmporiaVueComponent : public Component
 
   uint16_t hardware_id_{0};
   bool connect_under_reset_{false};
+  bool swd_on_boot_{true};
   bool target_reset_asserted_{false};
   uint32_t reset_release_time_ms_{50};
   uint8_t clock_delay_us_{2};

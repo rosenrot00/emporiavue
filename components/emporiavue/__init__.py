@@ -110,6 +110,7 @@ CONF_BUNDLED_FIRMWARE_VERSION = "bundled_firmware_version"
 CONF_BACKUP_PARTITION = "backup_partition"
 CONF_HARDWARE = "hardware"
 CONF_CONNECT_UNDER_RESET = "connect_under_reset"
+CONF_SWD_ON_BOOT = "swd_on_boot"
 CONF_RESET_RELEASE_TIME = "reset_release_time"
 CONF_CLOCK_DELAY = "clock_delay"
 CONF_MODE = "mode"
@@ -2373,6 +2374,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_SPI_MAIN_CURRENT_DELAY, default=2): cv.int_range(min=0, max=5),
         cv.Optional(CONF_SPI_MUX_CURRENT_DELAY, default=4): cv.int_range(min=0, max=5),
         cv.Optional(CONF_CONNECT_UNDER_RESET, default=False): cv.boolean,
+        cv.Optional(CONF_SWD_ON_BOOT, default=True): cv.boolean,
         cv.Optional(CONF_RESET_RELEASE_TIME, default="50ms"): cv.positive_time_period_milliseconds,
         cv.Optional(CONF_CLOCK_DELAY, default=2): cv.int_range(min=0, max=50),
         cv.Optional(CONF_MODE, default=MODE_I2C): cv.one_of(MODE_I2C, MODE_SPI, lower=True),
@@ -2665,6 +2667,7 @@ async def to_code(config):
         cg.add(var.set_spi_mux_current_delay(config[CONF_SPI_MUX_CURRENT_DELAY]))
 
     cg.add(var.set_connect_under_reset(config[CONF_CONNECT_UNDER_RESET]))
+    cg.add(var.set_swd_on_boot(config[CONF_SWD_ON_BOOT]))
     cg.add(var.set_reset_release_time(config[CONF_RESET_RELEASE_TIME]))
     cg.add(var.set_clock_delay_us(config[CONF_CLOCK_DELAY]))
     cg.add(var.set_runtime_mode(MODE_IDS[config[CONF_MODE]]))

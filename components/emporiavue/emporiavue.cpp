@@ -15,7 +15,18 @@ namespace emporiavue {
 void EmporiaVueComponent::setup() {
   this->inspect_backup_partition_();
   this->publish_bundled_firmware_version_();
-  this->publish_initial_firmware_detection_();
+  if (this->swd_on_boot_) {
+    this->publish_initial_firmware_detection_();
+  } else {
+    ESP_LOGI(TAG, "SAMD09 SWD firmware detection and reset skipped at boot");
+    FirmwareInfo unknown_info{};
+    this->detected_firmware_info_ = unknown_info;
+    this->detected_firmware_info_valid_ = false;
+    this->publish_firmware_version_(unknown_info);
+    if (this->auto_update_samd_) {
+      ESP_LOGW(TAG, "SAMD09 auto-update skipped because swd_on_boot is disabled");
+    }
+  }
   for (auto *phase : this->metering_phases_) {
     phase->setup_calibration_number();
   }
@@ -76,6 +87,7 @@ void EmporiaVueComponent::dump_config() {
     ESP_LOGCONFIG(TAG, "  SPI mux current delay: %u scans", static_cast<unsigned>(this->spi_mux_current_delay_));
   }
   ESP_LOGCONFIG(TAG, "  Connect under reset: %s", YESNO(this->connect_under_reset_));
+  ESP_LOGCONFIG(TAG, "  SWD on boot: %s", YESNO(this->swd_on_boot_));
   ESP_LOGCONFIG(TAG, "  Reset release time: %" PRIu32 " ms", this->reset_release_time_ms_);
   ESP_LOGCONFIG(TAG, "  Clock delay: %u us", this->clock_delay_us_);
   ESP_LOGCONFIG(TAG, "  Backup partition: %s", this->backup_partition_name_.c_str());

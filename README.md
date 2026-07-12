@@ -834,6 +834,15 @@ the `samd_bak` partition is available, the same verified image is also stored th
 
 `auto_update_samd` defaults to `false`.
 
+To leave the SAMD09 completely untouched while ESPHome starts, disable the initial SWD firmware detection. This also
+skips its associated reset; the manual backup, install, and restore buttons can still open an SWD session when used.
+The default is `true`.
+
+```yaml
+emporiavue:
+  swd_on_boot: false
+```
+
 > [!WARNING]
 > Flashing changes the measurement-controller firmware. Keep a backup and understand the recovery path. The bundled
 > Vue 2 image must never be flashed to a Vue 3.
