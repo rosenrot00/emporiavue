@@ -341,6 +341,7 @@ class EmporiaVueComponent : public Component
   static constexpr uint8_t BACKUP_STATE_INVALID = 0xF8;
   static constexpr uint32_t BACKUP_IMAGE_OFFSET = 0x1000UL;
   static constexpr uint16_t BACKUP_IO_BLOCK_SIZE = 64;
+  static constexpr uint32_t METERING_STATUS_LOG_INTERVAL_MS = 10000;
   static constexpr const char *MANAGED_MARKER = "EMPORIAVUE-SAMD";
   static constexpr uint8_t MANAGED_MARKER_LENGTH = 15;
   static constexpr uint32_t LEGACY_MANAGED_INFO_MAGIC = 0x4556534DUL;  // "EVSM"
@@ -688,6 +689,8 @@ class EmporiaVueComponent : public Component
   I2CMeteringReadResult read_i2c_metering_frame_(MeteringFrame *frame);
   uint8_t calculate_i2c_metering_checksum_(const I2CMeteringPacket &packet) const;
   bool decode_i2c_metering_packet_(const I2CMeteringPacket &packet, MeteringFrame *frame) const;
+  void log_i2c_metering_status_();
+  void reset_i2c_metering_status_();
   void submit_metering_frame_(const MeteringFrame &frame);
   void publish_metering_frame_(const MeteringFrame &frame);
   void refresh_metering_();
@@ -815,6 +818,14 @@ class EmporiaVueComponent : public Component
   MeteringTransport last_metering_transport_{MeteringTransport::UNKNOWN};
   bool last_metering_sequence_valid_{false};
   MeteringFrame last_metering_frame_{};
+  uint32_t i2c_status_window_start_ms_{0};
+  uint32_t i2c_valid_frames_window_{0};
+  uint32_t i2c_not_ready_frames_window_{0};
+  uint32_t i2c_bus_errors_window_{0};
+  uint32_t i2c_checksum_errors_window_{0};
+  uint32_t i2c_malformed_frames_window_{0};
+  uint32_t i2c_missing_readings_window_{0};
+  bool i2c_no_valid_frames_reported_{false};
   bool spi_receiver_started_{false};
 #ifdef USE_ESP32
   spi_host_device_t spi_host_{SPI2_HOST};

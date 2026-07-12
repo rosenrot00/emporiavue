@@ -1478,7 +1478,7 @@ void EmporiaVueComponent::process_spi_receiver_() {
       this->spi_rx_frame_gaps_ != this->spi_rx_logged_frame_gaps_ ||
       this->spi_rx_recoveries_ != this->spi_rx_logged_recoveries_ ||
       this->spi_rx_last_flags_ != this->spi_rx_logged_flags_;
-  if (status_changed && now - this->spi_rx_last_log_ms_ >= 1000) {
+  if (status_changed && now - this->spi_rx_last_log_ms_ >= METERING_STATUS_LOG_INTERVAL_MS) {
     this->spi_rx_last_log_ms_ = now;
     ESP_LOGD(TAG,
              "SAMD09 SPI rx status: sync_errors=%" PRIu32 " crc_errors=%" PRIu32 " queue_errors=%" PRIu32

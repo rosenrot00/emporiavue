@@ -133,25 +133,32 @@ EmporiaVueComponent::I2CMeteringReadResult EmporiaVueComponent::read_i2c_meterin
   I2CMeteringPacket packet{};
   const i2c::ErrorCode error = this->read(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
   if (error != i2c::ERROR_OK) {
-    ESP_LOGD(TAG, "SAMD09 metering I2C read failed: i2c error %u", static_cast<unsigned>(error));
+    this->i2c_bus_errors_window_++;
     return I2CMeteringReadResult::ERROR;
   }
 
   if (this->hardware_id_ == 3) {
     if (packet.is_unread != 3) {
+      this->i2c_not_ready_frames_window_++;
       return I2CMeteringReadResult::STALE_FRAME;
     }
   } else if (packet.is_unread == 0) {
+    this->i2c_not_ready_frames_window_++;
     return I2CMeteringReadResult::STALE_FRAME;
   }
 
   const uint8_t checksum = this->calculate_i2c_metering_checksum_(packet);
   if (checksum != packet.checksum) {
+    this->i2c_checksum_errors_window_++;
     return I2CMeteringReadResult::STALE_FRAME;
   }
 
-  return this->decode_i2c_metering_packet_(packet, frame) ? I2CMeteringReadResult::VALID_FRAME
-                                                          : I2CMeteringReadResult::STALE_FRAME;
+  if (!this->decode_i2c_metering_packet_(packet, frame)) {
+    this->i2c_malformed_frames_window_++;
+    return I2CMeteringReadResult::STALE_FRAME;
+  }
+  this->i2c_valid_frames_window_++;
+  return I2CMeteringReadResult::VALID_FRAME;
 #else
   (void) frame;
   return I2CMeteringReadResult::ERROR;
@@ -169,7 +176,6 @@ uint8_t EmporiaVueComponent::calculate_i2c_metering_checksum_(const I2CMeteringP
 
 bool EmporiaVueComponent::decode_i2c_metering_packet_(const I2CMeteringPacket &packet, MeteringFrame *frame) const {
   if (this->hardware_id_ != 3 && packet.end != 0) {
-    ESP_LOGD(TAG, "SAMD09 metering I2C packet malformed: end=0x%04x", packet.end);
     return false;
   }
 
@@ -204,6 +210,55 @@ bool EmporiaVueComponent::decode_i2c_metering_packet_(const I2CMeteringPacket &p
 
   *frame = candidate;
   return true;
+}
+
+void EmporiaVueComponent::log_i2c_metering_status_() {
+  const uint32_t now = millis();
+  if (this->i2c_status_window_start_ms_ == 0) {
+    this->i2c_status_window_start_ms_ = now;
+    return;
+  }
+  if (now - this->i2c_status_window_start_ms_ < METERING_STATUS_LOG_INTERVAL_MS) {
+    return;
+  }
+
+  const bool has_errors = this->i2c_bus_errors_window_ != 0 || this->i2c_checksum_errors_window_ != 0 ||
+                          this->i2c_malformed_frames_window_ != 0 || this->i2c_missing_readings_window_ != 0;
+  const bool has_valid_frames = this->i2c_valid_frames_window_ != 0;
+  const bool report_no_valid_frames = !has_valid_frames && !this->i2c_no_valid_frames_reported_;
+
+  if (has_errors || report_no_valid_frames) {
+    ESP_LOGW(TAG,
+             "SAMD09 I2C metering (10s): valid=%" PRIu32 " not_ready=%" PRIu32 " bus_errors=%" PRIu32
+             " checksum_errors=%" PRIu32 " malformed=%" PRIu32 " missing=%" PRIu32,
+             this->i2c_valid_frames_window_, this->i2c_not_ready_frames_window_, this->i2c_bus_errors_window_,
+             this->i2c_checksum_errors_window_, this->i2c_malformed_frames_window_,
+             this->i2c_missing_readings_window_);
+  }
+
+  if (this->i2c_no_valid_frames_reported_ && has_valid_frames) {
+    ESP_LOGI(TAG, "SAMD09 I2C metering recovered: valid frames received again");
+  }
+  this->i2c_no_valid_frames_reported_ = !has_valid_frames;
+
+  this->i2c_status_window_start_ms_ = now;
+  this->i2c_valid_frames_window_ = 0;
+  this->i2c_not_ready_frames_window_ = 0;
+  this->i2c_bus_errors_window_ = 0;
+  this->i2c_checksum_errors_window_ = 0;
+  this->i2c_malformed_frames_window_ = 0;
+  this->i2c_missing_readings_window_ = 0;
+}
+
+void EmporiaVueComponent::reset_i2c_metering_status_() {
+  this->i2c_status_window_start_ms_ = millis();
+  this->i2c_valid_frames_window_ = 0;
+  this->i2c_not_ready_frames_window_ = 0;
+  this->i2c_bus_errors_window_ = 0;
+  this->i2c_checksum_errors_window_ = 0;
+  this->i2c_malformed_frames_window_ = 0;
+  this->i2c_missing_readings_window_ = 0;
+  this->i2c_no_valid_frames_reported_ = false;
 }
 
 }  // namespace emporiavue

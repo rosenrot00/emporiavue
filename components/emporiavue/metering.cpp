@@ -222,9 +222,7 @@ void EmporiaVueComponent::submit_metering_frame_(const MeteringFrame &frame) {
       this->last_metering_transport_ == MeteringTransport::I2C) {
     const uint8_t sequence_delta = static_cast<uint8_t>(frame.sequence - this->last_metering_sequence_);
     if (sequence_delta > 1) {
-      ESP_LOGD(TAG, "SAMD09 metering detected %u missing reading(s): previous seq=%" PRIu32 " current seq=%" PRIu32,
-               static_cast<unsigned>(static_cast<uint8_t>(sequence_delta - 1)), this->last_metering_sequence_,
-               frame.sequence);
+      this->i2c_missing_readings_window_ += static_cast<uint8_t>(sequence_delta - 1);
     }
   }
 
@@ -879,11 +877,10 @@ void EmporiaVueComponent::refresh_metering_() {
 
   MeteringFrame frame{};
   const I2CMeteringReadResult result = this->read_i2c_metering_frame_(&frame);
-  if (result != I2CMeteringReadResult::VALID_FRAME) {
-    return;
+  if (result == I2CMeteringReadResult::VALID_FRAME) {
+    this->submit_metering_frame_(frame);
   }
-
-  this->submit_metering_frame_(frame);
+  this->log_i2c_metering_status_();
 }
 
 void EmporiaVueComponent::start_metering_() {
@@ -899,6 +896,7 @@ void EmporiaVueComponent::start_metering_() {
   }
 
   this->stop_firmware_mode_mismatch_log_();
+  this->reset_i2c_metering_status_();
   this->metering_started_ = true;
   this->set_interval("samd_i2c_metering", this->metering_interval_ms_, [this]() { this->refresh_metering_(); });
 }
