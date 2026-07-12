@@ -275,7 +275,7 @@ class EmporiaVueComponent : public Component
   static constexpr uint8_t SWD_ACK_FAULT = 0b100;
   static constexpr uint8_t SWD_RETRY_COUNT = 40;
   static constexpr uint16_t SWD_ATTACH_RESET_HOLD_US = 100;
-  static constexpr uint16_t RESET_PULSE_MS = 1;
+  static constexpr uint16_t RESET_PULSE_MS = 3;
 
   static constexpr uint32_t MEM_AP_CSW_BASE = 0x23000040UL;
   static constexpr uint32_t DP_POWER_REQUEST = 0x50000000UL;
@@ -825,6 +825,10 @@ class EmporiaVueComponent : public Component
   uint32_t i2c_checksum_errors_window_{0};
   uint32_t i2c_malformed_frames_window_{0};
   uint32_t i2c_missing_readings_window_{0};
+  uint32_t i2c_raw_frame_last_log_ms_{0};
+  uint32_t i2c_raw_frames_since_log_{0};
+  uint32_t i2c_zero_voltage_frames_since_log_{0};
+  uint32_t i2c_zero_payload_frames_since_log_{0};
   bool i2c_no_valid_frames_reported_{false};
   bool spi_receiver_started_{false};
 #ifdef USE_ESP32
