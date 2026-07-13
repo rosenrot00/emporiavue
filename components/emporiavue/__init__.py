@@ -15,6 +15,7 @@ from esphome.const import (
     CONF_DEVICE_ID,
     CONF_DEVICES,
     CONF_ESPHOME,
+    CONF_FRIENDLY_NAME,
     CONF_ID,
     CONF_INPUT,
     CONF_INITIAL_VALUE,
@@ -2522,6 +2523,17 @@ def _relativize_default_entity_name(entity_config, device_name):
     return True
 
 
+def _subdevice_display_name(parent_name, node_name):
+    parent_name = str(parent_name).strip()
+    node_name = str(node_name).strip()
+    parent_prefix = f"{parent_name} "
+    if node_name.casefold() == parent_name.casefold() or node_name.casefold().startswith(
+        parent_prefix.casefold()
+    ):
+        return node_name
+    return f"{parent_prefix}{node_name}"
+
+
 def _final_validate_esphome_subdevices(config):
     if not config[CONF_ESPHOME_SUBDEVICES]:
         return config
@@ -2529,6 +2541,9 @@ def _final_validate_esphome_subdevices(config):
     full_config = fv.full_config.get()
     esphome_config = full_config.get_config_for_path([CONF_ESPHOME])
     devices = esphome_config[CONF_DEVICES]
+    parent_device_name = (
+        esphome_config.get(CONF_FRIENDLY_NAME) or esphome_config[CONF_NAME]
+    )
     existing_device_ids = {str(device[CONF_ID]) for device in devices}
     component_id = str(config[CONF_ID])
 
@@ -2602,7 +2617,7 @@ def _final_validate_esphome_subdevices(config):
         add_subdevice(
             node_type,
             device_id_suffix,
-            name,
+            _subdevice_display_name(parent_device_name, name),
             device_entities[node_key],
         )
 
