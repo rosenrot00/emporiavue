@@ -144,8 +144,8 @@ emporiavue:
 ```
 
 Without `name:`, the topology package keeps the default circuit name, for example `Circuit 1`. With the default native
-subdevices, Home Assistant already supplies that device context. For a node with `friendly_name: "Vue Garage"`, the
-circuit above becomes a device named `Vue Garage Heat Pump` containing concise entity names:
+subdevices, Home Assistant already supplies that device context, so a device named `Heat Pump` contains concise entity
+names:
 
 ```text
 Power
@@ -154,11 +154,9 @@ Apparent Power
 Power Factor
 ```
 
-This produces entity IDs such as `sensor.vue_garage_heat_pump_power`, without repeating either device name. The main
-device's `friendly_name` is used as the prefix; if it is not configured, ESPHome's node `name` is used. This keeps
-circuits with the same name unambiguous when more than one Vue is installed. A prefix already present in a subdevice
-name is not added again. If `esphome_subdevices: false` is used, the complete names such as `Heat Pump Power` remain on
-the central device. An explicit sensor `name:` always wins over both the default and the circuit name.
+This produces entity IDs such as `sensor.heat_pump_power`, without repeating the device name. If
+`esphome_subdevices: false` is used, the complete names such as `Heat Pump Power` remain on the central device. An
+explicit sensor `name:` always wins over both the default and the circuit name.
 
 By default, every main line, circuit, and group with at least one visible entity is exposed as its own native ESPHome
 subdevice in Home Assistant. Each logical line keeps its voltage, main-CT measurements, calibration controls, and
@@ -202,9 +200,9 @@ emporiavue:
       energy:
 ```
 
-The `Vue Garage Heat Pump` device then contains aggregate entities such as `Power` and `Today's Energy`, plus source
-entities such as `L1 Power`, `L1 Current`, `L2 Power`, and `L3 Power`. Their IDs remain concise, for example
-`sensor.vue_garage_heat_pump_power` and `sensor.vue_garage_heat_pump_l1_power`.
+The `Heat Pump` device then contains aggregate entities such as `Power` and `Today's Energy`, plus source entities such
+as `L1 Power`, `L1 Current`, `L2 Power`, and `L3 Power`. Their IDs remain concise, for example
+`sensor.heat_pump_power` and `sensor.heat_pump_l1_power`.
 
 Use a list when only selected sources should move while the remaining sources keep their own subdevices:
 
