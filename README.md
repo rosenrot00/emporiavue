@@ -143,17 +143,20 @@ emporiavue:
       power_factor:
 ```
 
-Without `name:`, the topology package keeps the default circuit name, for example `Circuit 1 Power`. When you set a
-custom circuit name, the component uses it as the base for concise English entity names:
+Without `name:`, the topology package keeps the default circuit name, for example `Circuit 1`. With the default native
+subdevices, Home Assistant already supplies that device context, so a device named `Heat Pump` contains concise entity
+names:
 
 ```text
-Heat Pump Power
-Heat Pump Current
-Heat Pump Apparent Power
-Heat Pump Power Factor
+Power
+Current
+Apparent Power
+Power Factor
 ```
 
-An explicit sensor `name:` always wins over both the default and the circuit name.
+This produces entity IDs such as `sensor.heat_pump_power`, without repeating the device name. If
+`esphome_subdevices: false` is used, the complete names such as `Heat Pump Power` remain on the central device. An
+explicit sensor `name:` always wins over both the default and the circuit name.
 
 By default, every main line, circuit, and group with at least one visible entity is exposed as its own native ESPHome
 subdevice in Home Assistant. Each logical line keeps its voltage, main-CT measurements, calibration controls, and
@@ -197,6 +200,10 @@ emporiavue:
       energy:
 ```
 
+The `Heat Pump` device then contains aggregate entities such as `Power` and `Today's Energy`, plus source entities such
+as `L1 Power`, `L1 Current`, `L2 Power`, and `L3 Power`. Their IDs remain concise, for example
+`sensor.heat_pump_power` and `sensor.heat_pump_l1_power`.
+
 Use a list when only selected sources should move while the remaining sources keep their own subdevices:
 
 ```yaml
@@ -213,7 +220,9 @@ circuits, and other groups. For example, using `all` on the predefined `grid` gr
 the Grid totals on the same device. The group device is also created when its only visible entities come from its
 sources. Every selected entry must occur in the group's `sources`, and a source can be moved to only one group. A `-`
 sign in `sources`, such as `-cir1`, affects the calculation but not the entity placement. The option is ignored when
-`esphome_subdevices` is disabled.
+`esphome_subdevices` is disabled. Automatically generated names are made relative to the receiving subdevice; source
+details needed to distinguish multiple circuits are retained. ESPHome's normal validation rejects conflicting entity
+names instead of creating an ambiguous or duplicated entity ID.
 
 ### 5. Understand `line`
 
