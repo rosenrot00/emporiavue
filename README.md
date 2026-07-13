@@ -7,10 +7,7 @@ or use the ESPHome SPI path when you specifically want synchronized raw-waveform
 
 | Version | Changes |
 |---|---|
-| 2026.07.13 | Added optional all-or-selected source-to-group subdevice organization and standardized default daily-energy names as `<Device> Today's Energy`; generated entity IDs change accordingly. |
-| 2026.07.11 | Organized main lines, circuits, and groups with visible entities as native ESPHome subdevices. |
-| 2026.07.10 | Added and validated the Vue 3 raw-waveform SPI path on real hardware. |
-| 2026.07.9 | Added optional SPI voltage THD from the synchronized 2nd through 40th voltage harmonics. |
+| 2026.07.9 | Added native ESPHome subdevices, validated Vue 3 SPI on real hardware, and added optional SPI voltage THD. |
 | 2026.07.8 | Added persistent automatic circuit line assignment with an optional Home Assistant line selector. |
 | 2026.07.7 | Renamed voltage calibration options and added optional per-CT current gain and SPI phase calibration. |
 | 2026.07.6 | Added time-windowed SPI current peak and current crest factor entities. |
