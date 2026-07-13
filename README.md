@@ -1,13 +1,13 @@
 # Emporia Vue ESPHome
 
 Turn an Emporia Vue into a local ESPHome energy meter for Home Assistant. Start with dependable ESPHome I2C metering,
-or use the ESPHome SPI path when you specifically want raw-waveform analysis and are comfortable testing experimental
-firmware.
+or use the ESPHome SPI path when you specifically want synchronized raw-waveform analysis.
 
 ## Version History
 
 | Version | Changes |
 |---|---|
+| 2026.07.10 | Added and validated the Vue 3 raw-waveform SPI path on real hardware. |
 | 2026.07.9 | Added optional SPI voltage THD from the synchronized 2nd through 40th voltage harmonics. |
 | 2026.07.8 | Added persistent automatic circuit line assignment with an optional Home Assistant line selector. |
 | 2026.07.7 | Renamed voltage calibration options and added optional per-CT current gain and SPI phase calibration. |
@@ -19,7 +19,7 @@ firmware.
 | 2026.07.1 | Defaulted simple daily energy sensors to `total_increasing`; explicit signed/net energy remains `total`. |
 | 2026.06.3 | Fixed Vue 3 physical main-clamp mapping. |
 | 2026.06.2 | Improved stock I2C frame marker and checksum compatibility. |
-| 2026.06.1 | Added the experimental ESPHome SPI transport for Vue 2 and display filter defaults. |
+| 2026.06.1 | Added the initial ESPHome SPI transport for Vue 2 and display filter defaults. |
 | 2026.05.1 | Initial package-based release. |
 
 ## Choose Your Path
@@ -29,15 +29,14 @@ firmware.
 | **Best for** | Official Emporia experience | Normal daily monitoring | Enthusiasts and development |
 | **You get** | Emporia app and cloud | Local Home Assistant entities | Local entities plus waveform detail |
 | **Measurements** | Official Emporia feature set | Voltage, current, power, energy, demand, groups and import/export | Same core values plus optional fundamental and waveform analysis |
-| **Firmware** |  | Stock SAMD09 firmware works; custom ESPHome firmware calculates line-to-line voltage without a fixed `√3` assumption | Experimental; custom SAMD09 firmware required |
+| **Firmware** |  | Stock SAMD09 firmware works on Vue 2 and Vue 3; the Vue 2 custom firmware calculates line-to-line voltage without a fixed `√3` assumption | Model-specific managed SAMD09 firmware required |
 
 The short decision is:
 
 1. Want the official Emporia app and cloud? **Stay with Emporia stock.**
 2. Want reliable local values in Home Assistant? **Choose ESPHome I2C.** This is the right default for most users.
-3. Have a Vue 2 and specifically want waveform-derived values such as reactive power, displacement angle, or current
-   THD? **Choose ESPHome SPI.** It requires the matching managed SAMD09 firmware and should be treated as experimental.
-   (Want this for Vue 3? Help us identify and measure the connections between its MCU and SAMD09 so we can add support.)
+3. Want waveform-derived values such as reactive power, displacement angle, or current THD on a Vue 2 or Vue 3?
+   **Choose ESPHome SPI.** It uses the matching model-specific managed SAMD09 firmware.
 
 ## Quick Start
 
@@ -56,12 +55,17 @@ requiring raw waveform processing.
 | Device | Base package | What you get |
 |---|---|---|
 | Vue 2 | `packages/vue2-i2c.yaml` | Local metering through the stock-compatible I2C interface |
-| Vue 3 | `packages/vue3-i2c.yaml` | Local metering through I2C; validated on real hardware |
+| Vue 3 | `packages/vue3-i2c.yaml` | Local metering through the stock-compatible I2C interface |
 
 #### ESPHome SPI — optional enhanced metering
 
-Choose `packages/vue2-spi.yaml` when you want sample-derived metering and the optional analysis entities described
-below.
+Choose the SPI base package matching your device when you want sample-derived metering and the optional analysis
+entities described below.
+
+| Device | Base package | What you get |
+|---|---|---|
+| Vue 2 | `packages/vue2-spi.yaml` | Raw-sample metering and optional waveform analysis |
+| Vue 3 | `packages/vue3-spi.yaml` | Raw-sample metering and optional waveform analysis; validated on real hardware |
 
 | Benefit | Practical result |
 |---|---|
@@ -103,6 +107,8 @@ packages:
       - packages/vue2-spi.yaml
       - packages/vue2-3phase.yaml
 ```
+
+For a Vue 3, use `packages/vue3-spi.yaml` together with the matching Vue 3 topology package.
 
 ### 3. Add the external component
 
@@ -405,6 +411,21 @@ emporiavue:
       - multiply: 0.001
       - *slow_update
 
+  mains:
+    # Each Number is initialized from the corresponding package calibration.
+    # voltage_thd is available only with ESPHome SPI.
+    line_1:
+      voltage_calibration_number:
+      voltage_thd:
+
+    line_2:
+      voltage_calibration_number:
+      voltage_thd:
+
+    line_3:
+      voltage_calibration_number:
+      voltage_thd:
+
   circuits:
     cir1:
       name: "Living Room"
@@ -415,10 +436,20 @@ emporiavue:
     cir2:
       name: "Heat Pump"
       line: 2
+      # Optional Home Assistant dropdown; the selected line is stored.
+      line_select:
       power:
       current:
       power_apparent:
       power_factor:
+      # Gain works with I2C and SPI; phase correction is SPI-only.
+      current_calibration:
+        gain: 1.0
+        phase: 0°
+        # Optional persistent Home Assistant Numbers.
+        gain_number:
+        phase_number:  # SPI-only, like phase.
+      # SPI-only waveform analysis.
       fundamental_current:
       fundamental_reactive_power:
       fundamental_power_factor:
@@ -428,13 +459,30 @@ emporiavue:
       current_crest_factor:
 
     cir8:
-      name: "Wallbox"
-      line: [1, 2]
+      name: "Wallbox L1"
+      line: 1
       power:
-      power_apparent:
-      power_factor:
+      current:
+
+    cir9:
+      name: "Wallbox L2"
+      line: 2
+      power:
+      current:
+
+    cir10:
+      name: "Wallbox L3"
+      line: 3
+      power:
+      current:
 
   groups:
+    wallbox:
+      name: "Wallbox"
+      sources: [cir8, cir9, cir10]
+      power:
+      energy:
+
     grid:
       name: "Grid"
       sources: [line_1, line_2, line_3]
@@ -448,6 +496,10 @@ emporiavue:
           name: "Grid Export Power"
           energy:
 ```
+
+The Wallbox example uses one CT per phase. The `wallbox` group publishes the summed three-phase power and energy; the
+three circuit entities retain the individual phase currents and powers. A single CT with `line: [1, 2]` represents a
+two-wire line-to-line load, not a complete three-phase load.
 
 Full and specialized examples are available in [`examples/yaml`](examples/yaml/).
 
@@ -844,8 +896,8 @@ emporiavue:
 ```
 
 > [!WARNING]
-> Flashing changes the measurement-controller firmware. Keep a backup and understand the recovery path. The bundled
-> Vue 2 image must never be flashed to a Vue 3.
+> Flashing changes the measurement-controller firmware. Keep a backup and understand the recovery path. ESPHome
+> selects a model-specific image and rejects target mismatches; never manually flash an image built for another model.
 
 The `samd_bak` partition needs 64 KiB. When adding it to an already-flashed ESP32, update the partition table once. OTA
 partition-table updates require `allow_partition_access: true`.
@@ -873,6 +925,7 @@ These packages are optional and separate from metering.
 | `packages/vue2-3phase.yaml` | Vue 2 three-phase-with-neutral topology |
 | `packages/vue2-gpios.yaml` | Optional Vue 2 status LED helper |
 | `packages/vue3-i2c.yaml` | Vue 3 I2C transport and firmware management |
+| `packages/vue3-spi.yaml` | Raw-sample ESPHome SPI transport for Vue 3 and firmware management |
 | `packages/vue3-1phase.yaml` | Vue 3 one-line topology |
 | `packages/vue3-2phase.yaml` | Vue 3 two-line/split-phase topology |
 | `packages/vue3-3phase.yaml` | Vue 3 three-phase-with-neutral topology |
@@ -887,7 +940,7 @@ Useful contributions include:
 - low-current/noise-floor results;
 - 50 Hz and 60 Hz installations;
 - split-phase, three-phase, and line-to-line validation;
-- Vue 3 feedback from additional hardware installations.
+- Vue 2 and Vue 3 feedback from additional hardware installations.
 
 ## Acknowledgements
 
