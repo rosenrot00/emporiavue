@@ -7,7 +7,7 @@ or use the ESPHome SPI path when you specifically want synchronized raw-waveform
 
 | Version | Changes |
 |---|---|
-| 2026.07.13 | Added optional source-to-group subdevice organization for lines, circuits, and groups. |
+| 2026.07.13 | Added optional all-or-selected source-to-group subdevice organization for lines, circuits, and groups. |
 | 2026.07.11 | Organized main lines, circuits, and groups with visible entities as native ESPHome subdevices. |
 | 2026.07.10 | Added and validated the Vue 3 raw-waveform SPI path on real hardware. |
 | 2026.07.9 | Added optional SPI voltage THD from the synchronized 2nd through 40th voltage harmonics. |
@@ -170,8 +170,8 @@ emporiavue:
   esphome_subdevices: false
 ```
 
-To keep the source measurements and the group totals on one Home Assistant device, enable
-`sources_to_subdevice` on that group:
+To keep the source measurements and the group totals on one Home Assistant device, set
+`sources_to_subdevice: all` on that group:
 
 ```yaml
 emporiavue:
@@ -195,18 +195,28 @@ emporiavue:
     heat_pump:
       name: "Heat Pump"
       sources: [cir2, cir3, cir4]
-      sources_to_subdevice: true
+      sources_to_subdevice: all
       power:
       energy:
 ```
 
-`sources_to_subdevice` defaults to `false`. When enabled, the visible entities of the group's direct `sources` move to
-the group subdevice and their separate source subdevices disappear; entities are not duplicated. This works for main
-lines, circuits, and other groups. For example, adding `sources_to_subdevice: true` to the predefined `grid` group puts
-the three line measurements and the Grid totals on the same device. The group device is also created when its only
-visible entities come from its sources. A source can belong to only one such group. A `-` sign in `sources`, such as
-`-cir1`, affects the calculation but not the entity placement. The option is ignored when `esphome_subdevices` is
-disabled.
+Use a list when only selected sources should move while the remaining sources keep their own subdevices:
+
+```yaml
+groups:
+  combined_load:
+    sources: [cir2, cir3, cir4, cir5]
+    sources_to_subdevice: [cir2, cir3, cir4]
+```
+
+`sources_to_subdevice` is optional. `all` moves every direct source; a list moves only those entries. `true` remains an
+alias for `all`, and `false` is equivalent to leaving the option out. The selected source entities move to the group
+subdevice and their separate source subdevices disappear; entities are not duplicated. This works for main lines,
+circuits, and other groups. For example, using `all` on the predefined `grid` group puts the three line measurements and
+the Grid totals on the same device. The group device is also created when its only visible entities come from its
+sources. Every selected entry must occur in the group's `sources`, and a source can be moved to only one group. A `-`
+sign in `sources`, such as `-cir1`, affects the calculation but not the entity placement. The option is ignored when
+`esphome_subdevices` is disabled.
 
 ### 5. Understand `line`
 
@@ -532,14 +542,14 @@ emporiavue:
     wallbox:
       name: "Wallbox"
       sources: [cir8, cir9, cir10]
-      sources_to_subdevice: true
+      sources_to_subdevice: all
       power:
       energy:
 
     grid:
       name: "Grid"
       sources: [line_1, line_2, line_3]
-      sources_to_subdevice: true
+      sources_to_subdevice: all
       power:
         both:
           name: "Grid Net Power"

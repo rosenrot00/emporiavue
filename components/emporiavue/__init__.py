@@ -2236,7 +2236,11 @@ METERING_GROUP_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(MeteringGroupConfig),
         cv.Required(CONF_SOURCES): cv.ensure_list(cv.string_strict),
-        cv.Optional(CONF_SOURCES_TO_SUBDEVICE, default=False): cv.boolean,
+        cv.Optional(CONF_SOURCES_TO_SUBDEVICE, default=False): cv.Any(
+            cv.boolean,
+            cv.one_of("all", lower=True),
+            cv.ensure_list(cv.string_strict),
+        ),
         cv.Optional(CONF_NAME): cv.string_strict,
         cv.Optional(CONF_FILTERS): INTERNAL_POWER_FILTER_SCHEMA,
         cv.Optional(CONF_POWER): _validate_power_outputs,
@@ -2255,7 +2259,24 @@ def _validate_groups(value):
         sources = group_config[CONF_SOURCES]
         if not sources:
             raise cv.Invalid("Group needs at least one source", path=[group_key, CONF_SOURCES])
-        group_config[CONF_SOURCES] = _normalize_group_sources(sources, [group_key, CONF_SOURCES])
+        normalized_sources = _normalize_group_sources(sources, [group_key, CONF_SOURCES])
+        group_config[CONF_SOURCES] = normalized_sources
+
+        source_keys = [_parse_group_source(source)[1] for source in normalized_sources]
+        selected_sources = group_config[CONF_SOURCES_TO_SUBDEVICE]
+        if selected_sources is True or selected_sources == "all":
+            selected_sources = source_keys
+        elif selected_sources is False:
+            selected_sources = []
+        else:
+            selected_sources = list(dict.fromkeys(selected_sources))
+            for source_key in selected_sources:
+                if source_key not in source_keys:
+                    raise cv.Invalid(
+                        f"sources_to_subdevice references {source_key}, but it is not listed in sources",
+                        path=[group_key, CONF_SOURCES_TO_SUBDEVICE],
+                    )
+        group_config[CONF_SOURCES_TO_SUBDEVICE] = selected_sources
 
     return groups
 
@@ -2350,10 +2371,7 @@ def _validate_metering_topology(config):
     if config[CONF_ESPHOME_SUBDEVICES]:
         source_subdevice_groups = {}
         for group_key, group_config in groups.items():
-            if not group_config[CONF_SOURCES_TO_SUBDEVICE]:
-                continue
-            for source in group_config[CONF_SOURCES]:
-                _, source_key = _parse_group_source(source)
+            for source_key in group_config[CONF_SOURCES_TO_SUBDEVICE]:
                 existing_group = source_subdevice_groups.get(source_key)
                 if existing_group is not None and existing_group != group_key:
                     raise cv.Invalid(
@@ -2523,10 +2541,7 @@ def _final_validate_esphome_subdevices(config):
 
     source_owners = {}
     for group_key, group_config in config.get(CONF_GROUPS, {}).items():
-        if not group_config[CONF_SOURCES_TO_SUBDEVICE]:
-            continue
-        for source in group_config[CONF_SOURCES]:
-            _, source_key = _parse_group_source(source)
+        for source_key in group_config[CONF_SOURCES_TO_SUBDEVICE]:
             source_owners[source_key] = group_key
 
     def root_owner(node_key):
