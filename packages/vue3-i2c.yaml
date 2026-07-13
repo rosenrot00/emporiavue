@@ -17,7 +17,7 @@ i2c:
     ignore_strapping_warning: true
   scl: 18
   scan: false
-  frequency: 100kHz
+  frequency: 400kHz
   timeout: 1ms
 
 emporiavue:

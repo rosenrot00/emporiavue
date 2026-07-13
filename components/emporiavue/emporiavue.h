@@ -558,7 +558,7 @@ class EmporiaVueComponent : public Component
     IDLE = 0,
     READ_AND_STORE,
     READ_AND_LOG,
-    VERIFY_SECOND_READ,
+    COMPARE_SECOND_READ,
   };
 
   enum class InstallStage : uint8_t {
@@ -827,10 +827,6 @@ class EmporiaVueComponent : public Component
   uint32_t i2c_checksum_errors_window_{0};
   uint32_t i2c_malformed_frames_window_{0};
   uint32_t i2c_missing_readings_window_{0};
-  uint32_t i2c_raw_frame_last_log_ms_{0};
-  uint32_t i2c_raw_frames_since_log_{0};
-  uint32_t i2c_zero_voltage_frames_since_log_{0};
-  uint32_t i2c_zero_payload_frames_since_log_{0};
   bool i2c_no_valid_frames_reported_{false};
   bool spi_receiver_started_{false};
 #ifdef USE_ESP32
@@ -931,7 +927,6 @@ class EmporiaVueComponent : public Component
   uint32_t backup_nvm_param_{0};
   uint32_t backup_dsu_did_{0};
   std::array<uint8_t, 32> backup_stored_hash_{};
-  std::array<uint8_t, 32> backup_verify_hash_{};
   mbedtls_sha256_context backup_sha_ctx_{};
   bool backup_sha_ctx_active_{false};
   bool install_active_{false};

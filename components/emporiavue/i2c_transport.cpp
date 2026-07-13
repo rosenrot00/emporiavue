@@ -158,47 +158,6 @@ EmporiaVueComponent::I2CMeteringReadResult EmporiaVueComponent::read_i2c_meterin
     return I2CMeteringReadResult::STALE_FRAME;
   }
 
-  const bool voltage_is_zero = packet.voltage[0] == 0 && packet.voltage[1] == 0 && packet.voltage[2] == 0;
-  bool payload_is_zero = voltage_is_zero;
-  for (uint8_t phase = 0; payload_is_zero && phase < 3; phase++) {
-    payload_is_zero = packet.cycle_count[phase] == 0;
-  }
-  for (uint8_t clamp = 0; payload_is_zero && clamp < 19; clamp++) {
-    payload_is_zero = packet.current[clamp] == 0;
-    for (uint8_t phase = 0; payload_is_zero && phase < 3; phase++) {
-      payload_is_zero = packet.power[clamp].phase[phase] == 0;
-    }
-  }
-
-  this->i2c_raw_frames_since_log_++;
-  if (voltage_is_zero) {
-    this->i2c_zero_voltage_frames_since_log_++;
-  }
-  if (payload_is_zero) {
-    this->i2c_zero_payload_frames_since_log_++;
-  }
-
-  const uint32_t now = millis();
-  if (this->i2c_raw_frame_last_log_ms_ == 0 ||
-      now - this->i2c_raw_frame_last_log_ms_ >= METERING_STATUS_LOG_INTERVAL_MS) {
-    this->i2c_raw_frame_last_log_ms_ = now;
-    ESP_LOGD(TAG,
-             "SAMD09 I2C raw frame: ready=%u checksum=0x%02X marker=0x%02X seq=%u "
-             "voltage=[%u, %u, %u] cycle=[%u, %u, %u] main_current=[%u, %u, %u] end=0x%04X "
-             "window=[valid=%" PRIu32 " voltage_zero=%" PRIu32 " payload_zero=%" PRIu32 "]",
-             static_cast<unsigned>(packet.is_unread), static_cast<unsigned>(packet.checksum),
-             static_cast<unsigned>(packet.unknown), static_cast<unsigned>(packet.sequence_num),
-             static_cast<unsigned>(packet.voltage[0]), static_cast<unsigned>(packet.voltage[1]),
-             static_cast<unsigned>(packet.voltage[2]), static_cast<unsigned>(packet.cycle_count[0]),
-             static_cast<unsigned>(packet.cycle_count[1]), static_cast<unsigned>(packet.cycle_count[2]),
-             static_cast<unsigned>(packet.current[0]), static_cast<unsigned>(packet.current[1]),
-             static_cast<unsigned>(packet.current[2]), static_cast<unsigned>(packet.end),
-             this->i2c_raw_frames_since_log_, this->i2c_zero_voltage_frames_since_log_,
-             this->i2c_zero_payload_frames_since_log_);
-    this->i2c_raw_frames_since_log_ = 0;
-    this->i2c_zero_voltage_frames_since_log_ = 0;
-    this->i2c_zero_payload_frames_since_log_ = 0;
-  }
   this->i2c_valid_frames_window_++;
   return I2CMeteringReadResult::VALID_FRAME;
 #else
@@ -300,10 +259,6 @@ void EmporiaVueComponent::reset_i2c_metering_status_() {
   this->i2c_checksum_errors_window_ = 0;
   this->i2c_malformed_frames_window_ = 0;
   this->i2c_missing_readings_window_ = 0;
-  this->i2c_raw_frame_last_log_ms_ = 0;
-  this->i2c_raw_frames_since_log_ = 0;
-  this->i2c_zero_voltage_frames_since_log_ = 0;
-  this->i2c_zero_payload_frames_since_log_ = 0;
   this->i2c_no_valid_frames_reported_ = false;
 }
 

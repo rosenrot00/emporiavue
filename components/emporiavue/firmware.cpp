@@ -31,7 +31,6 @@ void EmporiaVueComponent::backup_firmware() {
   this->backup_next_offset_ = 0;
   this->backup_flash_size_ = 0;
   std::fill(this->backup_stored_hash_.begin(), this->backup_stored_hash_.end(), 0);
-  std::fill(this->backup_verify_hash_.begin(), this->backup_verify_hash_.end(), 0);
 
   ESP_LOGI(TAG, "Starting SAMD09 legacy firmware backup");
 
@@ -1463,13 +1462,11 @@ void EmporiaVueComponent::process_backup_() {
       this->backup_partition_finalized_ = true;
       const std::string stored_hash = sha256_hex_(this->backup_stored_hash_.data());
       ESP_LOGI(TAG,
-               "SAMD09 partition backup valid before second read: size=%" PRIu32 ", sha256=%s; verifying SAMD",
+               "SAMD09 partition backup valid before second read: size=%" PRIu32
+               ", sha256=%s; comparing SAMD byte-for-byte",
                this->backup_flash_size_, stored_hash.c_str());
-      mbedtls_sha256_init(&this->backup_sha_ctx_);
-      mbedtls_sha256_starts(&this->backup_sha_ctx_, 0);
-      this->backup_sha_ctx_active_ = true;
       this->backup_next_offset_ = 0;
-      this->backup_stage_ = BackupStage::VERIFY_SECOND_READ;
+      this->backup_stage_ = BackupStage::COMPARE_SECOND_READ;
     }
     return;
   }
@@ -1489,34 +1486,39 @@ void EmporiaVueComponent::process_backup_() {
       mbedtls_sha256_finish(&this->backup_sha_ctx_, this->backup_stored_hash_.data());
       mbedtls_sha256_free(&this->backup_sha_ctx_);
       this->backup_sha_ctx_active_ = false;
-      mbedtls_sha256_init(&this->backup_sha_ctx_);
-      mbedtls_sha256_starts(&this->backup_sha_ctx_, 0);
-      this->backup_sha_ctx_active_ = true;
-      this->backup_next_offset_ = 0;
-      this->backup_stage_ = BackupStage::VERIFY_SECOND_READ;
-      ESP_LOGI(TAG, "SAMD09 firmware dump complete; verifying with second read");
+      this->finish_backup_success_();
     }
     return;
   }
 
-  if (this->backup_stage_ == BackupStage::VERIFY_SECOND_READ) {
+  if (this->backup_stage_ == BackupStage::COMPARE_SECOND_READ) {
     if (!this->read_flash_bytes_(FLASH_START + this->backup_next_offset_, length, buffer)) {
       this->fail_backup_("verify read failed: " + this->last_error_);
       return;
     }
-    mbedtls_sha256_update(&this->backup_sha_ctx_, buffer, length);
+
+    uint8_t stored_buffer[BACKUP_IO_BLOCK_SIZE]{};
+    const esp_err_t partition_error = esp_partition_read(
+        this->backup_partition_, BACKUP_IMAGE_OFFSET + this->backup_next_offset_, stored_buffer, length);
+    if (partition_error != ESP_OK) {
+      this->fail_backup_(
+          str_sprintf("verify partition read failed at 0x%05" PRIx32 ": 0x%X", this->backup_next_offset_,
+                      static_cast<unsigned>(partition_error)));
+      return;
+    }
+    if (std::memcmp(buffer, stored_buffer, length) != 0) {
+      uint16_t mismatch = 0;
+      while (mismatch < length && buffer[mismatch] == stored_buffer[mismatch]) {
+        mismatch++;
+      }
+      this->fail_backup_(str_sprintf("second SAMD read differs from stored backup at 0x%05" PRIx32,
+                                    this->backup_next_offset_ + mismatch));
+      return;
+    }
 
     this->backup_next_offset_ += length;
 
     if (this->backup_next_offset_ >= this->backup_flash_size_) {
-      mbedtls_sha256_finish(&this->backup_sha_ctx_, this->backup_verify_hash_.data());
-      mbedtls_sha256_free(&this->backup_sha_ctx_);
-      this->backup_sha_ctx_active_ = false;
-
-      if (this->backup_stored_hash_ != this->backup_verify_hash_) {
-        this->fail_backup_("hash mismatch between stored image and second SAMD read");
-        return;
-      }
       this->finish_backup_success_();
     }
     return;
@@ -1563,7 +1565,7 @@ void EmporiaVueComponent::finish_backup_success_() {
     this->start_metering_();
 
     const std::string hash = sha256_hex_(this->backup_stored_hash_.data());
-    ESP_LOGI(TAG, "SAMD09 firmware log dump verified: size=%" PRIu32 ", sha256=%s", this->backup_flash_size_,
+    ESP_LOGI(TAG, "SAMD09 firmware log dump complete: size=%" PRIu32 ", sha256=%s", this->backup_flash_size_,
              hash.c_str());
     return;
   }
@@ -1585,8 +1587,9 @@ void EmporiaVueComponent::finish_backup_success_() {
   this->start_metering_();
 
   const std::string hash = sha256_hex_(this->backup_stored_hash_.data());
-  ESP_LOGI(TAG, "SAMD09 legacy firmware backup valid: size=%" PRIu32 ", sha256=%s", this->backup_flash_size_,
-           hash.c_str());
+  ESP_LOGI(TAG,
+           "SAMD09 legacy firmware backup valid and verified byte-for-byte: size=%" PRIu32 ", sha256=%s",
+           this->backup_flash_size_, hash.c_str());
 }
 
 }  // namespace emporiavue
