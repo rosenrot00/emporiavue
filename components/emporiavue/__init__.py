@@ -141,6 +141,7 @@ CONF_CIRCUITS = "circuits"
 CONF_ESPHOME_SUBDEVICES = "esphome_subdevices"
 CONF_GROUPS = "groups"
 CONF_SOURCES = "sources"
+CONF_SOURCES_TO_SUBDEVICE = "sources_to_subdevice"
 CONF_VIRTUAL_LINES = "virtual_lines"
 CONF_LINES = "lines"
 CONF_LINE = "line"
@@ -2235,6 +2236,7 @@ METERING_GROUP_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(MeteringGroupConfig),
         cv.Required(CONF_SOURCES): cv.ensure_list(cv.string_strict),
+        cv.Optional(CONF_SOURCES_TO_SUBDEVICE, default=False): cv.boolean,
         cv.Optional(CONF_NAME): cv.string_strict,
         cv.Optional(CONF_FILTERS): INTERNAL_POWER_FILTER_SCHEMA,
         cv.Optional(CONF_POWER): _validate_power_outputs,
@@ -2344,6 +2346,21 @@ def _validate_metering_topology(config):
                 )
             if source_key == group_key:
                 raise cv.Invalid(f"groups.{group_key}.sources must not reference itself")
+
+    if config[CONF_ESPHOME_SUBDEVICES]:
+        source_subdevice_groups = {}
+        for group_key, group_config in groups.items():
+            if not group_config[CONF_SOURCES_TO_SUBDEVICE]:
+                continue
+            for source in group_config[CONF_SOURCES]:
+                _, source_key = _parse_group_source(source)
+                existing_group = source_subdevice_groups.get(source_key)
+                if existing_group is not None and existing_group != group_key:
+                    raise cv.Invalid(
+                        f"groups.{group_key}.sources_to_subdevice cannot include {source_key}; "
+                        f"it is already assigned to groups.{existing_group}"
+                    )
+                source_subdevice_groups[source_key] = group_key
 
     group_dependencies = {
         group_key: [
@@ -2458,60 +2475,78 @@ def _final_validate_esphome_subdevices(config):
     existing_device_ids = {str(device[CONF_ID]) for device in devices}
     component_id = str(config[CONF_ID])
 
-    node_collections = (
-        (
-            "line",
-            "main_",
-            config.get(CONF_MAINS, {}),
-            _main_entity_configs,
-            _main_default_base_name,
-        ),
-        (
-            "circuit",
-            "",
-            config.get(CONF_CIRCUITS, {}),
-            _circuit_entity_configs,
-            _circuit_default_base_name,
-        ),
-        (
-            "group",
-            "group_",
-            config.get(CONF_GROUPS, {}),
-            _group_entity_configs,
-            _group_default_base_name,
-        ),
-    )
+    def visible_entities(entity_configs):
+        return [
+            entity_config
+            for entity_config in entity_configs
+            if not entity_config.get(CONF_INTERNAL, False)
+            and CONF_DEVICE_ID not in entity_config
+        ]
 
-    for node_type, device_id_prefix, nodes, entity_config_getter, name_getter in node_collections:
-        for node_key, node_config in nodes.items():
-            entity_configs = entity_config_getter(node_config)
-            target_entities = [
-                entity_config
-                for entity_config in entity_configs
-                if not entity_config.get(CONF_INTERNAL, False)
-                and CONF_DEVICE_ID not in entity_config
-            ]
-            if not target_entities:
-                continue
-
-            device_id = f"emporiavue_{component_id}_{device_id_prefix}{node_key}"
-            if device_id in existing_device_ids:
-                raise cv.Invalid(
-                    f"generated {node_type} device ID {device_id} conflicts with esphome.devices"
-                )
-
-            device_config = DEVICE_SCHEMA(
-                {
-                    CONF_ID: device_id,
-                    CONF_NAME: name_getter(node_key, node_config),
-                }
+    def add_subdevice(node_type, device_id_suffix, name, target_entities):
+        if not target_entities:
+            return
+        device_id = f"emporiavue_{component_id}_{device_id_suffix}"
+        if device_id in existing_device_ids:
+            raise cv.Invalid(
+                f"generated {node_type} device ID {device_id} conflicts with esphome.devices"
             )
-            devices.append(device_config)
-            existing_device_ids.add(device_id)
+        devices.append(DEVICE_SCHEMA({CONF_ID: device_id, CONF_NAME: name}))
+        existing_device_ids.add(device_id)
 
-            device_reference = ID(device_id, type=Device)
-            for entity_config in target_entities:
-                entity_config[CONF_DEVICE_ID] = device_reference.copy()
+        device_reference = ID(device_id, type=Device)
+        for entity_config in target_entities:
+            entity_config[CONF_DEVICE_ID] = device_reference.copy()
+
+    node_specs = {}
+    for main_key, main_config in config.get(CONF_MAINS, {}).items():
+        node_specs[main_key] = (
+            "line",
+            f"main_{main_key}",
+            _main_default_base_name(main_key, main_config),
+            _main_entity_configs(main_config),
+        )
+    for circuit_key, circuit_config in config.get(CONF_CIRCUITS, {}).items():
+        node_specs[circuit_key] = (
+            "circuit",
+            circuit_key,
+            _circuit_default_base_name(circuit_key, circuit_config),
+            _circuit_entity_configs(circuit_config),
+        )
+    for group_key, group_config in config.get(CONF_GROUPS, {}).items():
+        node_specs[group_key] = (
+            "group",
+            f"group_{group_key}",
+            _group_default_base_name(group_key, group_config),
+            _group_entity_configs(group_config),
+        )
+
+    source_owners = {}
+    for group_key, group_config in config.get(CONF_GROUPS, {}).items():
+        if not group_config[CONF_SOURCES_TO_SUBDEVICE]:
+            continue
+        for source in group_config[CONF_SOURCES]:
+            _, source_key = _parse_group_source(source)
+            source_owners[source_key] = group_key
+
+    def root_owner(node_key):
+        while node_key in source_owners:
+            node_key = source_owners[node_key]
+        return node_key
+
+    device_entities = {node_key: [] for node_key in node_specs}
+    for node_key, (_, _, _, entity_configs) in node_specs.items():
+        device_entities[root_owner(node_key)].extend(visible_entities(entity_configs))
+
+    for node_key, (node_type, device_id_suffix, name, _) in node_specs.items():
+        if root_owner(node_key) != node_key:
+            continue
+        add_subdevice(
+            node_type,
+            device_id_suffix,
+            name,
+            device_entities[node_key],
+        )
 
     return config
 

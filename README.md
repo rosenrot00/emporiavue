@@ -7,6 +7,7 @@ or use the ESPHome SPI path when you specifically want synchronized raw-waveform
 
 | Version | Changes |
 |---|---|
+| 2026.07.13 | Added optional source-to-group subdevice organization for lines, circuits, and groups. |
 | 2026.07.11 | Organized main lines, circuits, and groups with visible entities as native ESPHome subdevices. |
 | 2026.07.10 | Added and validated the Vue 3 raw-waveform SPI path on real hardware. |
 | 2026.07.9 | Added optional SPI voltage THD from the synchronized 2nd through 40th voltage harmonics. |
@@ -168,6 +169,44 @@ device instead, disable the feature globally:
 emporiavue:
   esphome_subdevices: false
 ```
+
+To keep the source measurements and the group totals on one Home Assistant device, enable
+`sources_to_subdevice` on that group:
+
+```yaml
+emporiavue:
+  circuits:
+    cir2:
+      name: "Heat Pump L1"
+      power:
+      current:
+
+    cir3:
+      name: "Heat Pump L2"
+      power:
+      current:
+
+    cir4:
+      name: "Heat Pump L3"
+      power:
+      current:
+
+  groups:
+    heat_pump:
+      name: "Heat Pump"
+      sources: [cir2, cir3, cir4]
+      sources_to_subdevice: true
+      power:
+      energy:
+```
+
+`sources_to_subdevice` defaults to `false`. When enabled, the visible entities of the group's direct `sources` move to
+the group subdevice and their separate source subdevices disappear; entities are not duplicated. This works for main
+lines, circuits, and other groups. For example, adding `sources_to_subdevice: true` to the predefined `grid` group puts
+the three line measurements and the Grid totals on the same device. The group device is also created when its only
+visible entities come from its sources. A source can belong to only one such group. A `-` sign in `sources`, such as
+`-cir1`, affects the calculation but not the entity placement. The option is ignored when `esphome_subdevices` is
+disabled.
 
 ### 5. Understand `line`
 
@@ -493,12 +532,14 @@ emporiavue:
     wallbox:
       name: "Wallbox"
       sources: [cir8, cir9, cir10]
+      sources_to_subdevice: true
       power:
       energy:
 
     grid:
       name: "Grid"
       sources: [line_1, line_2, line_3]
+      sources_to_subdevice: true
       power:
         both:
           name: "Grid Net Power"
@@ -510,9 +551,10 @@ emporiavue:
           energy:
 ```
 
-The Wallbox example uses one CT per phase. The `wallbox` group publishes the summed three-phase power and energy; the
-three circuit entities retain the individual phase currents and powers. A single CT with `line: [1, 2]` represents a
-two-wire line-to-line load, not a complete three-phase load.
+The Wallbox example uses one CT per phase. Its `sources_to_subdevice` option places the three phase currents and powers
+on the same Home Assistant device as the summed power and energy. The Grid example similarly combines the three main
+lines with the Grid totals. A single CT with `line: [1, 2]` represents a two-wire line-to-line load, not a complete
+three-phase load.
 
 Full and specialized examples are available in [`examples/yaml`](examples/yaml/).
 
