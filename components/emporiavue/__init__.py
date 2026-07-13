@@ -537,7 +537,7 @@ def _group_default_power_name(group_key, group_config):
 
 
 def _energy_default_name(base_name):
-    return f"Today's {base_name} Energy"
+    return f"{base_name} Today's Energy"
 
 
 def _direction_energy_state_class(direction):
@@ -625,7 +625,7 @@ def _direction_power_name(base_name, direction):
 
 
 def _direction_energy_name(base_name, direction):
-    return f"Today's {base_name} {_direction_energy_suffix(direction)}"
+    return f"{base_name} Today's {_direction_energy_suffix(direction)}"
 
 
 def _normalize_power_direction(direction):

@@ -7,7 +7,7 @@ or use the ESPHome SPI path when you specifically want synchronized raw-waveform
 
 | Version | Changes |
 |---|---|
-| 2026.07.13 | Added optional all-or-selected source-to-group subdevice organization for lines, circuits, and groups. |
+| 2026.07.13 | Added optional all-or-selected source-to-group subdevice organization and standardized default daily-energy names as `<Device> Today's Energy`; generated entity IDs change accordingly. |
 | 2026.07.11 | Organized main lines, circuits, and groups with visible entities as native ESPHome subdevices. |
 | 2026.07.10 | Added and validated the Vue 3 raw-waveform SPI path on real hardware. |
 | 2026.07.9 | Added optional SPI voltage THD from the synchronized 2nd through 40th voltage harmonics. |
