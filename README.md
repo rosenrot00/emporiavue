@@ -7,6 +7,7 @@ or use the ESPHome SPI path when you specifically want synchronized raw-waveform
 
 | Version | Changes |
 |---|---|
+| 2026.07.11 | Organized main lines, circuits, and groups with visible entities as native ESPHome subdevices. |
 | 2026.07.10 | Added and validated the Vue 3 raw-waveform SPI path on real hardware. |
 | 2026.07.9 | Added optional SPI voltage THD from the synchronized 2nd through 40th voltage harmonics. |
 | 2026.07.8 | Added persistent automatic circuit line assignment with an optional Home Assistant line selector. |
@@ -155,6 +156,18 @@ Heat Pump Power Factor
 ```
 
 An explicit sensor `name:` always wins over both the default and the circuit name.
+
+By default, every main line, circuit, and group with at least one visible entity is exposed as its own native ESPHome
+subdevice in Home Assistant. Each logical line keeps its voltage, main-CT measurements, calibration controls, and
+optional SPI analysis together. Circuit measurements stay under the circuit name; group totals such as `Grid`,
+`Wallbox`, or `Unmonitored` stay together as well. Entries without visible entities do not create empty devices. The
+central Emporia Vue device retains firmware controls and general diagnostics. To keep every entity on that central
+device instead, disable the feature globally:
+
+```yaml
+emporiavue:
+  esphome_subdevices: false
+```
 
 ### 5. Understand `line`
 

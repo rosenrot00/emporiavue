@@ -6,11 +6,15 @@ import urllib.request
 
 import esphome.codegen as cg
 import esphome.config_validation as cv
+import esphome.final_validate as fv
 from esphome import pins
 from esphome.components import button, i2c, number, select, sensor, text_sensor, time
 from esphome.const import (
     CONF_ACCURACY_DECIMALS,
     CONF_CURRENT,
+    CONF_DEVICE_ID,
+    CONF_DEVICES,
+    CONF_ESPHOME,
     CONF_ID,
     CONF_INPUT,
     CONF_INITIAL_VALUE,
@@ -39,6 +43,8 @@ from esphome.const import (
     UNIT_VOLT,
     UNIT_WATT,
 )
+from esphome.core import ID
+from esphome.core.config import DEVICE_SCHEMA, Device
 
 DEPENDENCIES = ["esp32"]
 AUTO_LOAD = ["button", "number", "select", "sensor", "text_sensor", "time", "total_daily_energy"]
@@ -132,6 +138,7 @@ CONF_ENTITY_CATEGORY = "entity_category"
 CONF_RAW_POWER = "raw_power"
 CONF_MAINS = "mains"
 CONF_CIRCUITS = "circuits"
+CONF_ESPHOME_SUBDEVICES = "esphome_subdevices"
 CONF_GROUPS = "groups"
 CONF_SOURCES = "sources"
 CONF_VIRTUAL_LINES = "virtual_lines"
@@ -182,6 +189,47 @@ SPI_ANALYSIS_SENSOR_KEYS = (
     CONF_FUNDAMENTAL_POWER_FACTOR,
     CONF_DISPLACEMENT_ANGLE,
     CONF_CURRENT_THD,
+    CONF_CURRENT_PEAK,
+    CONF_CURRENT_CREST_FACTOR,
+)
+
+CIRCUIT_DIRECT_ENTITY_KEYS = (
+    CONF_LINE_SELECT,
+    CONF_CURRENT,
+    CONF_POWER_APPARENT,
+    CONF_POWER_FACTOR,
+    CONF_FUNDAMENTAL_CURRENT,
+    CONF_FUNDAMENTAL_REACTIVE_POWER,
+    CONF_FUNDAMENTAL_POWER_FACTOR,
+    CONF_DISPLACEMENT_ANGLE,
+    CONF_CURRENT_THD,
+    CONF_POWER_DEMAND,
+    CONF_MAXIMUM_POWER_DEMAND,
+    CONF_CURRENT_DEMAND,
+    CONF_MAXIMUM_CURRENT_DEMAND,
+    CONF_CURRENT_PEAK,
+    CONF_CURRENT_CREST_FACTOR,
+    CONF_PHASE_DETECTION,
+)
+
+MAIN_DIRECT_ENTITY_KEYS = (
+    CONF_VOLTAGE,
+    CONF_FREQUENCY,
+    CONF_PHASE_ANGLE,
+    CONF_VOLTAGE_THD,
+    CONF_VOLTAGE_CALIBRATION_NUMBER,
+    CONF_CURRENT,
+    CONF_POWER_APPARENT,
+    CONF_POWER_FACTOR,
+    CONF_FUNDAMENTAL_CURRENT,
+    CONF_FUNDAMENTAL_REACTIVE_POWER,
+    CONF_FUNDAMENTAL_POWER_FACTOR,
+    CONF_DISPLACEMENT_ANGLE,
+    CONF_CURRENT_THD,
+    CONF_POWER_DEMAND,
+    CONF_MAXIMUM_POWER_DEMAND,
+    CONF_CURRENT_DEMAND,
+    CONF_MAXIMUM_CURRENT_DEMAND,
     CONF_CURRENT_PEAK,
     CONF_CURRENT_CREST_FACTOR,
 )
@@ -443,6 +491,10 @@ def _first_power_config(parent_config):
     if isinstance(power_config, dict):
         return power_config
     return None
+
+
+def _main_default_base_name(main_key, main_config):
+    return main_config.get(CONF_NAME, main_key.replace("_", " ").title())
 
 
 def _circuit_default_base_name(circuit_key, circuit_config):
@@ -1063,7 +1115,7 @@ def _apply_raw_power_defaults(config):
         mains = dict(config[CONF_MAINS])
         for main_key, main_config in list(mains.items()):
             if isinstance(main_config, dict):
-                default_base_name = main_config.get(CONF_NAME, main_key.replace("_", " ").title())
+                default_base_name = _main_default_base_name(main_key, main_config)
                 main_config = _apply_power_output_defaults(
                     main_config,
                     f"{main_key}_power",
@@ -2330,6 +2382,140 @@ def _validate_metering_topology(config):
     return config
 
 
+def _power_output_entity_configs(node_config):
+    entity_configs = []
+
+    for power_config in node_config.get(CONF_POWER, []):
+        if not isinstance(power_config, dict):
+            continue
+        entity_configs.append(power_config)
+        energy_config = power_config.get(CONF_ENERGY)
+        if isinstance(energy_config, dict):
+            entity_configs.append(energy_config)
+
+    return entity_configs
+
+
+def _current_calibration_entity_configs(node_config):
+    current_calibration = node_config.get(CONF_CURRENT_CALIBRATION)
+    if not isinstance(current_calibration, dict):
+        return []
+    entity_configs = []
+    for key in (CONF_GAIN_NUMBER, CONF_PHASE_NUMBER):
+        entity_config = current_calibration.get(key)
+        if isinstance(entity_config, dict):
+            entity_configs.append(entity_config)
+    return entity_configs
+
+
+def _main_entity_configs(main_config):
+    entity_configs = _power_output_entity_configs(main_config)
+    for key in MAIN_DIRECT_ENTITY_KEYS:
+        entity_config = main_config.get(key)
+        if isinstance(entity_config, dict):
+            entity_configs.append(entity_config)
+    entity_configs.extend(_current_calibration_entity_configs(main_config))
+    return entity_configs
+
+
+def _circuit_entity_configs(circuit_config):
+    entity_configs = _power_output_entity_configs(circuit_config)
+
+    for key in CIRCUIT_DIRECT_ENTITY_KEYS:
+        entity_config = circuit_config.get(key)
+        if isinstance(entity_config, dict):
+            entity_configs.append(entity_config)
+
+    power_split_config = circuit_config.get(CONF_POWER_SPLIT)
+    if isinstance(power_split_config, dict):
+        entity_configs.extend(
+            entity_config
+            for entity_config in power_split_config.values()
+            if isinstance(entity_config, dict)
+        )
+
+    entity_configs.extend(_current_calibration_entity_configs(circuit_config))
+
+    return entity_configs
+
+
+def _group_entity_configs(group_config):
+    entity_configs = _power_output_entity_configs(group_config)
+    for key in (CONF_POWER_DEMAND, CONF_MAXIMUM_POWER_DEMAND):
+        entity_config = group_config.get(key)
+        if isinstance(entity_config, dict):
+            entity_configs.append(entity_config)
+    return entity_configs
+
+
+def _final_validate_esphome_subdevices(config):
+    if not config[CONF_ESPHOME_SUBDEVICES]:
+        return config
+
+    full_config = fv.full_config.get()
+    esphome_config = full_config.get_config_for_path([CONF_ESPHOME])
+    devices = esphome_config[CONF_DEVICES]
+    existing_device_ids = {str(device[CONF_ID]) for device in devices}
+    component_id = str(config[CONF_ID])
+
+    node_collections = (
+        (
+            "line",
+            "main_",
+            config.get(CONF_MAINS, {}),
+            _main_entity_configs,
+            _main_default_base_name,
+        ),
+        (
+            "circuit",
+            "",
+            config.get(CONF_CIRCUITS, {}),
+            _circuit_entity_configs,
+            _circuit_default_base_name,
+        ),
+        (
+            "group",
+            "group_",
+            config.get(CONF_GROUPS, {}),
+            _group_entity_configs,
+            _group_default_base_name,
+        ),
+    )
+
+    for node_type, device_id_prefix, nodes, entity_config_getter, name_getter in node_collections:
+        for node_key, node_config in nodes.items():
+            entity_configs = entity_config_getter(node_config)
+            target_entities = [
+                entity_config
+                for entity_config in entity_configs
+                if not entity_config.get(CONF_INTERNAL, False)
+                and CONF_DEVICE_ID not in entity_config
+            ]
+            if not target_entities:
+                continue
+
+            device_id = f"emporiavue_{component_id}_{device_id_prefix}{node_key}"
+            if device_id in existing_device_ids:
+                raise cv.Invalid(
+                    f"generated {node_type} device ID {device_id} conflicts with esphome.devices"
+                )
+
+            device_config = DEVICE_SCHEMA(
+                {
+                    CONF_ID: device_id,
+                    CONF_NAME: name_getter(node_key, node_config),
+                }
+            )
+            devices.append(device_config)
+            existing_device_ids.add(device_id)
+
+            device_reference = ID(device_id, type=Device)
+            for entity_config in target_entities:
+                entity_config[CONF_DEVICE_ID] = device_reference.copy()
+
+    return config
+
+
 METERING_CT_CLAMP_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(MeteringCTClampConfig),
@@ -2391,6 +2577,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_PHASE_DETECTION, default={}): PHASE_DETECTION_GLOBAL_SCHEMA,
         cv.Optional(CONF_FILTER_DEFAULTS): FILTER_DEFAULTS_SCHEMA,
         cv.Optional(CONF_MAINS): _validate_mains,
+        cv.Optional(CONF_ESPHOME_SUBDEVICES, default=True): cv.boolean,
         cv.Optional(CONF_CIRCUITS): _validate_circuits,
         cv.Optional(CONF_GROUPS): _validate_groups,
         cv.Optional(CONF_VIRTUAL_LINES): _validate_virtual_lines,
@@ -2503,6 +2690,8 @@ CONFIG_SCHEMA = cv.All(
     _validate_transport_schema,
     _validate_metering_topology,
 )
+
+FINAL_VALIDATE_SCHEMA = _final_validate_esphome_subdevices
 
 
 async def _add_internal_power_filters(var, filters):
