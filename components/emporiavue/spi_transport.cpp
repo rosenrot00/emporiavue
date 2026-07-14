@@ -97,7 +97,7 @@ void EmporiaVueComponent::publish_spi_diagnostics_() {
   }
   if (this->diag_transfer_errors_sensor_ != nullptr) {
     this->diag_transfer_errors_sensor_->publish_state(
-        static_cast<float>(this->spi_rx_queue_errors_ + this->spi_processing_overruns_ + this->spi_rx_dma_errors_));
+        static_cast<float>(this->spi_rx_queue_errors_ + this->spi_rx_dma_errors_));
   }
   if (this->diag_frame_overruns_sensor_ != nullptr) {
     this->diag_frame_overruns_sensor_->publish_state(static_cast<float>(this->spi_rx_samd_overruns_));
