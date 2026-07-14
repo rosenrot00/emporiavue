@@ -552,7 +552,9 @@ class EmporiaVueComponent : public Component
     bool voltage_thd_requested[3]{};
     float voltage_fund_weight{0.0f};
     float cycle_sum[3]{};
-    float line1_periods[64]{};
+    float line1_period_sum{0.0f};
+    float line1_period_min{0.0f};
+    float line1_period_max{0.0f};
     uint16_t cycle_count[3]{};
     uint16_t voltage_fund_cycle_count{0};
     uint16_t line1_period_count{0};

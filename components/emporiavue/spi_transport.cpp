@@ -1047,7 +1047,15 @@ void EmporiaVueComponent::process_spi_raw_scan_(const SpiRawScan &scan) {
                 acc.cycle_count[0]++;
                 acc.line1_period_count++;
                 if (acc.line1_period_sample_count < 64) {
-                  acc.line1_periods[acc.line1_period_sample_count++] = period;
+                  if (acc.line1_period_sample_count == 0) {
+                    acc.line1_period_min = period;
+                    acc.line1_period_max = period;
+                  } else {
+                    acc.line1_period_min = std::min(acc.line1_period_min, period);
+                    acc.line1_period_max = std::max(acc.line1_period_max, period);
+                  }
+                  acc.line1_period_sum += period;
+                  acc.line1_period_sample_count++;
                 }
               } else {
                 sync_window_after_scan = true;
@@ -1333,22 +1341,13 @@ void EmporiaVueComponent::finish_spi_metering_window_(uint32_t sequence, uint32_
     if (acc.line1_period_sample_count == 0) {
       return 0.0f;
     }
-    float periods[64]{};
-    for (uint8_t index = 0; index < acc.line1_period_sample_count; index++) {
-      periods[index] = acc.line1_periods[index];
-    }
-    std::sort(periods, periods + acc.line1_period_sample_count);
-    uint8_t first = 0;
-    uint8_t last = acc.line1_period_sample_count;
+    float sum = acc.line1_period_sum;
+    uint8_t count = acc.line1_period_sample_count;
     if (acc.line1_period_sample_count >= 5) {
-      first = 1;
-      last = static_cast<uint8_t>(acc.line1_period_sample_count - 1);
+      sum -= acc.line1_period_min + acc.line1_period_max;
+      count = static_cast<uint8_t>(count - 2);
     }
-    float sum = 0.0f;
-    for (uint8_t index = first; index < last; index++) {
-      sum += periods[index];
-    }
-    return sum / static_cast<float>(last - first);
+    return sum / static_cast<float>(count);
   };
 
   float line1_period_samples = robust_line1_period();
