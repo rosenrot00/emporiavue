@@ -35,7 +35,6 @@ static constexpr uint32_t SPI_VUE3_MAIN_SAMPLE_COUNT = 10000;
 static constexpr uint16_t SPI_REFERENCE_WINDOW_MS = 500;
 static constexpr uint32_t SPI_RX_TASK_STACK_SIZE = 4096;
 static constexpr uint32_t SPI_METERING_TASK_STACK_SIZE = 8192;
-static constexpr uint32_t SPI_METERING_MAX_CONTINUOUS_WORK_MS = 50;
 static constexpr uint32_t SPI_MAIN_RMS_SCALE_NUMERATOR = 100;
 static constexpr uint32_t SPI_CURRENT_RMS_SCALE_NUMERATOR = 100;
 static constexpr uint32_t SPI_CURRENT_PEAK_SCALE_MULTIPLIER = 10;
@@ -638,9 +637,6 @@ void EmporiaVueComponent::spi_metering_task_trampoline_(void *arg) {
 }
 
 void EmporiaVueComponent::spi_metering_task_() {
-  TickType_t work_slice_started = xTaskGetTickCount();
-  const TickType_t max_continuous_work_ticks =
-      std::max<TickType_t>(1, pdMS_TO_TICKS(SPI_METERING_MAX_CONTINUOUS_WORK_MS));
   while (true) {
     SpiQueuedFrame *frame = nullptr;
     const bool frame_ready = this->spi_processing_ready_queue_ != nullptr &&
@@ -652,22 +648,9 @@ void EmporiaVueComponent::spi_metering_task_() {
         this->spi_rx_queue_errors_++;
         this->spi_rx_recover_requested_ = true;
       }
-
-      const bool backlog = this->spi_processing_ready_queue_ != nullptr &&
-                           uxQueueMessagesWaiting(this->spi_processing_ready_queue_) != 0;
-      if (!backlog) {
-        work_slice_started = xTaskGetTickCount();
-      } else {
-        const TickType_t now = xTaskGetTickCount();
-        if (now - work_slice_started >= max_continuous_work_ticks) {
-          vTaskDelay(1);
-          work_slice_started = xTaskGetTickCount();
-        }
-      }
       continue;
     }
 
-    work_slice_started = xTaskGetTickCount();
     const bool ready_queue_empty = this->spi_processing_ready_queue_ == nullptr ||
                                    uxQueueMessagesWaiting(this->spi_processing_ready_queue_) == 0;
     if (this->spi_metering_task_stop_ && !this->spi_rx_task_running_ && ready_queue_empty) {
@@ -989,7 +972,10 @@ bool EmporiaVueComponent::accumulate_spi_voltage_cycle_(const SpiCrossingPositio
   }
 
   if (this->spi_voltage_thd_mask_ != 0) {
-    static constexpr uint8_t HARMONIC_BATCH_SIZE = 8;
+    // The dedicated metering task has ample measured stack headroom for the
+    // complete H2..H40 workspace. Processing all bins together avoids walking
+    // the same voltage cycle five times without changing the calculation.
+    static constexpr uint8_t HARMONIC_BATCH_SIZE = SPI_VOLTAGE_THD_HARMONIC_COUNT;
     float order_cos = first_fundamental_cos;
     float order_sin = first_fundamental_sin;
     float order_step_cos = step_cos;
@@ -1006,8 +992,6 @@ bool EmporiaVueComponent::accumulate_spi_voltage_cycle_(const SpiCrossingPositio
       float harmonic_step_sin[HARMONIC_BATCH_SIZE]{};
 
       // Build the oscillators for this bounded H2..H40 batch recursively.
-      // Batching retains the sample-major calculation without placing every
-      // harmonic's workspace on the receive task's stack at once.
       for (uint8_t harmonic = 0; harmonic < harmonic_count; harmonic++) {
         const float next_order_cos =
             order_cos * first_fundamental_cos - order_sin * first_fundamental_sin;
