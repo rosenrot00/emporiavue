@@ -10,6 +10,10 @@ esp32:
 logger:
   level: DEBUG
 
+preferences:
+  # Important: avoid periodic flash writes and use controlled synchronization points.
+  flash_write_interval: never
+
 external_components:
   - source:
       type: local

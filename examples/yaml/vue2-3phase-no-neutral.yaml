@@ -47,6 +47,9 @@ ota:
   - platform: esphome
     password: !secret ota_password
     allow_partition_access: true
+    on_begin:
+      then:
+        - lambda: global_preferences->sync();
 
 wifi:
   ssid: !secret wifi_ssid
@@ -58,6 +61,7 @@ logger:
     sensor: INFO
 
 preferences:
+  # Avoid periodic flash writes; OTA explicitly synchronizes restored state above.
   flash_write_interval: never
 
 time:

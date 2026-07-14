@@ -67,6 +67,7 @@ logger:
     sensor: INFO
 
 preferences:
+  # Avoid periodic flash writes; OTA explicitly synchronizes restored state above.
   flash_write_interval: never
 
 time:

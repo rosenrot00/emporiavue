@@ -436,6 +436,10 @@ api:
 ota:
   - platform: esphome
     allow_partition_access: true
+    on_begin:
+      then:
+        # Store related restored values together before the OTA reboot.
+        - lambda: global_preferences->sync();
 
 wifi:
   ssid: !secret wifi_ssid
@@ -444,6 +448,10 @@ wifi:
 logger:
   logs:
     sensor: INFO
+
+preferences:
+  # Avoid periodic flash writes; persistent state is stored at controlled sync points.
+  flash_write_interval: never
 
 time:
   - platform: sntp
@@ -567,6 +575,11 @@ emporiavue:
           name: "Grid Export Power"
           energy:
 ```
+
+Keep `flash_write_interval: never` in the node configuration. It prevents periodic background preference writes,
+reduces flash wear, and helps keep related restored values consistent by storing them at deliberate synchronization
+points. The example performs one such synchronization before OTA. EmporiaVue calibration inputs and line selectors also
+synchronize immediately when changed.
 
 The Wallbox example uses one CT per phase. Its `sources_to_subdevice` option places the three phase currents and powers
 on the same Home Assistant device as the summed power and energy. The Grid example similarly combines the three main
