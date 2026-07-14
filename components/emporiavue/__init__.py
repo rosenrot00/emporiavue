@@ -2884,7 +2884,17 @@ async def _add_peak_sensors(var, config, default_interval):
         cg.add(var.set_current_crest_factor_sensor(sens))
 
 
-async def _add_current_calibration(var, config):
+def _metering_preference_key(metering_path):
+    key = int.from_bytes(
+        hashlib.sha256(
+            f"emporiavue.preference.v1.{metering_path}".encode()
+        ).digest()[:4],
+        "little",
+    )
+    return key or 1
+
+
+async def _add_current_calibration(var, config, metering_path):
     calibration = config.get(CONF_CURRENT_CALIBRATION)
     if not calibration:
         return
@@ -2899,6 +2909,11 @@ async def _add_current_calibration(var, config):
             step=0.0001,
         )
         cg.add(gain_number.set_initial_value(number_config[CONF_INITIAL_VALUE]))
+        cg.add(
+            gain_number.set_preference_key(
+                _metering_preference_key(f"{metering_path}.current_gain")
+            )
+        )
         await cg.register_parented(gain_number, var)
         cg.add(var.set_current_gain_number(gain_number))
 
@@ -2910,6 +2925,11 @@ async def _add_current_calibration(var, config):
             step=0.01,
         )
         cg.add(phase_number.set_initial_value(number_config[CONF_INITIAL_VALUE]))
+        cg.add(
+            phase_number.set_preference_key(
+                _metering_preference_key(f"{metering_path}.current_phase")
+            )
+        )
         await cg.register_parented(phase_number, var)
         cg.add(var.set_current_phase_number(phase_number))
 
@@ -3009,6 +3029,13 @@ async def to_code(config):
                 step=0.000001,
             )
             cg.add(cal_num.set_initial_value(calibration_number_config[CONF_INITIAL_VALUE]))
+            cg.add(
+                cal_num.set_preference_key(
+                    _metering_preference_key(
+                        f"mains.{phase_key}.voltage_calibration"
+                    )
+                )
+            )
             await cg.register_parented(cal_num, phase_var)
             cg.add(phase_var.set_calibration_number(cal_num))
 
@@ -3035,7 +3062,7 @@ async def to_code(config):
             )
         )
         await _add_internal_power_filters(ct_clamp_var, main_config.get(CONF_FILTERS))
-        await _add_current_calibration(ct_clamp_var, main_config)
+        await _add_current_calibration(ct_clamp_var, main_config, f"mains.{phase_key}")
         await _add_power_outputs(ct_clamp_var, main_config.get(CONF_POWER))
         if current_config := main_config.get(CONF_CURRENT):
             sens = await sensor.new_sensor(current_config)
@@ -3064,7 +3091,9 @@ async def to_code(config):
             cg.add(ct_clamp_var.set_phase(phase_var))
         cg.add(ct_clamp_var.set_input_port(BRANCH_CT_INPUTS[circuit_config[CONF_INPUT]]))
         await _add_internal_power_filters(ct_clamp_var, circuit_config.get(CONF_FILTERS))
-        await _add_current_calibration(ct_clamp_var, circuit_config)
+        await _add_current_calibration(
+            ct_clamp_var, circuit_config, f"circuits.{circuit_key}"
+        )
 
         await _add_power_outputs(ct_clamp_var, circuit_config.get(CONF_POWER))
         if current_config := circuit_config.get(CONF_CURRENT):
@@ -3091,11 +3120,8 @@ async def to_code(config):
         is_auto_line = line_config == "auto"
         has_line_select = CONF_LINE_SELECT in circuit_config
         if is_auto_line or has_line_select:
-            preference_key = int.from_bytes(
-                hashlib.sha256(
-                    f"emporiavue.line.{config[CONF_ID]}.{circuit_key}".encode()
-                ).digest()[:4],
-                "little",
+            preference_key = _metering_preference_key(
+                f"circuits.{circuit_key}.line"
             )
             initial_line = 0 if is_auto_line else line_config
             cg.add(ct_clamp_var.configure_dynamic_line(initial_line, preference_key))
@@ -3161,6 +3187,13 @@ async def to_code(config):
                 step=0.000001,
             )
             cg.add(cal_num.set_initial_value(calibration_number_config[CONF_INITIAL_VALUE]))
+            cg.add(
+                cal_num.set_preference_key(
+                    _metering_preference_key(
+                        f"legacy_phases.{phase_config[CONF_INPUT]}.voltage_calibration"
+                    )
+                )
+            )
             await cg.register_parented(cal_num, phase_var)
             cg.add(phase_var.set_calibration_number(cal_num))
 
@@ -3187,7 +3220,9 @@ async def to_code(config):
         cg.add(ct_clamp_var.set_phase(phase_var))
         cg.add(ct_clamp_var.set_input_port(CT_INPUTS[ct_config[CONF_INPUT]]))
         await _add_internal_power_filters(ct_clamp_var, ct_config.get(CONF_FILTERS))
-        await _add_current_calibration(ct_clamp_var, ct_config)
+        await _add_current_calibration(
+            ct_clamp_var, ct_config, f"legacy_ct_clamps.{ct_config[CONF_INPUT]}"
+        )
 
         await _add_power_outputs(ct_clamp_var, ct_config.get(CONF_POWER))
         if current_config := ct_config.get(CONF_CURRENT):

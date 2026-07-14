@@ -984,6 +984,7 @@ class MeteringPhaseConfig {
 class MeteringCalibrationNumber : public number::Number, public Parented<MeteringPhaseConfig> {
  public:
   void set_initial_value(float initial_value) { this->initial_value_ = initial_value; }
+  void set_preference_key(uint32_t preference_key) { this->preference_key_ = preference_key; }
   void setup_value();
 
  protected:
@@ -991,6 +992,7 @@ class MeteringCalibrationNumber : public number::Number, public Parented<Meterin
   void ensure_preference_();
 
   float initial_value_{0.022f};
+  uint32_t preference_key_{0};
   ESPPreferenceObject pref_{};
   bool pref_initialized_{false};
 };
@@ -998,6 +1000,7 @@ class MeteringCalibrationNumber : public number::Number, public Parented<Meterin
 class MeteringCurrentGainNumber : public number::Number, public Parented<MeteringCTClampConfig> {
  public:
   void set_initial_value(float initial_value) { this->initial_value_ = initial_value; }
+  void set_preference_key(uint32_t preference_key) { this->preference_key_ = preference_key; }
   void setup_value();
 
  protected:
@@ -1005,6 +1008,7 @@ class MeteringCurrentGainNumber : public number::Number, public Parented<Meterin
   void ensure_preference_();
 
   float initial_value_{1.0f};
+  uint32_t preference_key_{0};
   ESPPreferenceObject pref_{};
   bool pref_initialized_{false};
 };
@@ -1012,6 +1016,7 @@ class MeteringCurrentGainNumber : public number::Number, public Parented<Meterin
 class MeteringCurrentPhaseNumber : public number::Number, public Parented<MeteringCTClampConfig> {
  public:
   void set_initial_value(float initial_value) { this->initial_value_ = initial_value; }
+  void set_preference_key(uint32_t preference_key) { this->preference_key_ = preference_key; }
   void setup_value();
 
  protected:
@@ -1019,6 +1024,7 @@ class MeteringCurrentPhaseNumber : public number::Number, public Parented<Meteri
   void ensure_preference_();
 
   float initial_value_{0.0f};
+  uint32_t preference_key_{0};
   ESPPreferenceObject pref_{};
   bool pref_initialized_{false};
 };

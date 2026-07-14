@@ -245,7 +245,7 @@ void MeteringCalibrationNumber::ensure_preference_() {
   if (this->pref_initialized_) {
     return;
   }
-  this->pref_ = global_preferences->make_preference<float>(this->get_object_id_hash());
+  this->pref_ = global_preferences->make_preference<float>(this->preference_key_);
   this->pref_initialized_ = true;
 }
 
@@ -282,7 +282,7 @@ void MeteringCurrentGainNumber::ensure_preference_() {
   if (this->pref_initialized_) {
     return;
   }
-  this->pref_ = global_preferences->make_preference<float>(this->get_object_id_hash());
+  this->pref_ = global_preferences->make_preference<float>(this->preference_key_);
   this->pref_initialized_ = true;
 }
 
@@ -310,7 +310,7 @@ void MeteringCurrentPhaseNumber::ensure_preference_() {
   if (this->pref_initialized_) {
     return;
   }
-  this->pref_ = global_preferences->make_preference<float>(this->get_object_id_hash());
+  this->pref_ = global_preferences->make_preference<float>(this->preference_key_);
   this->pref_initialized_ = true;
 }
 

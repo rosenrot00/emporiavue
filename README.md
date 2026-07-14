@@ -273,7 +273,8 @@ new detection; choosing a line applies and stores it immediately.
 a numeric `line:` authoritative again. With `line: auto`, detection and storage continue to work without the dropdown.
 
 On the first automatic run, phase-dependent values remain unknown until a line is detected; current values remain
-available. Once detected, the stored line is restored immediately after subsequent restarts.
+available. Once detected, the stored line is restored immediately after subsequent restarts. Storage follows the
+circuit key such as `cir2`, so changing its name or moving it to another subdevice does not reset the assignment.
 
 For a load connected between two lines, use a pair:
 
@@ -756,7 +757,7 @@ emporiavue:
 
 `voltage_calibration` is the authoritative YAML value. Add `voltage_calibration_number:` only when that line should also
 have an adjustable Home Assistant Number. The YAML value initializes the Number; a value changed in Home Assistant is
-stored and restored after reboot.
+stored and restored after reboot. Storage follows the logical line such as `line_1`, not its name or subdevice.
 
 ```yaml
 emporiavue:
@@ -799,7 +800,8 @@ When `current_calibration` is absent, `gain: 1.0` and `phase: 0°` are implied. 
 optional persistent Home Assistant controls; without them, only YAML is used. Gain consistently scales current, power,
 apparent power, reactive power, peak, demand, energy, and groups. On SPI, phase calibration rotates the fundamental
 current phasor and corrects the fundamental contribution to active power, keeping P, Q, PF, and displacement angle
-consistent. Leave the defaults unchanged without a trusted meter and a suitable reference load.
+consistent. Stored values follow the main or circuit key such as `line_1` or `cir2`; names and subdevice assignments can
+change without resetting them. Leave the defaults unchanged without a trusted meter and a suitable reference load.
 
 ### Phase detection helper
 
