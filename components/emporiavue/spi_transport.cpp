@@ -16,7 +16,6 @@
 namespace esphome {
 namespace emporiavue {
 
-static constexpr uint16_t SPI_RAW_FRAME_SIZE = 1024;
 static constexpr uint8_t SPI_VUE2_RAW_FRAME_VERSION = 1;
 static constexpr uint8_t SPI_VUE2_RAW_FRAME_TYPE = 1;
 static constexpr uint8_t SPI_VUE3_RAW_FRAME_VERSION = 2;
@@ -27,7 +26,6 @@ static constexpr uint8_t SPI_RAW_SCAN_SIZE = 18;
 static constexpr uint8_t SPI_RAW_SCAN_COUNT = 56;
 static constexpr float SPI_SAMPLE_TIMEBASE_HZ = 16000000.0f;
 static constexpr uint16_t SPI_RX_RECOVERY_INVALID_STREAK = 64;
-static constexpr uint8_t SPI_RX_MAX_IMMEDIATE_RESULTS = SPI_RX_QUEUE_SIZE;
 static constexpr uint32_t SPI_RX_VALID_FRAME_TIMEOUT_MS = 2000;
 static constexpr uint8_t SPI_RX_SOFT_RECOVERIES_BEFORE_SAMD_RESET = 3;
 static constexpr uint32_t SPI_RX_SAMD_RESET_MIN_INTERVAL_MS = 2000;
@@ -35,7 +33,9 @@ static constexpr uint16_t SPI_RX_SAMD_RESET_BOOT_DELAY_MS = 20;
 static constexpr uint32_t SPI_VUE2_MAIN_SAMPLE_COUNT = 12987;
 static constexpr uint32_t SPI_VUE3_MAIN_SAMPLE_COUNT = 10000;
 static constexpr uint16_t SPI_REFERENCE_WINDOW_MS = 500;
-static constexpr uint32_t SPI_RX_TASK_STACK_SIZE = 8192;
+static constexpr uint32_t SPI_RX_TASK_STACK_SIZE = 4096;
+static constexpr uint32_t SPI_METERING_TASK_STACK_SIZE = 8192;
+static constexpr uint8_t SPI_METERING_MAX_FRAMES_PER_SLICE = 4;
 static constexpr uint32_t SPI_MAIN_RMS_SCALE_NUMERATOR = 100;
 static constexpr uint32_t SPI_CURRENT_RMS_SCALE_NUMERATOR = 100;
 static constexpr uint32_t SPI_CURRENT_PEAK_SCALE_MULTIPLIER = 10;
@@ -97,7 +97,7 @@ void EmporiaVueComponent::publish_spi_diagnostics_() {
   }
   if (this->diag_transfer_errors_sensor_ != nullptr) {
     this->diag_transfer_errors_sensor_->publish_state(
-        static_cast<float>(this->spi_rx_queue_errors_ + this->spi_rx_dma_errors_));
+        static_cast<float>(this->spi_rx_queue_errors_ + this->spi_processing_overruns_ + this->spi_rx_dma_errors_));
   }
   if (this->diag_frame_overruns_sensor_ != nullptr) {
     this->diag_frame_overruns_sensor_->publish_state(static_cast<float>(this->spi_rx_samd_overruns_));
@@ -121,11 +121,20 @@ void EmporiaVueComponent::publish_spi_diagnostics_() {
   const size_t heap_largest_block = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
   const bool heap_valid = heap_caps_check_integrity_all(true);
   const UBaseType_t loop_stack_free = uxTaskGetStackHighWaterMark(nullptr);
-  UBaseType_t spi_stack_free = 0;
-  const TaskHandle_t spi_task = this->spi_rx_task_handle_;
-  if (spi_task != nullptr) {
-    spi_stack_free = uxTaskGetStackHighWaterMark(spi_task);
+  UBaseType_t spi_rx_stack_free = 0;
+  UBaseType_t spi_metering_stack_free = 0;
+  const TaskHandle_t spi_rx_task = this->spi_rx_task_handle_;
+  const TaskHandle_t spi_metering_task = this->spi_metering_task_handle_;
+  if (spi_rx_task != nullptr) {
+    spi_rx_stack_free = uxTaskGetStackHighWaterMark(spi_rx_task);
   }
+  if (spi_metering_task != nullptr) {
+    spi_metering_stack_free = uxTaskGetStackHighWaterMark(spi_metering_task);
+  }
+  const UBaseType_t spi_stack_free =
+      spi_rx_stack_free == 0 ? spi_metering_stack_free
+                             : (spi_metering_stack_free == 0 ? spi_rx_stack_free
+                                                             : std::min(spi_rx_stack_free, spi_metering_stack_free));
   if (this->diag_heap_free_sensor_ != nullptr) {
     this->diag_heap_free_sensor_->publish_state(static_cast<float>(heap_free));
   }
@@ -141,15 +150,16 @@ void EmporiaVueComponent::publish_spi_diagnostics_() {
   if (this->diag_loop_stack_free_sensor_ != nullptr) {
     this->diag_loop_stack_free_sensor_->publish_state(static_cast<float>(loop_stack_free));
   }
-  if (this->diag_spi_stack_free_sensor_ != nullptr && spi_task != nullptr) {
+  if (this->diag_spi_stack_free_sensor_ != nullptr && spi_stack_free != 0) {
     this->diag_spi_stack_free_sensor_->publish_state(static_cast<float>(spi_stack_free));
   }
   ESP_LOGI(TAG,
            "Runtime memory: heap_free=%u heap_min=%u largest_block=%u heap_valid=%s "
-           "loop_stack_free=%u spi_stack_free=%u bytes",
+           "loop_stack_free=%u spi_stack_free=%u spi_rx_stack_free=%u spi_metering_stack_free=%u bytes",
            static_cast<unsigned>(heap_free), static_cast<unsigned>(heap_minimum),
            static_cast<unsigned>(heap_largest_block), YESNO(heap_valid), static_cast<unsigned>(loop_stack_free),
-           static_cast<unsigned>(spi_stack_free));
+           static_cast<unsigned>(spi_stack_free), static_cast<unsigned>(spi_rx_stack_free),
+           static_cast<unsigned>(spi_metering_stack_free));
 #endif
 }
 
@@ -166,33 +176,6 @@ void EmporiaVueComponent::setup_spi_receiver_(bool reset_statistics) {
 
 #ifdef USE_ESP32
   if (this->spi_receiver_started_) {
-    if (this->spi_rx_task_handle_ != nullptr || !this->spi_rx_task_stop_) {
-      return;
-    }
-    this->reset_spi_metering_state_();
-    this->spi_rx_task_stop_ = false;
-    this->spi_rx_force_stop_ = false;
-    this->spi_rx_inflight_ = 0;
-    this->spi_rx_recover_requested_ = false;
-    this->spi_rx_stall_recovery_ = false;
-    this->spi_rx_last_valid_frame_ms_ = millis();
-    for (uint8_t index = 0; index < SPI_RX_QUEUE_SIZE; index++) {
-      if (!this->queue_spi_receive_(index)) {
-        this->spi_rx_task_stop_ = true;
-        this->stop_spi_receiver_(true);
-        return;
-      }
-    }
-    const BaseType_t task_result =
-        xTaskCreate(EmporiaVueComponent::spi_rx_task_trampoline_, "samd_spi_rx", SPI_RX_TASK_STACK_SIZE, this, 5,
-                    &this->spi_rx_task_handle_);
-    if (task_result != pdPASS) {
-      ESP_LOGE(TAG, "SAMD09 SPI receiver task restart failed");
-      this->spi_rx_task_stop_ = true;
-      this->stop_spi_receiver_(true);
-      return;
-    }
-    ESP_LOGI(TAG, "SAMD09 SPI receiver resumed");
     return;
   }
 
@@ -230,6 +213,18 @@ void EmporiaVueComponent::setup_spi_receiver_(bool reset_statistics) {
       vQueueDelete(this->spi_metering_queue_);
       this->spi_metering_queue_ = nullptr;
     }
+    if (this->spi_processing_ready_queue_ != nullptr) {
+      vQueueDelete(this->spi_processing_ready_queue_);
+      this->spi_processing_ready_queue_ = nullptr;
+    }
+    if (this->spi_processing_free_queue_ != nullptr) {
+      vQueueDelete(this->spi_processing_free_queue_);
+      this->spi_processing_free_queue_ = nullptr;
+    }
+    if (this->spi_processing_frames_ != nullptr) {
+      heap_caps_free(this->spi_processing_frames_);
+      this->spi_processing_frames_ = nullptr;
+    }
     for (auto *&buffer : this->spi_rx_buffers_) {
       if (buffer != nullptr) {
         heap_caps_free(buffer);
@@ -241,11 +236,31 @@ void EmporiaVueComponent::setup_spi_receiver_(bool reset_statistics) {
   };
 
   this->spi_metering_queue_ = xQueueCreate(1, sizeof(MeteringFrame));
-  if (this->spi_metering_queue_ == nullptr) {
-    ESP_LOGE(TAG, "SAMD09 SPI metering queue allocation failed");
+  this->spi_processing_free_queue_ = xQueueCreate(SPI_PROCESSING_FRAME_COUNT, sizeof(SpiQueuedFrame *));
+  this->spi_processing_ready_queue_ = xQueueCreate(SPI_PROCESSING_FRAME_COUNT, sizeof(SpiQueuedFrame *));
+  if (this->spi_metering_queue_ == nullptr || this->spi_processing_free_queue_ == nullptr ||
+      this->spi_processing_ready_queue_ == nullptr) {
+    ESP_LOGE(TAG, "SAMD09 SPI queue allocation failed");
     cleanup_spi_init();
     return;
   }
+
+  this->spi_processing_frames_ = static_cast<SpiQueuedFrame *>(
+      heap_caps_calloc(SPI_PROCESSING_FRAME_COUNT, sizeof(SpiQueuedFrame), MALLOC_CAP_8BIT));
+  if (this->spi_processing_frames_ == nullptr) {
+    ESP_LOGE(TAG, "SAMD09 SPI processing frame allocation failed");
+    cleanup_spi_init();
+    return;
+  }
+  for (uint8_t index = 0; index < SPI_PROCESSING_FRAME_COUNT; index++) {
+    SpiQueuedFrame *frame = &this->spi_processing_frames_[index];
+    if (xQueueSend(this->spi_processing_free_queue_, &frame, 0) != pdTRUE) {
+      ESP_LOGE(TAG, "SAMD09 SPI processing free queue initialization failed");
+      cleanup_spi_init();
+      return;
+    }
+  }
+
   this->reset_spi_metering_state_();
   this->spi_rx_inflight_ = 0;
 
@@ -264,11 +279,13 @@ void EmporiaVueComponent::setup_spi_receiver_(bool reset_statistics) {
 
   this->spi_rx_task_stop_ = false;
   this->spi_rx_force_stop_ = false;
+  this->spi_metering_task_stop_ = false;
   if (reset_statistics) {
     this->spi_rx_frames_ = 0;
     this->spi_rx_sync_errors_ = 0;
     this->spi_rx_crc_errors_ = 0;
     this->spi_rx_queue_errors_ = 0;
+    this->spi_processing_overruns_ = 0;
     this->spi_rx_dma_errors_ = 0;
     this->spi_rx_samd_overruns_ = 0;
     this->spi_rx_frame_gaps_ = 0;
@@ -292,48 +309,66 @@ void EmporiaVueComponent::setup_spi_receiver_(bool reset_statistics) {
   this->spi_rx_logged_sync_errors_ = this->spi_rx_sync_errors_;
   this->spi_rx_logged_crc_errors_ = this->spi_rx_crc_errors_;
   this->spi_rx_logged_queue_errors_ = this->spi_rx_queue_errors_;
+  this->spi_rx_logged_processing_overruns_ = this->spi_processing_overruns_;
   this->spi_rx_logged_dma_errors_ = this->spi_rx_dma_errors_;
   this->spi_rx_logged_samd_overruns_ = this->spi_rx_samd_overruns_;
   this->spi_rx_logged_frame_gaps_ = this->spi_rx_frame_gaps_;
   this->spi_rx_logged_recoveries_ = this->spi_rx_recoveries_;
   this->spi_rx_logged_flags_ = this->spi_rx_last_flags_;
-  this->spi_receiver_started_ = true;
   this->spi_rx_last_log_ms_ = millis();
   this->spi_rx_last_valid_frame_ms_ = this->spi_rx_last_log_ms_;
-  const BaseType_t task_result =
-      xTaskCreate(EmporiaVueComponent::spi_rx_task_trampoline_, "samd_spi_rx", SPI_RX_TASK_STACK_SIZE, this, 5,
-                  &this->spi_rx_task_handle_);
-  if (task_result != pdPASS) {
-    ESP_LOGE(TAG, "SAMD09 SPI receiver task start failed");
-    this->spi_receiver_started_ = false;
+  const BaseType_t metering_task_result =
+      xTaskCreate(EmporiaVueComponent::spi_metering_task_trampoline_, "samd_metering", SPI_METERING_TASK_STACK_SIZE,
+                  this, 2, &this->spi_metering_task_handle_);
+  if (metering_task_result != pdPASS) {
+    ESP_LOGE(TAG, "SAMD09 SPI metering task start failed");
     cleanup_spi_init();
     return;
   }
 
-  ESP_LOGI(TAG, "SAMD09 SPI receiver started: clk=GPIO%d data=GPIO%d cs=GPIO%d frame_size=%u queue=%u",
+  this->spi_rx_task_running_ = true;
+  const BaseType_t rx_task_result =
+      xTaskCreate(EmporiaVueComponent::spi_rx_task_trampoline_, "samd_spi_rx", SPI_RX_TASK_STACK_SIZE, this, 5,
+                  &this->spi_rx_task_handle_);
+  if (rx_task_result != pdPASS) {
+    this->spi_rx_task_running_ = false;
+    ESP_LOGE(TAG, "SAMD09 SPI receiver task start failed");
+    this->spi_metering_task_stop_ = true;
+    for (uint16_t wait = 0; wait < 50 && this->spi_metering_task_handle_ != nullptr; wait++) {
+      vTaskDelay(pdMS_TO_TICKS(2));
+    }
+    if (this->spi_metering_task_handle_ != nullptr) {
+      ESP_LOGE(TAG, "SAMD09 SPI metering task did not stop after receiver task start failure");
+      return;
+    }
+    cleanup_spi_init();
+    return;
+  }
+  this->spi_receiver_started_ = true;
+
+  ESP_LOGI(TAG,
+           "SAMD09 SPI pipeline started: clk=GPIO%d data=GPIO%d cs=GPIO%d frame_size=%u dma_queue=%u "
+           "processing_queue=%u",
            this->spi_clk_pin_, this->spi_data_pin_, this->spi_frame_pin_, static_cast<unsigned>(SPI_RAW_FRAME_SIZE),
-           static_cast<unsigned>(SPI_RX_QUEUE_SIZE));
+           static_cast<unsigned>(SPI_RX_QUEUE_SIZE), static_cast<unsigned>(SPI_PROCESSING_FRAME_COUNT));
 #else
   ESP_LOGE(TAG, "SAMD09 SPI receiver requires ESP32");
 #endif
 }
 
-bool EmporiaVueComponent::stop_spi_receiver_(bool release_driver) {
+bool EmporiaVueComponent::stop_spi_receiver_() {
   if (!this->spi_receiver_started_) {
     return true;
   }
 
 #ifdef USE_ESP32
   this->spi_rx_task_stop_ = true;
+  this->spi_metering_task_stop_ = true;
   for (uint16_t wait = 0; wait < 125 && this->spi_rx_task_handle_ != nullptr; wait++) {
     vTaskDelay(pdMS_TO_TICKS(2));
   }
   bool driver_disabled = false;
   if (this->spi_rx_task_handle_ != nullptr) {
-    if (!release_driver) {
-      ESP_LOGE(TAG, "SAMD09 SPI receiver task cannot be paused while transfers are stalled");
-      return false;
-    }
     ESP_LOGW(TAG, "SAMD09 SPI receiver stalled while stopping; forcing a clean driver restart");
     const esp_err_t disable_err = spi_slave_disable(this->spi_host_);
     if (disable_err != ESP_OK && disable_err != ESP_ERR_INVALID_STATE) {
@@ -350,9 +385,12 @@ bool EmporiaVueComponent::stop_spi_receiver_(bool release_driver) {
     ESP_LOGE(TAG, "SAMD09 SPI receiver task did not stop cleanly; keeping SPI driver allocated");
     return false;
   }
-  if (!release_driver) {
-    ESP_LOGD(TAG, "SAMD09 SPI receiver paused; keeping SPI driver allocated");
-    return true;
+  for (uint16_t wait = 0; wait < 125 && this->spi_metering_task_handle_ != nullptr; wait++) {
+    vTaskDelay(pdMS_TO_TICKS(2));
+  }
+  if (this->spi_metering_task_handle_ != nullptr) {
+    ESP_LOGE(TAG, "SAMD09 SPI metering task did not stop cleanly; keeping SPI driver allocated");
+    return false;
   }
   if (!driver_disabled) {
     const esp_err_t disable_err = spi_slave_disable(this->spi_host_);
@@ -369,6 +407,18 @@ bool EmporiaVueComponent::stop_spi_receiver_(bool release_driver) {
   if (this->spi_metering_queue_ != nullptr) {
     vQueueDelete(this->spi_metering_queue_);
     this->spi_metering_queue_ = nullptr;
+  }
+  if (this->spi_processing_ready_queue_ != nullptr) {
+    vQueueDelete(this->spi_processing_ready_queue_);
+    this->spi_processing_ready_queue_ = nullptr;
+  }
+  if (this->spi_processing_free_queue_ != nullptr) {
+    vQueueDelete(this->spi_processing_free_queue_);
+    this->spi_processing_free_queue_ = nullptr;
+  }
+  if (this->spi_processing_frames_ != nullptr) {
+    heap_caps_free(this->spi_processing_frames_);
+    this->spi_processing_frames_ = nullptr;
   }
   for (auto *&buffer : this->spi_rx_buffers_) {
     if (buffer != nullptr) {
@@ -415,13 +465,13 @@ void EmporiaVueComponent::restart_spi_receiver_() {
              reset_samd ? "resetting SAMD09" : "resyncing ESP32 SPI", this->spi_rx_recoveries_);
   }
 
-  if (!this->stop_spi_receiver_(true)) {
+  if (!this->stop_spi_receiver_()) {
     this->spi_rx_recover_requested_ = true;
     return;
   }
 
-  // The receive task owns the raw-scan rings and metering accumulator. Do not
-  // clear either while it can still be decoding an in-flight transaction.
+  // The metering task exclusively owns the raw-scan rings and accumulator.
+  // Both pipeline tasks are stopped before that state is cleared.
   this->spi_rx_invalid_streak_ = 0;
   this->spi_rx_recover_requested_ = false;
   this->spi_rx_stall_recovery_ = false;
@@ -460,7 +510,7 @@ bool EmporiaVueComponent::queue_spi_receive_(uint8_t index) {
     ESP_LOGD(TAG, "SAMD09 SPI queue failed: %d", static_cast<int>(err));
     return false;
   }
-  this->spi_rx_inflight_++;
+  this->spi_rx_inflight_ = static_cast<uint16_t>(this->spi_rx_inflight_ + 1);
   return true;
 #else
   return false;
@@ -468,22 +518,44 @@ bool EmporiaVueComponent::queue_spi_receive_(uint8_t index) {
 }
 
 #ifdef USE_ESP32
-void EmporiaVueComponent::process_spi_transaction_(spi_slave_transaction_t *transaction) {
+void EmporiaVueComponent::handoff_spi_transaction_(spi_slave_transaction_t *transaction) {
   if (transaction == nullptr) {
     return;
   }
   const auto index = static_cast<uint8_t>(reinterpret_cast<uintptr_t>(transaction->user));
   if (this->spi_rx_inflight_ > 0) {
-    this->spi_rx_inflight_--;
+    this->spi_rx_inflight_ = static_cast<uint16_t>(this->spi_rx_inflight_ - 1);
   }
+
+  SpiQueuedFrame *frame = nullptr;
+  if (this->spi_processing_free_queue_ != nullptr && this->spi_processing_ready_queue_ != nullptr &&
+      xQueueReceive(this->spi_processing_free_queue_, &frame, pdMS_TO_TICKS(20)) == pdTRUE && frame != nullptr) {
+    frame->trans_len_bits = static_cast<uint16_t>(std::min<size_t>(transaction->trans_len, UINT16_MAX));
+    std::memcpy(frame->data, transaction->rx_buffer, SPI_RAW_FRAME_SIZE);
+    if (xQueueSend(this->spi_processing_ready_queue_, &frame, 0) != pdTRUE) {
+      this->spi_processing_overruns_ = this->spi_processing_overruns_ + 1;
+      if (xQueueSend(this->spi_processing_free_queue_, &frame, 0) != pdTRUE) {
+        this->spi_rx_queue_errors_++;
+        this->spi_rx_recover_requested_ = true;
+      }
+    }
+  } else {
+    this->spi_processing_overruns_ = this->spi_processing_overruns_ + 1;
+  }
+
+  if (!this->spi_rx_task_stop_ && !this->queue_spi_receive_(index)) {
+    this->spi_rx_recover_requested_ = true;
+  }
+}
+
+void EmporiaVueComponent::process_spi_frame_(const SpiQueuedFrame &frame) {
   uint32_t sequence = 0;
   uint32_t flags = 0;
   uint32_t sample_counter = 0;
   uint16_t sample_period_ticks = 0;
   const bool protocol_valid =
-      transaction->trans_len == SPI_RAW_FRAME_SIZE * 8 &&
-      this->validate_spi_frame_(static_cast<const uint8_t *>(transaction->rx_buffer), &sequence, &flags,
-                                &sample_counter, &sample_period_ticks);
+      frame.trans_len_bits == SPI_RAW_FRAME_SIZE * 8 &&
+      this->validate_spi_frame_(frame.data, &sequence, &flags, &sample_counter, &sample_period_ticks);
   if (protocol_valid && (flags & SPI_FRAME_FLAG_OVERRUN) != 0) {
     this->spi_rx_samd_overruns_++;
   }
@@ -514,8 +586,7 @@ void EmporiaVueComponent::process_spi_transaction_(spi_slave_transaction_t *tran
     this->spi_sample_rate_hz_ = SPI_SAMPLE_TIMEBASE_HZ / static_cast<float>(sample_period_ticks);
     this->spi_rx_invalid_streak_ = 0;
     this->spi_rx_last_valid_frame_ms_ = millis();
-    this->decode_spi_raw_frame_(static_cast<const uint8_t *>(transaction->rx_buffer), sequence, flags,
-                                sample_counter);
+    this->decode_spi_raw_frame_(frame.data, sequence, flags, sample_counter);
   } else {
     if (samd_sample_error) {
       this->spi_rx_dma_errors_++;
@@ -531,15 +602,10 @@ void EmporiaVueComponent::process_spi_transaction_(spi_slave_transaction_t *tran
       this->spi_rx_crc_errors_++;
     }
     if (this->spi_rx_invalid_streak_ < UINT16_MAX) {
-      this->spi_rx_invalid_streak_++;
+      this->spi_rx_invalid_streak_ = static_cast<uint16_t>(this->spi_rx_invalid_streak_ + 1);
       if (this->spi_rx_invalid_streak_ >= SPI_RX_RECOVERY_INVALID_STREAK) {
         this->spi_rx_recover_requested_ = true;
       }
-    }
-  }
-  if (!this->spi_rx_task_stop_) {
-    if (!this->queue_spi_receive_(index)) {
-      this->spi_rx_recover_requested_ = true;
     }
   }
 }
@@ -549,34 +615,59 @@ void EmporiaVueComponent::spi_rx_task_trampoline_(void *arg) {
 }
 
 void EmporiaVueComponent::spi_rx_task_() {
-  uint8_t immediate_results = 0;
   while (!this->spi_rx_task_stop_ || (!this->spi_rx_force_stop_ && this->spi_rx_inflight_ > 0)) {
     spi_slave_transaction_t *transaction = nullptr;
-    const TickType_t wait_start = xTaskGetTickCount();
     const esp_err_t err = spi_slave_get_trans_result(this->spi_host_, &transaction, pdMS_TO_TICKS(20));
-    const bool result_was_immediate = xTaskGetTickCount() == wait_start;
     if (err == ESP_OK) {
-      this->process_spi_transaction_(transaction);
-      if (!result_was_immediate) {
-        immediate_results = 0;
-      } else if (++immediate_results >= SPI_RX_MAX_IMMEDIATE_RESULTS) {
-        immediate_results = 0;
-        if (!this->spi_rx_task_stop_) {
-          // A full queue was ready without blocking. Sleep for one scheduler tick so lower-priority system and idle
-          // tasks can run; normal receive waits already provide that opportunity and add no artificial delay.
-          vTaskDelay(1);
-        }
-      }
+      this->handoff_spi_transaction_(transaction);
     } else if (err != ESP_ERR_TIMEOUT && !this->spi_rx_task_stop_) {
-      immediate_results = 0;
       this->spi_rx_queue_errors_++;
       this->spi_rx_recover_requested_ = true;
       ESP_LOGD(TAG, "SAMD09 SPI get result failed: %d", static_cast<int>(err));
-    } else {
-      immediate_results = 0;
     }
   }
+  this->spi_rx_task_running_ = false;
   this->spi_rx_task_handle_ = nullptr;
+  vTaskDelete(nullptr);
+}
+
+void EmporiaVueComponent::spi_metering_task_trampoline_(void *arg) {
+  static_cast<EmporiaVueComponent *>(arg)->spi_metering_task_();
+}
+
+void EmporiaVueComponent::spi_metering_task_() {
+  uint8_t frames_in_slice = 0;
+  while (true) {
+    SpiQueuedFrame *frame = nullptr;
+    const bool frame_ready = this->spi_processing_ready_queue_ != nullptr &&
+                             xQueueReceive(this->spi_processing_ready_queue_, &frame, pdMS_TO_TICKS(20)) == pdTRUE;
+    if (frame_ready && frame != nullptr) {
+      this->process_spi_frame_(*frame);
+      if (this->spi_processing_free_queue_ == nullptr ||
+          xQueueSend(this->spi_processing_free_queue_, &frame, 0) != pdTRUE) {
+        this->spi_rx_queue_errors_++;
+        this->spi_rx_recover_requested_ = true;
+      }
+
+      frames_in_slice++;
+      if (frames_in_slice >= SPI_METERING_MAX_FRAMES_PER_SLICE) {
+        frames_in_slice = 0;
+        if (this->spi_processing_ready_queue_ != nullptr &&
+            uxQueueMessagesWaiting(this->spi_processing_ready_queue_) != 0) {
+          vTaskDelay(1);
+        }
+      }
+      continue;
+    }
+
+    frames_in_slice = 0;
+    const bool ready_queue_empty = this->spi_processing_ready_queue_ == nullptr ||
+                                   uxQueueMessagesWaiting(this->spi_processing_ready_queue_) == 0;
+    if (this->spi_metering_task_stop_ && !this->spi_rx_task_running_ && ready_queue_empty) {
+      break;
+    }
+  }
+  this->spi_metering_task_handle_ = nullptr;
   vTaskDelete(nullptr);
 }
 #endif
@@ -1591,6 +1682,7 @@ void EmporiaVueComponent::process_spi_receiver_() {
       !this->spi_rx_logged_status_valid_ || this->spi_rx_sync_errors_ != this->spi_rx_logged_sync_errors_ ||
       this->spi_rx_crc_errors_ != this->spi_rx_logged_crc_errors_ ||
       this->spi_rx_queue_errors_ != this->spi_rx_logged_queue_errors_ ||
+      this->spi_processing_overruns_ != this->spi_rx_logged_processing_overruns_ ||
       this->spi_rx_dma_errors_ != this->spi_rx_logged_dma_errors_ ||
       this->spi_rx_samd_overruns_ != this->spi_rx_logged_samd_overruns_ ||
       this->spi_rx_frame_gaps_ != this->spi_rx_logged_frame_gaps_ ||
@@ -1598,17 +1690,23 @@ void EmporiaVueComponent::process_spi_receiver_() {
       this->spi_rx_last_flags_ != this->spi_rx_logged_flags_;
   if (status_changed && now - this->spi_rx_last_log_ms_ >= METERING_STATUS_LOG_INTERVAL_MS) {
     this->spi_rx_last_log_ms_ = now;
+    const UBaseType_t processing_pending = this->spi_processing_ready_queue_ == nullptr
+                                               ? 0
+                                               : uxQueueMessagesWaiting(this->spi_processing_ready_queue_);
     ESP_LOGD(TAG,
              "SAMD09 SPI rx status: sync_errors=%" PRIu32 " crc_errors=%" PRIu32 " queue_errors=%" PRIu32
-             " dma_errors=%" PRIu32 " samd_overruns=%" PRIu32 " seq_gaps=%" PRIu32 " recoveries=%" PRIu32
+             " processing_overruns=%" PRIu32 " processing_pending=%u dma_errors=%" PRIu32
+             " samd_overruns=%" PRIu32 " seq_gaps=%" PRIu32 " recoveries=%" PRIu32
              " inflight=%" PRIu16 " flags=0x%04" PRIx32 " sample_counter=%" PRIu32,
-             this->spi_rx_sync_errors_, this->spi_rx_crc_errors_, this->spi_rx_queue_errors_, this->spi_rx_dma_errors_,
+             this->spi_rx_sync_errors_, this->spi_rx_crc_errors_, this->spi_rx_queue_errors_,
+             this->spi_processing_overruns_, static_cast<unsigned>(processing_pending), this->spi_rx_dma_errors_,
              this->spi_rx_samd_overruns_, this->spi_rx_frame_gaps_, this->spi_rx_recoveries_, this->spi_rx_inflight_,
              this->spi_rx_last_flags_, this->spi_rx_last_sample_counter_);
     this->spi_rx_logged_status_valid_ = true;
     this->spi_rx_logged_sync_errors_ = this->spi_rx_sync_errors_;
     this->spi_rx_logged_crc_errors_ = this->spi_rx_crc_errors_;
     this->spi_rx_logged_queue_errors_ = this->spi_rx_queue_errors_;
+    this->spi_rx_logged_processing_overruns_ = this->spi_processing_overruns_;
     this->spi_rx_logged_dma_errors_ = this->spi_rx_dma_errors_;
     this->spi_rx_logged_samd_overruns_ = this->spi_rx_samd_overruns_;
     this->spi_rx_logged_frame_gaps_ = this->spi_rx_frame_gaps_;

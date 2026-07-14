@@ -41,6 +41,8 @@ static constexpr const char *TAG = "emporiavue";
 static constexpr float VUE2_STOCK_CYCLE_TIMEBASE_HZ = 25310.0f;
 static constexpr float VUE3_STOCK_CYCLE_TIMEBASE_HZ = 19610.0f;
 static constexpr uint8_t SPI_RX_QUEUE_SIZE = 16;
+static constexpr uint16_t SPI_RAW_FRAME_SIZE = 1024;
+static constexpr uint8_t SPI_PROCESSING_FRAME_COUNT = 8;
 // Voltage THD uses the conventional harmonic range H2 through H40.
 static constexpr uint8_t SPI_VOLTAGE_THD_MAX_HARMONIC = 40;
 static constexpr uint8_t SPI_VOLTAGE_THD_HARMONIC_COUNT = SPI_VOLTAGE_THD_MAX_HARMONIC - 1;
@@ -573,6 +575,13 @@ class EmporiaVueComponent : public Component
     uint8_t mux_index{0};
   };
 
+#ifdef USE_ESP32
+  struct SpiQueuedFrame {
+    uint16_t trans_len_bits{0};
+    alignas(4) uint8_t data[SPI_RAW_FRAME_SIZE]{};
+  };
+#endif
+
   struct SpiFundamentalSample {
     int16_t voltage[3]{};
     int16_t main_current[3]{};
@@ -768,13 +777,16 @@ class EmporiaVueComponent : public Component
   void start_metering_();
   void stop_metering_();
   void setup_spi_receiver_(bool reset_statistics = true);
-  bool stop_spi_receiver_(bool release_driver = true);
+  bool stop_spi_receiver_();
   void restart_spi_receiver_();
   void process_spi_receiver_();
 #ifdef USE_ESP32
-  void process_spi_transaction_(spi_slave_transaction_t *transaction);
+  void handoff_spi_transaction_(spi_slave_transaction_t *transaction);
+  void process_spi_frame_(const SpiQueuedFrame &frame);
   void spi_rx_task_();
   static void spi_rx_task_trampoline_(void *arg);
+  void spi_metering_task_();
+  static void spi_metering_task_trampoline_(void *arg);
 #endif
   bool queue_spi_receive_(uint8_t index);
   bool validate_spi_frame_(const uint8_t *frame, uint32_t *sequence, uint32_t *flags, uint32_t *sample_counter,
@@ -911,10 +923,16 @@ class EmporiaVueComponent : public Component
   spi_host_device_t spi_host_{SPI2_HOST};
   spi_slave_transaction_t spi_transactions_[SPI_RX_QUEUE_SIZE]{};
   uint8_t *spi_rx_buffers_[SPI_RX_QUEUE_SIZE]{};
+  SpiQueuedFrame *spi_processing_frames_{nullptr};
+  QueueHandle_t spi_processing_free_queue_{nullptr};
+  QueueHandle_t spi_processing_ready_queue_{nullptr};
   QueueHandle_t spi_metering_queue_{nullptr};
   TaskHandle_t spi_rx_task_handle_{nullptr};
+  TaskHandle_t spi_metering_task_handle_{nullptr};
   volatile bool spi_rx_task_stop_{false};
   volatile bool spi_rx_force_stop_{false};
+  volatile bool spi_rx_task_running_{false};
+  volatile bool spi_metering_task_stop_{false};
 #endif
   SpiMeteringAccumulator spi_metering_accumulator_{};
   bool spi_metering_window_synced_{false};
@@ -954,6 +972,7 @@ class EmporiaVueComponent : public Component
   uint32_t spi_rx_sync_errors_{0};
   uint32_t spi_rx_crc_errors_{0};
   uint32_t spi_rx_queue_errors_{0};
+  volatile uint32_t spi_processing_overruns_{0};
   uint32_t spi_rx_dma_errors_{0};
   uint32_t spi_rx_samd_overruns_{0};
   uint32_t spi_rx_frame_gaps_{0};
@@ -969,6 +988,7 @@ class EmporiaVueComponent : public Component
   uint32_t spi_rx_logged_sync_errors_{0};
   uint32_t spi_rx_logged_crc_errors_{0};
   uint32_t spi_rx_logged_queue_errors_{0};
+  uint32_t spi_rx_logged_processing_overruns_{0};
   uint32_t spi_rx_logged_dma_errors_{0};
   uint32_t spi_rx_logged_samd_overruns_{0};
   uint32_t spi_rx_logged_frame_gaps_{0};

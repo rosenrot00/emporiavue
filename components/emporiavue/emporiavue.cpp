@@ -580,7 +580,7 @@ void EmporiaVueComponent::stop_i2c_diagnostics_() {
   this->cancel_timeout("post_update_i2c_probe");
   this->stop_firmware_mode_mismatch_log_();
   if (this->runtime_mode_ == RuntimeMode::SPI) {
-    this->stop_spi_receiver_(true);
+    this->stop_spi_receiver_();
     this->diagnostics_started_ = false;
     return;
   }
