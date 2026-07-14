@@ -11,10 +11,26 @@
 #include <algorithm>
 #include <cinttypes>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 namespace esphome {
 namespace emporiavue {
+
+namespace {
+
+void append_config_item(char *buffer, size_t buffer_size, const char *item) {
+  if (buffer_size == 0) {
+    return;
+  }
+  const size_t used = std::strlen(buffer);
+  if (used >= buffer_size - 1) {
+    return;
+  }
+  std::snprintf(buffer + used, buffer_size - used, "%s%s", used == 0 ? "" : ",", item);
+}
+
+}  // namespace
 
 void EmporiaVueComponent::setup() {
   this->publish_restart_reason_();
@@ -128,144 +144,188 @@ void EmporiaVueComponent::loop() {
 }
 
 void EmporiaVueComponent::dump_config() {
-  ESP_LOGCONFIG(TAG, "EmporiaVue SAMD09 SWD reader:");
-  LOG_PIN("  SWDIO Pin: ", this->swdio_pin_);
-  LOG_PIN("  SWCLK Pin: ", this->swclk_pin_);
-  LOG_PIN("  Reset Pin: ", this->reset_pin_);
-  ESP_LOGCONFIG(TAG, "  Runtime mode: %s", this->runtime_mode_ == RuntimeMode::SPI ? "spi" : "i2c");
+  const char *runtime_mode = this->runtime_mode_ == RuntimeMode::SPI ? "spi" : "i2c";
+  ESP_LOGCONFIG(TAG, "Emporia Vue:");
+  ESP_LOGCONFIG(TAG, "  Hardware ID: %u, runtime: %s", static_cast<unsigned>(this->hardware_id_), runtime_mode);
+
+  if (this->detected_firmware_info_valid_) {
+    const auto &firmware = this->detected_firmware_info_;
+    if (firmware.kind == FirmwareKind::MANAGED) {
+      ESP_LOGCONFIG(TAG, "  SAMD firmware: managed v%s (%s), hardware ID %u",
+                    format_firmware_version_(firmware.version).c_str(), firmware_mode_name_(firmware.mode_id),
+                    static_cast<unsigned>(firmware.hardware_id));
+    } else if (firmware.kind == FirmwareKind::STOCK) {
+      ESP_LOGCONFIG(TAG, "  SAMD firmware: stock");
+    } else {
+      ESP_LOGCONFIG(TAG, "  SAMD firmware: unknown");
+    }
+  } else {
+    ESP_LOGCONFIG(TAG, "  SAMD firmware: not detected");
+  }
+
+  if (this->bundled_firmware_available_()) {
+    ESP_LOGCONFIG(TAG, "  Bundled SAMD: v%s (%s), hardware ID %" PRIu32 ", compatible: %s",
+                  format_firmware_version_(this->bundled_firmware_version_()).c_str(),
+                  firmware_mode_name_(static_cast<uint16_t>(this->bundled_firmware_mode_id_())),
+                  this->bundled_firmware_hardware_id_(), YESNO(this->bundled_firmware_matches_target_()));
+  } else {
+    ESP_LOGCONFIG(TAG, "  Bundled SAMD: none");
+  }
+
+  char swdio_summary[GPIO_SUMMARY_MAX_LEN];
+  char swclk_summary[GPIO_SUMMARY_MAX_LEN];
+  char reset_summary[GPIO_SUMMARY_MAX_LEN];
+  this->swdio_pin_->dump_summary(swdio_summary, sizeof(swdio_summary));
+  this->swclk_pin_->dump_summary(swclk_summary, sizeof(swclk_summary));
+  this->reset_pin_->dump_summary(reset_summary, sizeof(reset_summary));
+  ESP_LOGCONFIG(TAG, "  SWD pins: IO=%s, CLK=%s, RESET=%s", swdio_summary, swclk_summary, reset_summary);
+  ESP_LOGCONFIG(TAG, "  SWD: on_boot=%s, connect_under_reset=%s, release=%" PRIu32 " ms, clock_delay=%u us",
+                YESNO(this->swd_on_boot_), YESNO(this->connect_under_reset_), this->reset_release_time_ms_,
+                this->clock_delay_us_);
   if (this->runtime_mode_ == RuntimeMode::SPI) {
-    ESP_LOGCONFIG(TAG, "  SPI CLK Pin: GPIO%u", static_cast<unsigned>(this->spi_clk_pin_));
-    ESP_LOGCONFIG(TAG, "  SPI DATA Pin: GPIO%u", static_cast<unsigned>(this->spi_data_pin_));
-    ESP_LOGCONFIG(TAG, "  SPI FRAME Pin: GPIO%u", static_cast<unsigned>(this->spi_frame_pin_));
-    ESP_LOGCONFIG(TAG, "  SPI main current delay: %u scans", static_cast<unsigned>(this->spi_main_current_delay_));
-    ESP_LOGCONFIG(TAG, "  SPI mux current delay: %u scans", static_cast<unsigned>(this->spi_mux_current_delay_));
+    ESP_LOGCONFIG(TAG, "  SPI pins: CLK=GPIO%u, DATA=GPIO%u, FRAME=GPIO%u; current delays: main=%u, mux=%u scans",
+                  static_cast<unsigned>(this->spi_clk_pin_), static_cast<unsigned>(this->spi_data_pin_),
+                  static_cast<unsigned>(this->spi_frame_pin_), static_cast<unsigned>(this->spi_main_current_delay_),
+                  static_cast<unsigned>(this->spi_mux_current_delay_));
   }
-  ESP_LOGCONFIG(TAG, "  Connect under reset: %s", YESNO(this->connect_under_reset_));
-  ESP_LOGCONFIG(TAG, "  SWD on boot: %s", YESNO(this->swd_on_boot_));
-  ESP_LOGCONFIG(TAG, "  Reset release time: %" PRIu32 " ms", this->reset_release_time_ms_);
-  ESP_LOGCONFIG(TAG, "  Clock delay: %u us", this->clock_delay_us_);
-  ESP_LOGCONFIG(TAG, "  Backup partition: %s", this->backup_partition_name_.c_str());
-  ESP_LOGCONFIG(TAG, "  Configured hardware id: %u", static_cast<unsigned>(this->hardware_id_));
-  ESP_LOGCONFIG(TAG, "  Bundled managed firmware hardware id: %" PRIu32, this->bundled_firmware_hardware_id_());
-  ESP_LOGCONFIG(TAG, "  Bundled managed firmware mode: %s (%" PRIu32 ")",
-                firmware_mode_name_(static_cast<uint16_t>(this->bundled_firmware_mode_id_())),
-                this->bundled_firmware_mode_id_());
-  ESP_LOGCONFIG(TAG, "  Bundled managed firmware version: v%s (raw %" PRIu32 ")",
-                format_firmware_version_(this->bundled_firmware_version_()).c_str(), this->bundled_firmware_version_());
-  ESP_LOGCONFIG(TAG, "  Bundled managed firmware size: %" PRIu32 " bytes", this->bundled_firmware_size_());
-  ESP_LOGCONFIG(TAG, "  Bundled managed firmware compatible: %s",
-                YESNO(this->bundled_firmware_matches_target_()));
-  ESP_LOGCONFIG(TAG, "  External SAMD firmware images: %u", static_cast<unsigned>(EXTERNAL_SAMD_FIRMWARE_COUNT));
-  for (uint8_t i = 0; i < EXTERNAL_SAMD_FIRMWARE_COUNT; i++) {
-    ESP_LOGCONFIG(TAG, "    External image %u size: %" PRIu32 " bytes", static_cast<unsigned>(i),
-                  this->external_firmware_size_(i));
+  ESP_LOGCONFIG(TAG, "  Firmware management: backup=%s, auto_update=%s, external_images=%u",
+                this->backup_partition_name_.c_str(), YESNO(this->auto_update_samd_),
+                static_cast<unsigned>(EXTERNAL_SAMD_FIRMWARE_COUNT));
+  ESP_LOGCONFIG(TAG, "  Intervals: metering=%" PRIu32 " ms, diagnostics=%" PRIu32 " ms",
+                this->metering_interval_ms_, this->diagnostics_interval_ms_);
+  ESP_LOGCONFIG(TAG, "  Analysis validity: apparent>=%.1f VA, fundamental_current>=%.3f A",
+                this->minimum_apparent_power_, this->minimum_fundamental_current_);
+  ESP_LOGCONFIG(TAG, "  Phase detection: confidence=%.2f, window=%" PRIu32 " ms",
+                this->phase_detection_confidence_ratio_, this->phase_detection_update_interval_ms_);
+  if (!this->entity_prefix_.empty()) {
+    ESP_LOGCONFIG(TAG, "  Entity prefix: %s", this->entity_prefix_.c_str());
   }
-  ESP_LOGCONFIG(TAG, "  Auto-update SAMD: %s", YESNO(this->auto_update_samd_));
-  if (this->diagnostics_interval_ms_ == 0) {
-    ESP_LOGCONFIG(TAG, "  Diagnostics interval: disabled");
-  } else {
-    ESP_LOGCONFIG(TAG, "  Diagnostics interval: %" PRIu32 " ms", this->diagnostics_interval_ms_);
-  }
-  if (this->metering_interval_ms_ == 0) {
-    ESP_LOGCONFIG(TAG, "  Metering interval: disabled");
-  } else {
-    ESP_LOGCONFIG(TAG, "  Metering interval: %" PRIu32 " ms", this->metering_interval_ms_);
-  }
-  ESP_LOGCONFIG(TAG, "  Minimum apparent power: %.1f VA", this->minimum_apparent_power_);
-  ESP_LOGCONFIG(TAG, "  Minimum fundamental current: %.3f A", this->minimum_fundamental_current_);
-  ESP_LOGCONFIG(TAG, "  Phase detection confidence ratio: %.2f", this->phase_detection_confidence_ratio_);
-  ESP_LOGCONFIG(TAG, "  Phase detection window: %" PRIu32 " ms", this->phase_detection_update_interval_ms_);
-  const char *entity_prefix = this->entity_prefix_.empty() ? "(default)" : this->entity_prefix_.c_str();
-  ESP_LOGCONFIG(TAG, "  Entity prefix: %s", entity_prefix);
-  LOG_TEXT_SENSOR("  ", "Firmware version", this->firmware_version_sensor_);
-  LOG_TEXT_SENSOR("  ", "Bundled firmware version", this->bundled_firmware_version_sensor_);
-  LOG_TEXT_SENSOR("  ", "ESP restart reason", this->diag_restart_reason_sensor_);
+
+  ESP_LOGCONFIG(TAG, "  Topology: %u phases, %u CTs, %u groups, %u virtual lines",
+                static_cast<unsigned>(this->metering_phases_.size()),
+                static_cast<unsigned>(this->metering_ct_clamps_.size()),
+                static_cast<unsigned>(this->metering_groups_.size()),
+                static_cast<unsigned>(this->metering_virtual_lines_.size()));
+
   for (auto *phase : this->metering_phases_) {
-    ESP_LOGCONFIG(TAG, "  Metering phase");
-    ESP_LOGCONFIG(TAG, "    Input: %u", static_cast<unsigned>(phase->get_input_wire()));
-    ESP_LOGCONFIG(TAG, "    Voltage calibration: %.6f", phase->get_calibration());
-    LOG_NUMBER("    ", "Voltage calibration", phase->get_calibration_number());
-    LOG_SENSOR("    ", "Voltage", phase->get_voltage_sensor());
-    LOG_SENSOR("    ", "Frequency", phase->get_frequency_sensor());
-    LOG_SENSOR("    ", "Phase angle", phase->get_phase_angle_sensor());
-    LOG_SENSOR("    ", "Voltage THD", phase->get_voltage_thd_sensor());
+    char features[96]{};
+    if (phase->get_voltage_sensor() != nullptr)
+      append_config_item(features, sizeof(features), "voltage");
+    if (phase->get_frequency_sensor() != nullptr)
+      append_config_item(features, sizeof(features), "frequency");
+    if (phase->get_phase_angle_sensor() != nullptr)
+      append_config_item(features, sizeof(features), "phase_angle");
+    if (phase->get_voltage_thd_sensor() != nullptr)
+      append_config_item(features, sizeof(features), "voltage_thd");
+    if (phase->get_calibration_number() != nullptr)
+      append_config_item(features, sizeof(features), "calibration_control");
+    ESP_LOGCONFIG(TAG, "  Phase %s: input=%u, calibration=%.6f, entities=%s", phase->get_config_key(),
+                  static_cast<unsigned>(phase->get_input_wire()), phase->get_calibration(),
+                  features[0] == '\0' ? "none" : features);
   }
+
   for (auto *ct_clamp : this->metering_ct_clamps_) {
-    ESP_LOGCONFIG(TAG, "  Metering CT clamp");
-    ESP_LOGCONFIG(TAG, "    Input port: %u", static_cast<unsigned>(ct_clamp->get_input_port()));
+    char voltage_reference[32] = "unassigned";
     if (ct_clamp->is_line_pair()) {
       const auto *phase_a = ct_clamp->get_phase();
       const auto *phase_b = ct_clamp->get_line_pair_phase_b();
       if (phase_a != nullptr && phase_b != nullptr) {
-        ESP_LOGCONFIG(TAG, "    Voltage reference: input %u - input %u",
-                      static_cast<unsigned>(phase_a->get_input_wire()),
-                      static_cast<unsigned>(phase_b->get_input_wire()));
+        std::snprintf(voltage_reference, sizeof(voltage_reference), "input %u-input %u",
+                      static_cast<unsigned>(phase_a->get_input_wire()), static_cast<unsigned>(phase_b->get_input_wire()));
       }
     } else if (ct_clamp->get_phase() != nullptr) {
-      ESP_LOGCONFIG(TAG, "    Voltage reference: input %u",
+      std::snprintf(voltage_reference, sizeof(voltage_reference), "input %u",
                     static_cast<unsigned>(ct_clamp->get_phase()->get_input_wire()));
     }
-    ESP_LOGCONFIG(TAG, "    Internal power filters: %u", static_cast<unsigned>(ct_clamp->get_power_filter_count()));
-    LOG_SELECT("    ", "Line", ct_clamp->get_line_select());
-    ESP_LOGCONFIG(TAG, "    Automatic line detection: %s", YESNO(ct_clamp->is_auto_line_detection_active()));
-    ESP_LOGCONFIG(TAG, "    Current gain: %.6f", ct_clamp->get_current_gain());
-    ESP_LOGCONFIG(TAG, "    Current phase correction: %.3f deg", ct_clamp->get_current_phase_correction());
-    LOG_NUMBER("    ", "Current gain calibration", ct_clamp->get_current_gain_number());
-    LOG_NUMBER("    ", "Current phase calibration", ct_clamp->get_current_phase_number());
-    ESP_LOGCONFIG(TAG, "    Power outputs: %u", static_cast<unsigned>(ct_clamp->get_power_outputs().size()));
-    for (const auto &output : ct_clamp->get_power_outputs()) {
-      LOG_SENSOR("      ", "Raw power", output.get_raw_power_sensor());
-      LOG_SENSOR("      ", "Power", output.get_power_sensor());
+
+    char settings[128]{};
+    if (ct_clamp->get_power_filter_count() != 0) {
+      char value[24];
+      std::snprintf(value, sizeof(value), "filters=%u", static_cast<unsigned>(ct_clamp->get_power_filter_count()));
+      append_config_item(settings, sizeof(settings), value);
     }
-    LOG_SENSOR("    ", "Current", ct_clamp->get_current_sensor());
-    LOG_SENSOR("    ", "Apparent power", ct_clamp->get_apparent_power_sensor());
-    LOG_SENSOR("    ", "Power factor", ct_clamp->get_power_factor_sensor());
-    if (ct_clamp->has_demand()) {
-      ESP_LOGCONFIG(TAG, "    Demand interval: %.0f min", ct_clamp->get_demand_interval() / 60000.0f);
-      LOG_SENSOR("    ", "Power demand", ct_clamp->get_power_demand_sensor());
-      LOG_SENSOR("    ", "Today's maximum power demand", ct_clamp->get_maximum_power_demand_sensor());
-      LOG_SENSOR("    ", "Current demand", ct_clamp->get_current_demand_sensor());
-      LOG_SENSOR("    ", "Today's maximum current demand", ct_clamp->get_maximum_current_demand_sensor());
+    if (ct_clamp->get_line_select() != nullptr)
+      append_config_item(settings, sizeof(settings), "line_select");
+    if (ct_clamp->is_auto_line_detection_active())
+      append_config_item(settings, sizeof(settings), "auto_line");
+    if (ct_clamp->get_current_gain_number() != nullptr || ct_clamp->get_current_phase_number() != nullptr ||
+        std::fabs(ct_clamp->get_current_gain() - 1.0f) > 0.000001f ||
+        std::fabs(ct_clamp->get_current_phase_correction()) > 0.0001f) {
+      char value[64];
+      std::snprintf(value, sizeof(value), "gain=%.6f,phase=%.3fdeg", ct_clamp->get_current_gain(),
+                    ct_clamp->get_current_phase_correction());
+      append_config_item(settings, sizeof(settings), value);
     }
-    if (ct_clamp->has_peak_analysis()) {
-      ESP_LOGCONFIG(TAG, "    Peak interval: %.1f s", ct_clamp->get_peak_interval() / 1000.0f);
-      LOG_SENSOR("    ", "Current peak", ct_clamp->get_current_peak_sensor());
-      LOG_SENSOR("    ", "Current crest factor", ct_clamp->get_current_crest_factor_sensor());
+
+    char features[320]{};
+    if (!ct_clamp->get_power_outputs().empty())
+      append_config_item(features, sizeof(features), "power");
+    if (ct_clamp->get_current_sensor() != nullptr)
+      append_config_item(features, sizeof(features), "current");
+    if (ct_clamp->get_apparent_power_sensor() != nullptr)
+      append_config_item(features, sizeof(features), "apparent_power");
+    if (ct_clamp->get_power_factor_sensor() != nullptr)
+      append_config_item(features, sizeof(features), "power_factor");
+    if (ct_clamp->get_power_demand_sensor() != nullptr)
+      append_config_item(features, sizeof(features), "power_demand");
+    if (ct_clamp->get_maximum_power_demand_sensor() != nullptr)
+      append_config_item(features, sizeof(features), "max_power_demand");
+    if (ct_clamp->get_current_demand_sensor() != nullptr)
+      append_config_item(features, sizeof(features), "current_demand");
+    if (ct_clamp->get_maximum_current_demand_sensor() != nullptr)
+      append_config_item(features, sizeof(features), "max_current_demand");
+    if (ct_clamp->get_current_peak_sensor() != nullptr)
+      append_config_item(features, sizeof(features), "current_peak");
+    if (ct_clamp->get_current_crest_factor_sensor() != nullptr)
+      append_config_item(features, sizeof(features), "crest_factor");
+    if (ct_clamp->get_fundamental_current_sensor() != nullptr)
+      append_config_item(features, sizeof(features), "fundamental_current");
+    if (ct_clamp->get_fundamental_reactive_power_sensor() != nullptr)
+      append_config_item(features, sizeof(features), "fundamental_reactive_power");
+    if (ct_clamp->get_fundamental_power_factor_sensor() != nullptr)
+      append_config_item(features, sizeof(features), "fundamental_power_factor");
+    if (ct_clamp->get_displacement_angle_sensor() != nullptr)
+      append_config_item(features, sizeof(features), "displacement_angle");
+    if (ct_clamp->get_current_thd_sensor() != nullptr)
+      append_config_item(features, sizeof(features), "current_thd");
+    if (ct_clamp->get_power_split_line_a_sensor() != nullptr || ct_clamp->get_power_split_line_b_sensor() != nullptr)
+      append_config_item(features, sizeof(features), "power_split");
+    if (ct_clamp->get_phase_detection_sensor() != nullptr)
+      append_config_item(features, sizeof(features), "phase_detection");
+
+    if (settings[0] == '\0') {
+      ESP_LOGCONFIG(TAG, "  CT %s: input=%u, voltage=%s, entities=%s", ct_clamp->get_config_key(),
+                    static_cast<unsigned>(ct_clamp->get_input_port()), voltage_reference,
+                    features[0] == '\0' ? "none" : features);
+    } else {
+      ESP_LOGCONFIG(TAG, "  CT %s: input=%u, voltage=%s, %s, entities=%s", ct_clamp->get_config_key(),
+                    static_cast<unsigned>(ct_clamp->get_input_port()), voltage_reference, settings,
+                    features[0] == '\0' ? "none" : features);
     }
-    LOG_SENSOR("    ", "Fundamental current", ct_clamp->get_fundamental_current_sensor());
-    LOG_SENSOR("    ", "Fundamental reactive power", ct_clamp->get_fundamental_reactive_power_sensor());
-    LOG_SENSOR("    ", "Fundamental power factor", ct_clamp->get_fundamental_power_factor_sensor());
-    LOG_SENSOR("    ", "Displacement angle", ct_clamp->get_displacement_angle_sensor());
-    LOG_SENSOR("    ", "Current THD", ct_clamp->get_current_thd_sensor());
-    LOG_SENSOR("    ", "Power split line A", ct_clamp->get_power_split_line_a_sensor());
-    LOG_SENSOR("    ", "Power split line B", ct_clamp->get_power_split_line_b_sensor());
-    LOG_TEXT_SENSOR("    ", "Phase detection", ct_clamp->get_phase_detection_sensor());
   }
-  for (auto *group : this->metering_groups_) {
-    ESP_LOGCONFIG(TAG, "  Metering group");
-    ESP_LOGCONFIG(TAG, "    Term count: %u", static_cast<unsigned>(group->get_terms().size()));
-    ESP_LOGCONFIG(TAG, "    Internal power filters: %u", static_cast<unsigned>(group->get_power_filter_count()));
-    ESP_LOGCONFIG(TAG, "    Power outputs: %u", static_cast<unsigned>(group->get_power_outputs().size()));
-    for (const auto &output : group->get_power_outputs()) {
-      LOG_SENSOR("      ", "Raw power", output.get_raw_power_sensor());
-      LOG_SENSOR("      ", "Power", output.get_power_sensor());
-    }
-    if (group->has_power_demand()) {
-      ESP_LOGCONFIG(TAG, "    Demand interval: %.0f min", group->get_demand_interval() / 60000.0f);
-      LOG_SENSOR("    ", "Power demand", group->get_power_demand_sensor());
-      LOG_SENSOR("    ", "Today's maximum power demand", group->get_maximum_power_demand_sensor());
-    }
+
+  for (const auto *group : this->metering_groups_) {
+    char features[64]{};
+    if (!group->get_power_outputs().empty())
+      append_config_item(features, sizeof(features), "power");
+    if (group->get_power_demand_sensor() != nullptr)
+      append_config_item(features, sizeof(features), "power_demand");
+    if (group->get_maximum_power_demand_sensor() != nullptr)
+      append_config_item(features, sizeof(features), "max_power_demand");
+    ESP_LOGCONFIG(TAG, "  Group %s: sources=%u, filters=%u, entities=%s", group->get_config_key(),
+                  static_cast<unsigned>(group->get_terms().size()),
+                  static_cast<unsigned>(group->get_power_filter_count()), features[0] == '\0' ? "none" : features);
   }
-  for (auto *virtual_line : this->metering_virtual_lines_) {
-    ESP_LOGCONFIG(TAG, "  Metering virtual line");
+
+  for (const auto *virtual_line : this->metering_virtual_lines_) {
     const auto *line_a = virtual_line->get_line_a();
     const auto *line_b = virtual_line->get_line_b();
     if (line_a != nullptr && line_b != nullptr) {
-      ESP_LOGCONFIG(TAG, "    Voltage reference: input %u - input %u",
-                    static_cast<unsigned>(line_a->get_input_wire()),
-                    static_cast<unsigned>(line_b->get_input_wire()));
+      ESP_LOGCONFIG(TAG, "  Virtual line %s: input %u-input %u, entity=voltage", virtual_line->get_config_key(),
+                    static_cast<unsigned>(line_a->get_input_wire()), static_cast<unsigned>(line_b->get_input_wire()));
+    } else {
+      ESP_LOGCONFIG(TAG, "  Virtual line %s: unassigned", virtual_line->get_config_key());
     }
-    LOG_SENSOR("    ", "Voltage", virtual_line->get_voltage_sensor());
   }
 }
 

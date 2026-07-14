@@ -3133,6 +3133,7 @@ async def to_code(config):
     power_source_ct_clamps_by_key = {}
     for phase_key, main_config in config.get(CONF_MAINS, {}).items():
         phase_var = cg.new_Pvariable(main_config[CONF_ID], MeteringPhaseConfig())
+        cg.add(phase_var.set_config_key(phase_key))
         cg.add(phase_var.set_input_wire(PHASE_INPUTS[main_config[CONF_VOLTAGE_INPUT]]))
         cg.add(phase_var.set_calibration(main_config[CONF_VOLTAGE_CALIBRATION]))
         line_number = int(phase_key.rsplit("_", 1)[1])
@@ -3172,6 +3173,7 @@ async def to_code(config):
         phases.append(phase_var)
 
         ct_clamp_var = cg.new_Pvariable(main_config[CONF_CT_ID], MeteringCTClampConfig())
+        cg.add(ct_clamp_var.set_config_key(phase_key))
         cg.add(ct_clamp_var.set_phase(phase_var))
         cg.add(
             ct_clamp_var.set_input_port(
@@ -3198,6 +3200,7 @@ async def to_code(config):
 
     for circuit_key, circuit_config in config.get(CONF_CIRCUITS, {}).items():
         ct_clamp_var = cg.new_Pvariable(circuit_config[CONF_CT_ID], MeteringCTClampConfig())
+        cg.add(ct_clamp_var.set_config_key(circuit_key))
         line_config = circuit_config[CONF_LINE]
         if isinstance(line_config, list):
             phase_a_var = main_phase_vars_by_line[line_config[0]]
@@ -3281,8 +3284,9 @@ async def to_code(config):
         power_source_ct_clamps_by_key[circuit_key] = ct_clamp_var
 
     virtual_lines = []
-    for virtual_line_config in config.get(CONF_VIRTUAL_LINES, {}).values():
+    for virtual_line_key, virtual_line_config in config.get(CONF_VIRTUAL_LINES, {}).items():
         virtual_line_var = cg.new_Pvariable(virtual_line_config[CONF_ID], MeteringVirtualLineConfig())
+        cg.add(virtual_line_var.set_config_key(virtual_line_key))
         line_a, line_b = virtual_line_config[CONF_LINES]
         cg.add(virtual_line_var.set_lines(main_phase_vars_by_line[line_a], main_phase_vars_by_line[line_b]))
         voltage_sensor = await sensor.new_sensor(virtual_line_config[CONF_VOLTAGE])
@@ -3293,6 +3297,7 @@ async def to_code(config):
 
     for phase_config in config.get(CONF_PHASES, []):
         phase_var = cg.new_Pvariable(phase_config[CONF_ID], MeteringPhaseConfig())
+        cg.add(phase_var.set_config_key(str(phase_config[CONF_INPUT])))
         cg.add(phase_var.set_input_wire(PHASE_INPUTS[phase_config[CONF_INPUT]]))
         cg.add(phase_var.set_calibration(phase_config[CONF_VOLTAGE_CALIBRATION]))
 
@@ -3333,6 +3338,7 @@ async def to_code(config):
 
     for ct_config in config.get(CONF_CT_CLAMPS, []):
         ct_clamp_var = cg.new_Pvariable(ct_config[CONF_ID], MeteringCTClampConfig())
+        cg.add(ct_clamp_var.set_config_key(str(ct_config[CONF_INPUT])))
         phase_var = await cg.get_variable(ct_config[CONF_PHASE_ID])
         cg.add(ct_clamp_var.set_phase(phase_var))
         cg.add(ct_clamp_var.set_input_port(CT_INPUTS[ct_config[CONF_INPUT]]))
@@ -3363,6 +3369,7 @@ async def to_code(config):
     group_vars_by_key = {}
     for group_key, group_config in config.get(CONF_GROUPS, {}).items():
         group_var = cg.new_Pvariable(group_config[CONF_ID], MeteringGroupConfig())
+        cg.add(group_var.set_config_key(group_key))
         groups.append(group_var)
         group_vars_by_key[group_key] = group_var
 

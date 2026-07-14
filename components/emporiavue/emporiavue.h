@@ -1060,6 +1060,8 @@ class EmporiaVueComponent : public Component
 
 class MeteringPhaseConfig {
  public:
+  void set_config_key(const char *key) { this->config_key_ = key; }
+  const char *get_config_key() const { return this->config_key_; }
   void set_input_wire(uint8_t input_wire) { this->input_wire_ = input_wire; }
   uint8_t get_input_wire() const { return this->input_wire_; }
   void set_calibration(float calibration) { this->calibration_ = calibration; }
@@ -1077,6 +1079,7 @@ class MeteringPhaseConfig {
   sensor::Sensor *get_voltage_thd_sensor() const { return this->voltage_thd_sensor_; }
 
  protected:
+  const char *config_key_{"?"};
   uint8_t input_wire_{0};
   float calibration_{0.022f};
   MeteringCalibrationNumber *calibration_number_{nullptr};
@@ -1145,6 +1148,9 @@ class MeteringCTClampConfig {
     MeteringPhaseConfig *phase{nullptr};
     uint8_t line{0};
   };
+
+  void set_config_key(const char *key) { this->config_key_ = key; }
+  const char *get_config_key() const { return this->config_key_; }
 
   void set_phase(MeteringPhaseConfig *phase) {
     this->phase_ = phase;
@@ -1321,6 +1327,7 @@ class MeteringCTClampConfig {
  protected:
   void save_line_assignment_(uint8_t line);
 
+  const char *config_key_{"?"};
   MeteringPhaseConfig *phase_{nullptr};
   MeteringPhaseConfig *line_pair_phase_b_{nullptr};
   bool line_pair_{false};
@@ -1371,6 +1378,9 @@ class MeteringGroupConfig {
     MeteringGroupConfig *group{nullptr};
   };
 
+  void set_config_key(const char *key) { this->config_key_ = key; }
+  const char *get_config_key() const { return this->config_key_; }
+
   void add_ct_clamp_term(MeteringCTClampConfig *ct_clamp, float sign) {
     this->terms_.push_back(Term{sign, ct_clamp, nullptr});
   }
@@ -1403,6 +1413,7 @@ class MeteringGroupConfig {
   MeteringPowerCache &get_power_cache() { return this->power_cache_; }
 
  protected:
+  const char *config_key_{"?"};
   std::vector<Term> terms_{};
   std::vector<MeteringPowerOutput> power_outputs_{};
   MeteringPowerFilters power_filters_{};
@@ -1412,6 +1423,8 @@ class MeteringGroupConfig {
 
 class MeteringVirtualLineConfig {
  public:
+  void set_config_key(const char *key) { this->config_key_ = key; }
+  const char *get_config_key() const { return this->config_key_; }
   void set_lines(MeteringPhaseConfig *line_a, MeteringPhaseConfig *line_b) {
     this->line_a_ = line_a;
     this->line_b_ = line_b;
@@ -1422,6 +1435,7 @@ class MeteringVirtualLineConfig {
   sensor::Sensor *get_voltage_sensor() const { return this->voltage_sensor_; }
 
  protected:
+  const char *config_key_{"?"};
   MeteringPhaseConfig *line_a_{nullptr};
   MeteringPhaseConfig *line_b_{nullptr};
   sensor::Sensor *voltage_sensor_{nullptr};
