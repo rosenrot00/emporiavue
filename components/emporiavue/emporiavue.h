@@ -255,6 +255,9 @@ class EmporiaVueComponent : public Component
   void set_diag_recoveries_sensor(sensor::Sensor *sensor) { this->diag_recoveries_sensor_ = sensor; }
   void set_diag_last_frame_samples_sensor(sensor::Sensor *sensor) { this->diag_last_frame_samples_sensor_ = sensor; }
   void set_diag_sample_rate_sensor(sensor::Sensor *sensor) { this->diag_sample_rate_sensor_ = sensor; }
+  void set_diag_restart_reason_sensor(text_sensor::TextSensor *sensor) {
+    this->diag_restart_reason_sensor_ = sensor;
+  }
   void set_diag_heap_free_sensor(sensor::Sensor *sensor) { this->diag_heap_free_sensor_ = sensor; }
   void set_diag_heap_minimum_sensor(sensor::Sensor *sensor) { this->diag_heap_minimum_sensor_ = sensor; }
   void set_diag_heap_largest_block_sensor(sensor::Sensor *sensor) {
@@ -696,6 +699,8 @@ class EmporiaVueComponent : public Component
   void publish_firmware_info_from_diagnostic_(const ManagedI2CDiagnostic &diagnostic);
   void publish_i2c_diagnostics_(const ManagedI2CDiagnostic &diagnostic);
   void publish_spi_diagnostics_();
+  void publish_restart_reason_();
+  static const char *restart_reason_name_(uint32_t reason);
   void start_i2c_diagnostics_();
   void stop_i2c_diagnostics_();
   I2CMeteringReadResult read_i2c_metering_frame_(MeteringFrame *frame);
@@ -810,6 +815,7 @@ class EmporiaVueComponent : public Component
   sensor::Sensor *diag_recoveries_sensor_{nullptr};
   sensor::Sensor *diag_last_frame_samples_sensor_{nullptr};
   sensor::Sensor *diag_sample_rate_sensor_{nullptr};
+  text_sensor::TextSensor *diag_restart_reason_sensor_{nullptr};
   sensor::Sensor *diag_heap_free_sensor_{nullptr};
   sensor::Sensor *diag_heap_minimum_sensor_{nullptr};
   sensor::Sensor *diag_heap_largest_block_sensor_{nullptr};

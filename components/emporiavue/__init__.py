@@ -46,6 +46,7 @@ from esphome.const import (
     DEVICE_CLASS_VOLTAGE,
     ENTITY_CATEGORY_CONFIG,
     ENTITY_CATEGORY_DIAGNOSTIC,
+    ICON_RESTART,
     STATE_CLASS_MEASUREMENT,
     STATE_CLASS_TOTAL_INCREASING,
     UNIT_AMPERE,
@@ -138,6 +139,7 @@ CONF_DIAG_HEAP_LARGEST_BLOCK = "diag_heap_largest_block"
 CONF_DIAG_HEAP_CORRUPTION = "diag_heap_corruption"
 CONF_DIAG_LOOP_STACK_FREE = "diag_loop_stack_free"
 CONF_DIAG_SPI_STACK_FREE = "diag_spi_stack_free"
+CONF_DIAG_RESTART_REASON = "diag_restart_reason"
 CONF_FIRMWARE_VERSION = "firmware_version"
 CONF_BUNDLED_FIRMWARE_VERSION = "bundled_firmware_version"
 CONF_BACKUP_PARTITION = "backup_partition"
@@ -390,6 +392,7 @@ DIAGNOSTIC_ENTITY_NAMES = {
     CONF_DIAG_RECOVERIES: "SAMD Recoveries",
     CONF_DIAG_LAST_FRAME_SAMPLES: "SAMD Last Frame Samples",
     CONF_DIAG_SAMPLE_RATE: "SAMD Sample Rate",
+    CONF_DIAG_RESTART_REASON: "ESP Restart Reason",
 }
 
 SPI_RUNTIME_DIAGNOSTIC_ENTITY_NAMES = {
@@ -2785,6 +2788,10 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             accuracy_decimals=1,
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
+        cv.Optional(CONF_DIAG_RESTART_REASON): text_sensor.text_sensor_schema(
+            icon=ICON_RESTART,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
         cv.Optional(CONF_DIAG_HEAP_FREE): sensor.sensor_schema(
             unit_of_measurement=UNIT_BYTES,
             device_class=DEVICE_CLASS_DATA_SIZE,
@@ -3097,6 +3104,9 @@ async def to_code(config):
     if diag_sample_rate_config := config.get(CONF_DIAG_SAMPLE_RATE):
         sens = await sensor.new_sensor(diag_sample_rate_config)
         cg.add(var.set_diag_sample_rate_sensor(sens))
+    if diag_restart_reason_config := config.get(CONF_DIAG_RESTART_REASON):
+        sens = await text_sensor.new_text_sensor(diag_restart_reason_config)
+        cg.add(var.set_diag_restart_reason_sensor(sens))
     if diag_heap_free_config := config.get(CONF_DIAG_HEAP_FREE):
         sens = await sensor.new_sensor(diag_heap_free_config)
         cg.add(var.set_diag_heap_free_sensor(sens))

@@ -4,6 +4,10 @@
 
 #include "esphome/core/log.h"
 
+#ifdef USE_ESP32
+#include <esp_system.h>
+#endif
+
 #include <algorithm>
 #include <cinttypes>
 #include <cmath>
@@ -13,6 +17,7 @@ namespace esphome {
 namespace emporiavue {
 
 void EmporiaVueComponent::setup() {
+  this->publish_restart_reason_();
   this->inspect_backup_partition_();
   this->publish_bundled_firmware_version_();
   if (this->swd_on_boot_) {
@@ -43,6 +48,55 @@ void EmporiaVueComponent::setup() {
     this->start_metering_();
     this->setup_spi_receiver_();
   }
+}
+
+const char *EmporiaVueComponent::restart_reason_name_(uint32_t reason) {
+  switch (reason) {
+    case ESP_RST_POWERON:
+      return "power-on event";
+    case ESP_RST_EXT:
+      return "external pin";
+    case ESP_RST_SW:
+      return "software restart";
+    case ESP_RST_PANIC:
+      return "exception/panic";
+    case ESP_RST_INT_WDT:
+      return "interrupt watchdog";
+    case ESP_RST_TASK_WDT:
+      return "task watchdog";
+    case ESP_RST_WDT:
+      return "other watchdog";
+    case ESP_RST_DEEPSLEEP:
+      return "exiting deep sleep";
+    case ESP_RST_BROWNOUT:
+      return "brownout";
+    case ESP_RST_SDIO:
+      return "SDIO reset";
+    case ESP_RST_USB:
+      return "USB reset";
+    case ESP_RST_JTAG:
+      return "JTAG reset";
+    case ESP_RST_EFUSE:
+      return "eFuse error";
+    case ESP_RST_PWR_GLITCH:
+      return "power glitch";
+    case ESP_RST_CPU_LOCKUP:
+      return "CPU lockup";
+    case ESP_RST_UNKNOWN:
+    default:
+      return "unknown source";
+  }
+}
+
+void EmporiaVueComponent::publish_restart_reason_() {
+#ifdef USE_ESP32
+  const uint32_t reason = static_cast<uint32_t>(esp_reset_reason());
+  const char *reason_name = restart_reason_name_(reason);
+  ESP_LOGI(TAG, "ESP32 restart reason: %s (%" PRIu32 ")", reason_name, reason);
+  if (this->diag_restart_reason_sensor_ != nullptr) {
+    this->diag_restart_reason_sensor_->publish_state(reason_name);
+  }
+#endif
 }
 
 void EmporiaVueComponent::loop() {
@@ -125,6 +179,7 @@ void EmporiaVueComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Entity prefix: %s", entity_prefix);
   LOG_TEXT_SENSOR("  ", "Firmware version", this->firmware_version_sensor_);
   LOG_TEXT_SENSOR("  ", "Bundled firmware version", this->bundled_firmware_version_sensor_);
+  LOG_TEXT_SENSOR("  ", "ESP restart reason", this->diag_restart_reason_sensor_);
   for (auto *phase : this->metering_phases_) {
     ESP_LOGCONFIG(TAG, "  Metering phase");
     ESP_LOGCONFIG(TAG, "    Input: %u", static_cast<unsigned>(phase->get_input_wire()));
