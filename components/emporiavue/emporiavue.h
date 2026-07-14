@@ -72,6 +72,39 @@ class MeteringPowerFilters {
   std::vector<std::function<float(float)>> filters_{};
 };
 
+class MeteringPowerCache {
+ public:
+  enum class State : uint8_t {
+    EMPTY = 0,
+    VISITING,
+    VALID,
+    INVALID,
+  };
+
+  State get_state(uint32_t generation) const {
+    return this->generation_ == generation ? this->state_ : State::EMPTY;
+  }
+  float get_value() const { return this->value_; }
+  void mark_visiting(uint32_t generation) {
+    this->generation_ = generation;
+    this->state_ = State::VISITING;
+  }
+  void store(uint32_t generation, float value) {
+    this->generation_ = generation;
+    this->value_ = value;
+    this->state_ = State::VALID;
+  }
+  void mark_invalid(uint32_t generation) {
+    this->generation_ = generation;
+    this->state_ = State::INVALID;
+  }
+
+ protected:
+  uint32_t generation_{0};
+  float value_{0.0f};
+  State state_{State::EMPTY};
+};
+
 class MeteringPowerOutput {
  public:
   enum Direction : uint8_t {
@@ -457,44 +490,63 @@ class EmporiaVueComponent : public Component
   } __attribute__((packed));
 
   struct MeteringPhase {
-    uint16_t voltage_raw{0};
-    uint16_t cycle_count_raw{0};
+    // 32-bit measurements.
     float voltage_fundamental_i_raw{0.0f};
     float voltage_fundamental_q_raw{0.0f};
-    bool voltage_fundamental_valid{false};
     float voltage_thd_percent{std::numeric_limits<float>::quiet_NaN()};
-    bool voltage_thd_valid{false};
     float frequency_hz{std::numeric_limits<float>::quiet_NaN()};
     float phase_angle_degrees{std::numeric_limits<float>::quiet_NaN()};
+
+    // 16-bit transport values.
+    uint16_t voltage_raw{0};
+    uint16_t cycle_count_raw{0};
+
+    // Validity and quality flags.
+    bool voltage_fundamental_valid{false};
+    bool voltage_thd_valid{false};
     uint8_t quality_flags{0};
   };
 
   struct MeteringClamp {
-    uint16_t current_raw{0};
-    uint16_t current_peak_raw{0};
-    bool current_peak_valid{false};
+    // 32-bit measurements.
     float current_fundamental_i_raw{0.0f};
     float current_fundamental_q_raw{0.0f};
-    bool current_fundamental_valid{false};
     int32_t power_raw_by_phase[3]{};
+
+    // 16-bit transport values.
+    uint16_t current_raw{0};
+    uint16_t current_peak_raw{0};
+
+    // Validity and quality flags.
+    bool current_peak_valid{false};
+    bool current_fundamental_valid{false};
     uint8_t quality_flags{0};
   };
 
   struct MeteringFrame {
-    uint16_t schema_version{1};
-    MeteringTransport transport{MeteringTransport::UNKNOWN};
+    // Frame-wide 32-bit values and statistics.
     uint32_t sequence{0};
     uint32_t timestamp_ms{0};
-    bool valid{false};
-    uint8_t quality_flags{0};
     // Mean voltage squares in voltage_raw squared units: BLACK, RED, BLUE.
     float voltage_square_raw[3]{};
     // Mean voltage products in voltage_raw squared units: BLACK*RED, BLACK*BLUE, RED*BLUE.
     float voltage_product_raw[3]{};
-    bool voltage_statistics_valid{false};
+
+    // Transport-neutral per-input measurements.
     MeteringPhase phases[3]{};
     MeteringClamp clamps[19]{};
+
+    // Frame metadata and validity flags.
+    uint16_t schema_version{1};
+    MeteringTransport transport{MeteringTransport::UNKNOWN};
+    bool valid{false};
+    uint8_t quality_flags{0};
+    bool voltage_statistics_valid{false};
   };
+
+  static_assert(sizeof(MeteringPhase) == 28, "MeteringPhase layout unexpectedly gained padding");
+  static_assert(sizeof(MeteringClamp) == 28, "MeteringClamp layout unexpectedly gained padding");
+  static_assert(sizeof(MeteringFrame) == 656, "MeteringFrame layout unexpectedly gained padding");
 
   struct MeteringCTMeasurement {
     bool has_power{false};
@@ -730,6 +782,7 @@ class EmporiaVueComponent : public Component
   void reset_spi_metering_state_();
   void decode_spi_raw_frame_(const uint8_t *frame, uint32_t sequence, uint32_t flags, uint32_t sample_counter);
   void process_spi_raw_scan_(const SpiRawScan &scan);
+  void configure_spi_analysis_requirements_();
   void push_spi_fundamental_sample_(const SpiRawScan &scan, const SpiRawScan &main_current_scan,
                                     const SpiRawScan &mux_current_scan);
   static float spi_crossing_difference_(const SpiCrossingPosition &end, const SpiCrossingPosition &start);
@@ -797,8 +850,8 @@ class EmporiaVueComponent : public Component
                                  MeteringCTMeasurement *measurement) const;
   bool calculate_ct_fundamental_analysis_(const MeteringFrame &frame, const MeteringCTClampConfig *ct_clamp,
                                           MeteringCTMeasurement *measurement) const;
-  bool calculate_group_power_(const MeteringFrame &frame, const MeteringGroupConfig *group, float *group_power,
-                              uint8_t depth = 0) const;
+  bool calculate_group_power_(const MeteringFrame &frame, MeteringGroupConfig *group, float *group_power,
+                              uint32_t generation) const;
   static float apply_power_direction_(float power, uint8_t direction);
   static void publish_power_outputs_(const std::vector<MeteringPowerOutput> &outputs, float power);
   void update_phase_detection_(const MeteringFrame &frame, MeteringCTClampConfig *ct_clamp);
@@ -844,7 +897,7 @@ class EmporiaVueComponent : public Component
   uint32_t last_metering_sequence_{0};
   MeteringTransport last_metering_transport_{MeteringTransport::UNKNOWN};
   bool last_metering_sequence_valid_{false};
-  MeteringFrame last_metering_frame_{};
+  uint32_t metering_calculation_generation_{0};
   uint32_t i2c_status_window_start_ms_{0};
   uint32_t i2c_valid_frames_window_{0};
   uint32_t i2c_not_ready_frames_window_{0};
@@ -880,6 +933,9 @@ class EmporiaVueComponent : public Component
   uint64_t spi_sample_counter_epoch_{0};
   uint8_t spi_main_current_delay_{2};
   uint8_t spi_mux_current_delay_{4};
+  uint32_t spi_current_fundamental_mask_{0};
+  uint8_t spi_voltage_thd_mask_{0};
+  bool spi_waveform_analysis_required_{false};
   int16_t spi_adc_offsets_[22]{};
   int32_t spi_adc_offset_estimate_q8_[22]{};
   uint8_t spi_offset_warmup_windows_{0};
@@ -1172,6 +1228,15 @@ class MeteringCTClampConfig {
   sensor::Sensor *get_displacement_angle_sensor() const { return this->displacement_angle_sensor_; }
   void set_current_thd_sensor(sensor::Sensor *sensor) { this->current_thd_sensor_ = sensor; }
   sensor::Sensor *get_current_thd_sensor() const { return this->current_thd_sensor_; }
+  bool has_fundamental_analysis() const {
+    return this->fundamental_current_sensor_ != nullptr || this->fundamental_reactive_power_sensor_ != nullptr ||
+           this->fundamental_power_factor_sensor_ != nullptr || this->displacement_angle_sensor_ != nullptr ||
+           this->current_thd_sensor_ != nullptr;
+  }
+  bool requires_current_fundamental() const {
+    return this->has_fundamental_analysis() || this->current_phase_number_ != nullptr ||
+           this->current_phase_correction_degrees_ != 0.0f;
+  }
   void set_power_split_line_a_sensor(sensor::Sensor *sensor) { this->power_split_line_a_sensor_ = sensor; }
   sensor::Sensor *get_power_split_line_a_sensor() const { return this->power_split_line_a_sensor_; }
   void set_power_split_line_b_sensor(sensor::Sensor *sensor) { this->power_split_line_b_sensor_ = sensor; }
@@ -1182,6 +1247,7 @@ class MeteringCTClampConfig {
   }
   float apply_power_filters(float value) const { return this->power_filters_.apply(value); }
   size_t get_power_filter_count() const { return this->power_filters_.size(); }
+  MeteringPowerCache &get_power_cache() { return this->power_cache_; }
   void set_phase_detection_sensor(text_sensor::TextSensor *sensor) { this->phase_detection_sensor_ = sensor; }
   text_sensor::TextSensor *get_phase_detection_sensor() const { return this->phase_detection_sensor_; }
   void set_phase_detection_name(const std::string &name) { this->phase_detection_name_ = name; }
@@ -1261,6 +1327,7 @@ class MeteringCTClampConfig {
   sensor::Sensor *power_split_line_a_sensor_{nullptr};
   sensor::Sensor *power_split_line_b_sensor_{nullptr};
   MeteringPowerFilters power_filters_{};
+  MeteringPowerCache power_cache_{};
   text_sensor::TextSensor *phase_detection_sensor_{nullptr};
   std::string phase_detection_name_{};
   float phase_detection_power_min_{30.0f};
@@ -1309,12 +1376,14 @@ class MeteringGroupConfig {
   }
   float apply_power_filters(float value) const { return this->power_filters_.apply(value); }
   size_t get_power_filter_count() const { return this->power_filters_.size(); }
+  MeteringPowerCache &get_power_cache() { return this->power_cache_; }
 
  protected:
   std::vector<Term> terms_{};
   std::vector<MeteringPowerOutput> power_outputs_{};
   MeteringPowerFilters power_filters_{};
   MeteringDemandTracker power_demand_{};
+  MeteringPowerCache power_cache_{};
 };
 
 class MeteringVirtualLineConfig {

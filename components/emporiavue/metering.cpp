@@ -229,7 +229,6 @@ void EmporiaVueComponent::submit_metering_frame_(const MeteringFrame &frame) {
   this->last_metering_sequence_ = frame.sequence;
   this->last_metering_transport_ = frame.transport;
   this->last_metering_sequence_valid_ = true;
-  this->last_metering_frame_ = frame;
 
   const char *transport = frame.transport == MeteringTransport::SPI ? "SPI" :
                           frame.transport == MeteringTransport::I2C ? "I2C" : "unknown";
@@ -500,19 +499,38 @@ bool EmporiaVueComponent::calculate_ct_fundamental_analysis_(const MeteringFrame
     return true;
   }
 
-  const float fundamental_voltage = std::hypot(voltage_i, voltage_q);
-  const float active_power = voltage_i * current_i + voltage_q * current_q;
-  const float reactive_power = voltage_i * current_q - voltage_q * current_i;
-  const float apparent_power = fundamental_voltage * fundamental_current;
+  const bool reactive_power_required = ct_clamp->get_fundamental_reactive_power_sensor() != nullptr;
+  const bool power_factor_required = ct_clamp->get_fundamental_power_factor_sensor() != nullptr;
+  const bool displacement_angle_required = ct_clamp->get_displacement_angle_sensor() != nullptr;
+  const bool current_thd_required = ct_clamp->get_current_thd_sensor() != nullptr;
 
-  measurement->fundamental_reactive_power = reactive_power;
-  if (apparent_power > 0.0f) {
-    measurement->fundamental_power_factor =
-        std::max(0.0f, std::min(1.0f, std::fabs(active_power) / apparent_power));
-    measurement->displacement_angle = std::atan2(reactive_power, active_power) * 180.0f / 3.14159265358979323846f;
+  float active_power = 0.0f;
+  float reactive_power = 0.0f;
+  if (power_factor_required || displacement_angle_required) {
+    active_power = voltage_i * current_i + voltage_q * current_q;
+  }
+  if (reactive_power_required || displacement_angle_required) {
+    reactive_power = voltage_i * current_q - voltage_q * current_i;
+  }
+  if (reactive_power_required) {
+    measurement->fundamental_reactive_power = reactive_power;
+  }
+  if (power_factor_required || displacement_angle_required) {
+    const float fundamental_voltage = std::hypot(voltage_i, voltage_q);
+    const float apparent_power = fundamental_voltage * fundamental_current;
+    if (apparent_power > 0.0f) {
+      if (power_factor_required) {
+        measurement->fundamental_power_factor =
+            std::max(0.0f, std::min(1.0f, std::fabs(active_power) / apparent_power));
+      }
+      if (displacement_angle_required) {
+        measurement->displacement_angle =
+            std::atan2(reactive_power, active_power) * 180.0f / 3.14159265358979323846f;
+      }
+    }
   }
 
-  if (measurement->has_current && fundamental_current > 0.0f) {
+  if (current_thd_required && measurement->has_current && fundamental_current > 0.0f) {
     const float consistency_tolerance = std::max(0.001f, measurement->current * 0.01f);
     if (fundamental_current <= measurement->current + consistency_tolerance) {
       const float harmonic_current_sq =
@@ -550,22 +568,47 @@ void EmporiaVueComponent::publish_power_outputs_(const std::vector<MeteringPower
   }
 }
 
-bool EmporiaVueComponent::calculate_group_power_(const MeteringFrame &frame, const MeteringGroupConfig *group,
-                                                 float *group_power, uint8_t depth) const {
+bool EmporiaVueComponent::calculate_group_power_(const MeteringFrame &frame, MeteringGroupConfig *group,
+                                                 float *group_power, uint32_t generation) const {
   if (group == nullptr || group_power == nullptr) {
     return false;
   }
-  if (depth > 8) {
-    return false;
+
+  auto &group_cache = group->get_power_cache();
+  switch (group_cache.get_state(generation)) {
+    case MeteringPowerCache::State::VALID:
+      *group_power = group_cache.get_value();
+      return true;
+    case MeteringPowerCache::State::VISITING:
+    case MeteringPowerCache::State::INVALID:
+      return false;
+    case MeteringPowerCache::State::EMPTY:
+      break;
   }
+  group_cache.mark_visiting(generation);
 
   float sum = 0.0f;
   bool has_power = false;
   for (const auto &term : group->get_terms()) {
     if (term.ct_clamp != nullptr) {
       float power = 0.0f;
-      if (!this->calculate_ct_power_(frame, term.ct_clamp, &power)) {
-        return false;
+      auto &ct_cache = term.ct_clamp->get_power_cache();
+      switch (ct_cache.get_state(generation)) {
+        case MeteringPowerCache::State::VALID:
+          power = ct_cache.get_value();
+          break;
+        case MeteringPowerCache::State::INVALID:
+        case MeteringPowerCache::State::VISITING:
+          group_cache.mark_invalid(generation);
+          return false;
+        case MeteringPowerCache::State::EMPTY:
+          if (!this->calculate_ct_power_(frame, term.ct_clamp, &power)) {
+            ct_cache.mark_invalid(generation);
+            group_cache.mark_invalid(generation);
+            return false;
+          }
+          ct_cache.store(generation, power);
+          break;
       }
       sum += term.sign * power;
       has_power = true;
@@ -574,7 +617,8 @@ bool EmporiaVueComponent::calculate_group_power_(const MeteringFrame &frame, con
 
     if (term.group != nullptr) {
       float power = 0.0f;
-      if (!this->calculate_group_power_(frame, term.group, &power, depth + 1)) {
+      if (!this->calculate_group_power_(frame, term.group, &power, generation)) {
+        group_cache.mark_invalid(generation);
         return false;
       }
       sum += term.sign * power;
@@ -582,10 +626,12 @@ bool EmporiaVueComponent::calculate_group_power_(const MeteringFrame &frame, con
     }
   }
   if (!has_power) {
+    group_cache.mark_invalid(generation);
     return false;
   }
 
   *group_power = group->apply_power_filters(sum);
+  group_cache.store(generation, *group_power);
   return true;
 }
 
@@ -724,6 +770,10 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
     return;
   }
   const uint32_t demand_now_ms = millis();
+  if (++this->metering_calculation_generation_ == 0) {
+    this->metering_calculation_generation_ = 1;
+  }
+  const uint32_t calculation_generation = this->metering_calculation_generation_;
 
   for (auto *phase : this->metering_phases_) {
     const uint8_t input = phase->get_input_wire();
@@ -778,8 +828,13 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
 
     MeteringCTMeasurement measurement{};
     this->calculate_ct_measurement_(frame, ct_clamp, &measurement);
-    const bool has_fundamental_analysis =
-        this->calculate_ct_fundamental_analysis_(frame, ct_clamp, &measurement);
+    if (measurement.has_power) {
+      ct_clamp->get_power_cache().store(calculation_generation, measurement.power);
+    } else {
+      ct_clamp->get_power_cache().mark_invalid(calculation_generation);
+    }
+    const bool has_fundamental_analysis = ct_clamp->has_fundamental_analysis() &&
+                                          this->calculate_ct_fundamental_analysis_(frame, ct_clamp, &measurement);
     const float unavailable = std::numeric_limits<float>::quiet_NaN();
     if (measurement.has_power) {
       ct_clamp->add_power_demand_sample(measurement.power, demand_now_ms);
@@ -854,7 +909,7 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
     }
 
     float group_power = 0.0f;
-    if (this->calculate_group_power_(frame, group, &group_power)) {
+    if (this->calculate_group_power_(frame, group, &group_power, calculation_generation)) {
       group->add_power_demand_sample(group_power, demand_now_ms);
       publish_power_outputs_(group->get_power_outputs(), group_power);
     } else {
