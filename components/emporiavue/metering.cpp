@@ -305,6 +305,11 @@ bool EmporiaVueComponent::calculate_ct_power_(const MeteringFrame &frame, const 
   if (port >= 19 || phase == nullptr || phase->get_input_wire() >= 3) {
     return false;
   }
+  const uint8_t phase_a_input = phase->get_input_wire();
+  const auto &clamp = frame.clamps[port];
+  if ((clamp.power_phase_valid_mask & (1U << phase_a_input)) == 0) {
+    return false;
+  }
 
   const float correction_factor = port < 3 ? 5.5f : 22.0f;
   float corrected_power = 0.0f;
@@ -313,14 +318,18 @@ bool EmporiaVueComponent::calculate_ct_power_(const MeteringFrame &frame, const 
     if (phase_b == nullptr || phase_b->get_input_wire() >= 3) {
       return false;
     }
+    const uint8_t phase_b_input = phase_b->get_input_wire();
+    if ((clamp.power_phase_valid_mask & (1U << phase_b_input)) == 0) {
+      return false;
+    }
 
-    const int32_t raw_power_a = frame.clamps[port].power_raw_by_phase[phase->get_input_wire()];
-    const int32_t raw_power_b = frame.clamps[port].power_raw_by_phase[phase_b->get_input_wire()];
+    const int32_t raw_power_a = clamp.power_raw_by_phase[phase_a_input];
+    const int32_t raw_power_b = clamp.power_raw_by_phase[phase_b_input];
     const float power_a = raw_power_a * phase->get_calibration() / correction_factor;
     const float power_b = raw_power_b * phase_b->get_calibration() / correction_factor;
     corrected_power = (power_a - power_b) * ct_clamp->get_current_gain();
   } else {
-    const int32_t raw_power = frame.clamps[port].power_raw_by_phase[phase->get_input_wire()];
+    const int32_t raw_power = clamp.power_raw_by_phase[phase_a_input];
     corrected_power = raw_power * phase->get_calibration() / correction_factor * ct_clamp->get_current_gain();
   }
 
@@ -668,7 +677,7 @@ void EmporiaVueComponent::update_phase_detection_(const MeteringFrame &frame, Me
       continue;
     }
     const uint8_t input = candidate.phase->get_input_wire();
-    if (input >= 3) {
+    if (input >= 3 || (frame.clamps[port].power_phase_valid_mask & (1U << input)) == 0) {
       continue;
     }
     const int32_t raw_power = frame.clamps[port].power_raw_by_phase[input];

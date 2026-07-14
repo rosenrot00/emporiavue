@@ -9,7 +9,6 @@ import esphome.config_validation as cv
 import esphome.final_validate as fv
 from esphome import pins
 from esphome.components import (
-    binary_sensor,
     button,
     i2c,
     number,
@@ -42,7 +41,6 @@ from esphome.const import (
     DEVICE_CLASS_ENERGY,
     DEVICE_CLASS_FREQUENCY,
     DEVICE_CLASS_POWER,
-    DEVICE_CLASS_PROBLEM,
     DEVICE_CLASS_VOLTAGE,
     ENTITY_CATEGORY_CONFIG,
     ENTITY_CATEGORY_DIAGNOSTIC,
@@ -53,6 +51,7 @@ from esphome.const import (
     UNIT_BYTES,
     UNIT_DEGREES,
     UNIT_HERTZ,
+    UNIT_PERCENT,
     UNIT_VOLT,
     UNIT_WATT,
 )
@@ -61,7 +60,6 @@ from esphome.core.config import DEVICE_SCHEMA, Device
 
 DEPENDENCIES = ["esp32"]
 AUTO_LOAD = [
-    "binary_sensor",
     "button",
     "number",
     "select",
@@ -135,10 +133,10 @@ CONF_DIAG_LAST_FRAME_SAMPLES = "diag_last_frame_samples"
 CONF_DIAG_SAMPLE_RATE = "diag_sample_rate"
 CONF_DIAG_HEAP_FREE = "diag_heap_free"
 CONF_DIAG_HEAP_MINIMUM = "diag_heap_minimum"
-CONF_DIAG_HEAP_LARGEST_BLOCK = "diag_heap_largest_block"
-CONF_DIAG_HEAP_CORRUPTION = "diag_heap_corruption"
 CONF_DIAG_LOOP_STACK_FREE = "diag_loop_stack_free"
 CONF_DIAG_SPI_STACK_FREE = "diag_spi_stack_free"
+CONF_DIAG_SPI_PROCESSING_LOAD = "diag_spi_processing_load"
+CONF_DIAG_SPI_PROCESSING_OVERRUNS = "diag_spi_processing_overruns"
 CONF_DIAG_RESTART_REASON = "diag_restart_reason"
 CONF_FIRMWARE_VERSION = "firmware_version"
 CONF_BUNDLED_FIRMWARE_VERSION = "bundled_firmware_version"
@@ -398,10 +396,10 @@ DIAGNOSTIC_ENTITY_NAMES = {
 SPI_RUNTIME_DIAGNOSTIC_ENTITY_NAMES = {
     CONF_DIAG_HEAP_FREE: "ESP Free Heap",
     CONF_DIAG_HEAP_MINIMUM: "ESP Minimum Free Heap",
-    CONF_DIAG_HEAP_LARGEST_BLOCK: "ESP Largest Free Heap Block",
-    CONF_DIAG_HEAP_CORRUPTION: "ESP Heap Corruption",
     CONF_DIAG_LOOP_STACK_FREE: "ESP Loop Minimum Free Stack",
     CONF_DIAG_SPI_STACK_FREE: "ESP SPI Minimum Free Stack",
+    CONF_DIAG_SPI_PROCESSING_LOAD: "ESP SPI Processing Load",
+    CONF_DIAG_SPI_PROCESSING_OVERRUNS: "ESP SPI Processing Overruns",
 }
 
 
@@ -2808,19 +2806,6 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             accuracy_decimals=0,
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
-        cv.Optional(CONF_DIAG_HEAP_LARGEST_BLOCK): sensor.sensor_schema(
-            unit_of_measurement=UNIT_BYTES,
-            device_class=DEVICE_CLASS_DATA_SIZE,
-            icon="mdi:memory",
-            state_class=STATE_CLASS_MEASUREMENT,
-            accuracy_decimals=0,
-            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
-        ),
-        cv.Optional(CONF_DIAG_HEAP_CORRUPTION): binary_sensor.binary_sensor_schema(
-            device_class=DEVICE_CLASS_PROBLEM,
-            icon="mdi:memory",
-            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
-        ),
         cv.Optional(CONF_DIAG_LOOP_STACK_FREE): sensor.sensor_schema(
             unit_of_measurement=UNIT_BYTES,
             device_class=DEVICE_CLASS_DATA_SIZE,
@@ -2833,6 +2818,19 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             unit_of_measurement=UNIT_BYTES,
             device_class=DEVICE_CLASS_DATA_SIZE,
             icon="mdi:memory",
+            state_class=STATE_CLASS_MEASUREMENT,
+            accuracy_decimals=0,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(CONF_DIAG_SPI_PROCESSING_LOAD): sensor.sensor_schema(
+            unit_of_measurement=UNIT_PERCENT,
+            icon="mdi:cpu-32-bit",
+            state_class=STATE_CLASS_MEASUREMENT,
+            accuracy_decimals=1,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(CONF_DIAG_SPI_PROCESSING_OVERRUNS): sensor.sensor_schema(
+            icon="mdi:alert-circle-outline",
             state_class=STATE_CLASS_MEASUREMENT,
             accuracy_decimals=0,
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
@@ -3113,18 +3111,20 @@ async def to_code(config):
     if diag_heap_minimum_config := config.get(CONF_DIAG_HEAP_MINIMUM):
         sens = await sensor.new_sensor(diag_heap_minimum_config)
         cg.add(var.set_diag_heap_minimum_sensor(sens))
-    if diag_heap_largest_block_config := config.get(CONF_DIAG_HEAP_LARGEST_BLOCK):
-        sens = await sensor.new_sensor(diag_heap_largest_block_config)
-        cg.add(var.set_diag_heap_largest_block_sensor(sens))
-    if diag_heap_corruption_config := config.get(CONF_DIAG_HEAP_CORRUPTION):
-        sens = await binary_sensor.new_binary_sensor(diag_heap_corruption_config)
-        cg.add(var.set_diag_heap_corruption_sensor(sens))
     if diag_loop_stack_free_config := config.get(CONF_DIAG_LOOP_STACK_FREE):
         sens = await sensor.new_sensor(diag_loop_stack_free_config)
         cg.add(var.set_diag_loop_stack_free_sensor(sens))
     if diag_spi_stack_free_config := config.get(CONF_DIAG_SPI_STACK_FREE):
         sens = await sensor.new_sensor(diag_spi_stack_free_config)
         cg.add(var.set_diag_spi_stack_free_sensor(sens))
+    if diag_spi_processing_load_config := config.get(CONF_DIAG_SPI_PROCESSING_LOAD):
+        sens = await sensor.new_sensor(diag_spi_processing_load_config)
+        cg.add(var.set_diag_spi_processing_load_sensor(sens))
+    if diag_spi_processing_overruns_config := config.get(
+        CONF_DIAG_SPI_PROCESSING_OVERRUNS
+    ):
+        sens = await sensor.new_sensor(diag_spi_processing_overruns_config)
+        cg.add(var.set_diag_spi_processing_overruns_sensor(sens))
 
     phases = []
     ct_clamps = []

@@ -1,6 +1,5 @@
 #pragma once
 
-#include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/button/button.h"
 #ifdef USE_I2C
 #include "esphome/components/i2c/i2c.h"
@@ -295,14 +294,14 @@ class EmporiaVueComponent : public Component
   }
   void set_diag_heap_free_sensor(sensor::Sensor *sensor) { this->diag_heap_free_sensor_ = sensor; }
   void set_diag_heap_minimum_sensor(sensor::Sensor *sensor) { this->diag_heap_minimum_sensor_ = sensor; }
-  void set_diag_heap_largest_block_sensor(sensor::Sensor *sensor) {
-    this->diag_heap_largest_block_sensor_ = sensor;
-  }
-  void set_diag_heap_corruption_sensor(binary_sensor::BinarySensor *sensor) {
-    this->diag_heap_corruption_sensor_ = sensor;
-  }
   void set_diag_loop_stack_free_sensor(sensor::Sensor *sensor) { this->diag_loop_stack_free_sensor_ = sensor; }
   void set_diag_spi_stack_free_sensor(sensor::Sensor *sensor) { this->diag_spi_stack_free_sensor_ = sensor; }
+  void set_diag_spi_processing_load_sensor(sensor::Sensor *sensor) {
+    this->diag_spi_processing_load_sensor_ = sensor;
+  }
+  void set_diag_spi_processing_overruns_sensor(sensor::Sensor *sensor) {
+    this->diag_spi_processing_overruns_sensor_ = sensor;
+  }
 
   void backup_firmware();
   void install_firmware();
@@ -523,6 +522,7 @@ class EmporiaVueComponent : public Component
     bool current_peak_valid{false};
     bool current_fundamental_valid{false};
     uint8_t quality_flags{0};
+    uint8_t power_phase_valid_mask{0};
   };
 
   struct MeteringFrame {
@@ -885,10 +885,10 @@ class EmporiaVueComponent : public Component
   text_sensor::TextSensor *diag_restart_reason_sensor_{nullptr};
   sensor::Sensor *diag_heap_free_sensor_{nullptr};
   sensor::Sensor *diag_heap_minimum_sensor_{nullptr};
-  sensor::Sensor *diag_heap_largest_block_sensor_{nullptr};
-  binary_sensor::BinarySensor *diag_heap_corruption_sensor_{nullptr};
   sensor::Sensor *diag_loop_stack_free_sensor_{nullptr};
   sensor::Sensor *diag_spi_stack_free_sensor_{nullptr};
+  sensor::Sensor *diag_spi_processing_load_sensor_{nullptr};
+  sensor::Sensor *diag_spi_processing_overruns_sensor_{nullptr};
 
   uint16_t hardware_id_{0};
   bool connect_under_reset_{false};
@@ -953,6 +953,7 @@ class EmporiaVueComponent : public Component
   uint8_t spi_mux_current_delay_{4};
   uint32_t spi_current_fundamental_mask_{0};
   uint8_t spi_voltage_thd_mask_{0};
+  uint8_t spi_power_voltage_mask_[19]{};
   bool spi_waveform_analysis_required_{false};
   int16_t spi_adc_offsets_[22]{};
   int32_t spi_adc_offset_estimate_q8_[22]{};
@@ -973,6 +974,9 @@ class EmporiaVueComponent : public Component
   uint32_t spi_rx_crc_errors_{0};
   uint32_t spi_rx_queue_errors_{0};
   volatile uint32_t spi_processing_overruns_{0};
+  volatile uint32_t spi_processing_busy_us_{0};
+  uint32_t spi_diag_last_processing_busy_us_{0};
+  uint32_t spi_processing_load_window_start_ms_{0};
   uint32_t spi_rx_dma_errors_{0};
   uint32_t spi_rx_samd_overruns_{0};
   uint32_t spi_rx_frame_gaps_{0};

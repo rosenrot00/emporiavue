@@ -4,6 +4,7 @@
 
 #ifdef USE_ESP32
 #include <esp_heap_caps.h>
+#include <esp_timer.h>
 #include <freertos/task.h>
 #endif
 
@@ -115,10 +116,28 @@ void EmporiaVueComponent::publish_spi_diagnostics_() {
     this->diag_sample_rate_sensor_->publish_state(this->spi_sample_rate_hz_);
   }
 #ifdef USE_ESP32
+  const uint32_t now = millis();
+  const uint32_t processing_busy_us = this->spi_processing_busy_us_;
+  const uint32_t processing_busy_delta_us = processing_busy_us - this->spi_diag_last_processing_busy_us_;
+  const uint32_t processing_elapsed_ms = now - this->spi_processing_load_window_start_ms_;
+  float processing_load = 0.0f;
+  if (processing_elapsed_ms != 0) {
+    processing_load =
+        static_cast<float>(processing_busy_delta_us) / (static_cast<float>(processing_elapsed_ms) * 10.0f);
+    processing_load = std::min(processing_load, 100.0f);
+  }
+  this->spi_diag_last_processing_busy_us_ = processing_busy_us;
+  this->spi_processing_load_window_start_ms_ = now;
+
+  if (this->diag_spi_processing_load_sensor_ != nullptr) {
+    this->diag_spi_processing_load_sensor_->publish_state(processing_load);
+  }
+  if (this->diag_spi_processing_overruns_sensor_ != nullptr) {
+    this->diag_spi_processing_overruns_sensor_->publish_state(static_cast<float>(this->spi_processing_overruns_));
+  }
+
   const size_t heap_free = heap_caps_get_free_size(MALLOC_CAP_8BIT);
   const size_t heap_minimum = heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
-  const size_t heap_largest_block = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
-  const bool heap_valid = heap_caps_check_integrity_all(true);
   const UBaseType_t loop_stack_free = uxTaskGetStackHighWaterMark(nullptr);
   UBaseType_t spi_rx_stack_free = 0;
   UBaseType_t spi_metering_stack_free = 0;
@@ -140,12 +159,6 @@ void EmporiaVueComponent::publish_spi_diagnostics_() {
   if (this->diag_heap_minimum_sensor_ != nullptr) {
     this->diag_heap_minimum_sensor_->publish_state(static_cast<float>(heap_minimum));
   }
-  if (this->diag_heap_largest_block_sensor_ != nullptr) {
-    this->diag_heap_largest_block_sensor_->publish_state(static_cast<float>(heap_largest_block));
-  }
-  if (this->diag_heap_corruption_sensor_ != nullptr) {
-    this->diag_heap_corruption_sensor_->publish_state(!heap_valid);
-  }
   if (this->diag_loop_stack_free_sensor_ != nullptr) {
     this->diag_loop_stack_free_sensor_->publish_state(static_cast<float>(loop_stack_free));
   }
@@ -153,10 +166,10 @@ void EmporiaVueComponent::publish_spi_diagnostics_() {
     this->diag_spi_stack_free_sensor_->publish_state(static_cast<float>(spi_stack_free));
   }
   ESP_LOGI(TAG,
-           "Runtime memory: heap_free=%u heap_min=%u largest_block=%u heap_valid=%s "
+           "SPI runtime: processing_load=%.1f%% processing_overruns=%" PRIu32 " heap_free=%u heap_min=%u "
            "loop_stack_free=%u spi_stack_free=%u spi_rx_stack_free=%u spi_metering_stack_free=%u bytes",
-           static_cast<unsigned>(heap_free), static_cast<unsigned>(heap_minimum),
-           static_cast<unsigned>(heap_largest_block), YESNO(heap_valid), static_cast<unsigned>(loop_stack_free),
+           processing_load, this->spi_processing_overruns_, static_cast<unsigned>(heap_free),
+           static_cast<unsigned>(heap_minimum), static_cast<unsigned>(loop_stack_free),
            static_cast<unsigned>(spi_stack_free), static_cast<unsigned>(spi_rx_stack_free),
            static_cast<unsigned>(spi_metering_stack_free));
 #endif
@@ -285,6 +298,9 @@ void EmporiaVueComponent::setup_spi_receiver_(bool reset_statistics) {
     this->spi_rx_crc_errors_ = 0;
     this->spi_rx_queue_errors_ = 0;
     this->spi_processing_overruns_ = 0;
+    this->spi_processing_busy_us_ = 0;
+    this->spi_diag_last_processing_busy_us_ = 0;
+    this->spi_processing_load_window_start_ms_ = millis();
     this->spi_rx_dma_errors_ = 0;
     this->spi_rx_samd_overruns_ = 0;
     this->spi_rx_frame_gaps_ = 0;
@@ -642,7 +658,16 @@ void EmporiaVueComponent::spi_metering_task_() {
     const bool frame_ready = this->spi_processing_ready_queue_ != nullptr &&
                              xQueueReceive(this->spi_processing_ready_queue_, &frame, pdMS_TO_TICKS(20)) == pdTRUE;
     if (frame_ready && frame != nullptr) {
-      this->process_spi_frame_(*frame);
+      if (this->diagnostics_interval_ms_ != 0) {
+        const int64_t processing_started_us = esp_timer_get_time();
+        this->process_spi_frame_(*frame);
+        const int64_t processing_elapsed_us = esp_timer_get_time() - processing_started_us;
+        if (processing_elapsed_us > 0) {
+          this->spi_processing_busy_us_ += static_cast<uint32_t>(processing_elapsed_us);
+        }
+      } else {
+        this->process_spi_frame_(*frame);
+      }
       if (this->spi_processing_free_queue_ == nullptr ||
           xQueueSend(this->spi_processing_free_queue_, &frame, 0) != pdTRUE) {
         this->spi_rx_queue_errors_++;
@@ -839,6 +864,7 @@ void EmporiaVueComponent::push_spi_fundamental_sample_(const SpiRawScan &scan,
 void EmporiaVueComponent::configure_spi_analysis_requirements_() {
   this->spi_current_fundamental_mask_ = 0;
   this->spi_voltage_thd_mask_ = 0;
+  std::fill(this->spi_power_voltage_mask_, this->spi_power_voltage_mask_ + 19, 0);
   this->spi_waveform_analysis_required_ = false;
 
   for (const auto *phase : this->metering_phases_) {
@@ -854,11 +880,50 @@ void EmporiaVueComponent::configure_spi_analysis_requirements_() {
   }
 
   for (const auto *ct_clamp : this->metering_ct_clamps_) {
-    if (ct_clamp == nullptr || !ct_clamp->requires_current_fundamental()) {
+    if (ct_clamp == nullptr) {
       continue;
     }
     const uint8_t port = ct_clamp->get_input_port();
-    if (port < 19) {
+    if (port >= 19) {
+      continue;
+    }
+
+    uint8_t source_index = port;
+    if (port >= 3) {
+      source_index = 19;
+      for (uint8_t internal_index = 0; internal_index < 16; internal_index++) {
+        if (spi_mux_output_port(this->hardware_id_, internal_index) == port) {
+          source_index = static_cast<uint8_t>(3 + internal_index);
+          break;
+        }
+      }
+      if (source_index >= 19) {
+        continue;
+      }
+    }
+
+    // Dynamic assignments and phase detection must retain all three products.
+    // For a static circuit, only its configured phase or line pair can be read
+    // later, so the remaining products are provably unused.
+    uint8_t voltage_mask = 0;
+    if (!ct_clamp->get_phase_detection_candidates().empty()) {
+      voltage_mask = 0x07;
+    } else {
+      const auto *phase_a = ct_clamp->get_phase();
+      if (phase_a != nullptr && phase_a->get_input_wire() < 3) {
+        voltage_mask |= static_cast<uint8_t>(1U << phase_a->get_input_wire());
+      }
+      if (ct_clamp->is_line_pair()) {
+        const auto *phase_b = ct_clamp->get_line_pair_phase_b();
+        if (phase_b != nullptr && phase_b->get_input_wire() < 3) {
+          voltage_mask |= static_cast<uint8_t>(1U << phase_b->get_input_wire());
+        }
+      }
+    }
+    // Preserve the previous behavior for an incomplete or invalid CT setup.
+    this->spi_power_voltage_mask_[source_index] |= voltage_mask == 0 ? 0x07 : voltage_mask;
+
+    if (ct_clamp->requires_current_fundamental()) {
       this->spi_current_fundamental_mask_ |= 1UL << port;
       this->spi_waveform_analysis_required_ = true;
     }
@@ -930,17 +995,26 @@ bool EmporiaVueComponent::accumulate_spi_voltage_cycle_(const SpiCrossingPositio
     const auto &sample = this->spi_voltage_sample_ring_[index];
     const float weight = sample_weight(offset);
     if (weight > 0.0f) {
+      // Interior samples have an exact weight of one. Apply the fractional
+      // boundary weight to the shared oscillator once instead of repeating it
+      // for every voltage and current phasor contribution.
+      float sample_cos = fundamental_cos;
+      float sample_sin = fundamental_sin;
+      if (weight != 1.0f) {
+        sample_cos *= weight;
+        sample_sin *= weight;
+      }
       for (uint8_t phase = 0; phase < 3; phase++) {
-        cycle_i[phase] += static_cast<float>(sample.voltage[phase]) * fundamental_cos * weight;
-        cycle_q[phase] += static_cast<float>(sample.voltage[phase]) * fundamental_sin * weight;
+        cycle_i[phase] += static_cast<float>(sample.voltage[phase]) * sample_cos;
+        cycle_q[phase] += static_cast<float>(sample.voltage[phase]) * sample_sin;
         if ((this->spi_current_fundamental_mask_ & (1UL << phase)) == 0) {
           continue;
         }
         const int32_t current_difference =
             static_cast<int32_t>(sample.main_current[phase]) - this->spi_adc_offsets_[3 + phase];
         const float oriented_current = -static_cast<float>(current_difference);
-        acc.current_fund_i[phase] += oriented_current * fundamental_cos * weight;
-        acc.current_fund_q[phase] += oriented_current * fundamental_sin * weight;
+        acc.current_fund_i[phase] += oriented_current * sample_cos;
+        acc.current_fund_q[phase] += oriented_current * sample_sin;
         acc.current_fund_weight[phase] += weight;
       }
       if (sample.mux_index < 8) {
@@ -955,8 +1029,8 @@ bool EmporiaVueComponent::accumulate_spi_voltage_cycle_(const SpiCrossingPositio
           const int32_t current_difference =
               static_cast<int32_t>(sample.mux_current[mux_side]) - this->spi_adc_offsets_[offset_index];
           const float oriented_current = -static_cast<float>(current_difference);
-          acc.current_fund_i[clamp_index] += oriented_current * fundamental_cos * weight;
-          acc.current_fund_q[clamp_index] += oriented_current * fundamental_sin * weight;
+          acc.current_fund_i[clamp_index] += oriented_current * sample_cos;
+          acc.current_fund_q[clamp_index] += oriented_current * sample_sin;
           acc.current_fund_weight[clamp_index] += weight;
         }
       }
@@ -972,6 +1046,14 @@ bool EmporiaVueComponent::accumulate_spi_voltage_cycle_(const SpiCrossingPositio
   }
 
   if (this->spi_voltage_thd_mask_ != 0) {
+    uint8_t active_phases[3]{};
+    uint8_t active_phase_count = 0;
+    for (uint8_t phase = 0; phase < 3; phase++) {
+      if ((this->spi_voltage_thd_mask_ & (1U << phase)) != 0) {
+        active_phases[active_phase_count++] = phase;
+      }
+    }
+
     // The dedicated metering task has ample measured stack headroom for the
     // complete H2..H40 workspace. Processing all bins together avoids walking
     // the same voltage cycle five times without changing the calculation.
@@ -1012,15 +1094,20 @@ bool EmporiaVueComponent::accumulate_spi_voltage_cycle_(const SpiCrossingPositio
         const auto &sample = this->spi_voltage_sample_ring_[index];
         const float weight = sample_weight(offset);
         if (weight > 0.0f) {
-          for (uint8_t phase = 0; phase < 3; phase++) {
-            if ((this->spi_voltage_thd_mask_ & (1U << phase)) == 0) {
-              continue;
+          const bool fractional_boundary_sample = weight != 1.0f;
+          for (uint8_t active_index = 0; active_index < active_phase_count; active_index++) {
+            const uint8_t phase = active_phases[active_index];
+            float voltage = static_cast<float>(static_cast<int32_t>(sample.voltage[phase]) -
+                                               this->spi_adc_offsets_[phase]);
+            // Only the samples overlapping a cycle boundary need weighting.
+            // Hoisting it out of the H2..H40 loop removes two redundant
+            // multiplications per harmonic and phase for interior samples.
+            if (fractional_boundary_sample) {
+              voltage *= weight;
             }
-            const float voltage = static_cast<float>(static_cast<int32_t>(sample.voltage[phase]) -
-                                                     this->spi_adc_offsets_[phase]);
             for (uint8_t harmonic = 0; harmonic < harmonic_count; harmonic++) {
-              harmonic_i[phase][harmonic] += voltage * harmonic_cos[harmonic] * weight;
-              harmonic_q[phase][harmonic] += voltage * harmonic_sin[harmonic] * weight;
+              harmonic_i[phase][harmonic] += voltage * harmonic_cos[harmonic];
+              harmonic_q[phase][harmonic] += voltage * harmonic_sin[harmonic];
             }
           }
         }
@@ -1034,10 +1121,8 @@ bool EmporiaVueComponent::accumulate_spi_voltage_cycle_(const SpiCrossingPositio
         }
       }
 
-      for (uint8_t phase = 0; phase < 3; phase++) {
-        if ((this->spi_voltage_thd_mask_ & (1U << phase)) == 0) {
-          continue;
-        }
+      for (uint8_t active_index = 0; active_index < active_phase_count; active_index++) {
+        const uint8_t phase = active_phases[active_index];
         acc.voltage_thd_requested[phase] = true;
         for (uint8_t harmonic = 0; harmonic < harmonic_count; harmonic++) {
           const uint8_t output_index = static_cast<uint8_t>(harmonic_base + harmonic);
@@ -1256,7 +1341,11 @@ void EmporiaVueComponent::process_spi_raw_scan_(uint8_t current_index) {
     acc.current_square_sum[phase] += static_cast<int64_t>(current_difference) * current_difference;
     acc.current_peak_abs[phase] =
         std::max(acc.current_peak_abs[phase], static_cast<uint32_t>(std::abs(current_difference)));
+    const uint8_t voltage_mask = this->spi_power_voltage_mask_[phase];
     for (uint8_t voltage_phase = 0; voltage_phase < 3; voltage_phase++) {
+      if ((voltage_mask & (1U << voltage_phase)) == 0) {
+        continue;
+      }
       acc.raw_power_sum[phase][voltage_phase] -=
           static_cast<int64_t>(current_difference) * voltage_differences[voltage_phase];
     }
@@ -1281,7 +1370,11 @@ void EmporiaVueComponent::process_spi_raw_scan_(uint8_t current_index) {
       acc.current_square_sum[clamp_index] += static_cast<int64_t>(current_difference) * current_difference;
       acc.current_peak_abs[clamp_index] =
           std::max(acc.current_peak_abs[clamp_index], static_cast<uint32_t>(std::abs(current_difference)));
+      const uint8_t voltage_mask = this->spi_power_voltage_mask_[clamp_index];
       for (uint8_t voltage_phase = 0; voltage_phase < 3; voltage_phase++) {
+        if ((voltage_mask & (1U << voltage_phase)) == 0) {
+          continue;
+        }
         acc.raw_power_sum[clamp_index][voltage_phase] -=
             static_cast<int64_t>(current_difference) * voltage_differences[voltage_phase];
       }
@@ -1581,7 +1674,12 @@ void EmporiaVueComponent::finish_spi_metering_window_(uint32_t sequence, uint32_
     if ((this->spi_current_fundamental_mask_ & (1UL << phase)) != 0) {
       set_current_fundamental(frame.clamps[phase], phase);
     }
+    const uint8_t voltage_mask = this->spi_power_voltage_mask_[phase];
+    frame.clamps[phase].power_phase_valid_mask = voltage_mask;
     for (uint8_t voltage_phase = 0; voltage_phase < 3; voltage_phase++) {
+      if ((voltage_mask & (1U << voltage_phase)) == 0) {
+        continue;
+      }
       frame.clamps[phase].power_raw_by_phase[voltage_phase] =
           scale_spi_power_(acc.raw_power_sum[phase][voltage_phase], SPI_POWER_SCALE_MULTIPLIER, acc.sample_count);
     }
@@ -1614,7 +1712,12 @@ void EmporiaVueComponent::finish_spi_metering_window_(uint32_t sequence, uint32_
     if ((this->spi_current_fundamental_mask_ & (1UL << output_port)) != 0) {
       set_current_fundamental(frame.clamps[output_port], source_index);
     }
+    const uint8_t voltage_mask = this->spi_power_voltage_mask_[source_index];
+    frame.clamps[output_port].power_phase_valid_mask = voltage_mask;
     for (uint8_t voltage_phase = 0; voltage_phase < 3; voltage_phase++) {
+      if ((voltage_mask & (1U << voltage_phase)) == 0) {
+        continue;
+      }
       frame.clamps[output_port].power_raw_by_phase[voltage_phase] =
           scale_spi_power_(acc.raw_power_sum[source_index][voltage_phase], SPI_POWER_SCALE_MULTIPLIER, mux_count);
     }

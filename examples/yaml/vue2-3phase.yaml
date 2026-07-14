@@ -33,7 +33,6 @@ packages:
 
 esp32:
   board: esp32dev
-  cpu_frequency: 160MHz
   framework:
     type: esp-idf
     version: recommended

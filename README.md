@@ -941,8 +941,11 @@ emporiavue:
   diagnostics_interval: 30s
 ```
 
-Available entities cover frame errors, transfer errors, overruns, recoveries, last window sample count, and measured SPI
-sample rate. They are intended for troubleshooting, not normal dashboards.
+Available entities cover frame errors, transfer errors, overruns, recoveries, last window sample count, measured SPI
+sample rate, ESP processing load, processing-queue overruns, free/minimum heap, and task stack reserves. They are intended
+for troubleshooting, not normal dashboards. `ESP SPI Processing Load` is the percentage of wall time spent processing
+SPI metering frames during the diagnostics interval; a rising `ESP SPI Processing Overruns` counter means complete frames
+had to be dropped because the processing queue was full.
 
 ### SAMD09 firmware management
 

@@ -204,6 +204,7 @@ bool EmporiaVueComponent::decode_i2c_metering_packet_(const I2CMeteringPacket &p
   }
   for (uint8_t clamp = 0; clamp < 19; clamp++) {
     candidate.clamps[clamp].current_raw = packet.current[clamp];
+    candidate.clamps[clamp].power_phase_valid_mask = 0x07;
     for (uint8_t phase = 0; phase < 3; phase++) {
       candidate.clamps[clamp].power_raw_by_phase[phase] = packet.power[clamp].phase[phase];
     }
