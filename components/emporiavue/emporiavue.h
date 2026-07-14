@@ -781,7 +781,7 @@ class EmporiaVueComponent : public Component
                            uint16_t *sample_period_ticks) const;
   void reset_spi_metering_state_();
   void decode_spi_raw_frame_(const uint8_t *frame, uint32_t sequence, uint32_t flags, uint32_t sample_counter);
-  void process_spi_raw_scan_(const SpiRawScan &scan);
+  void process_spi_raw_scan_(uint8_t current_index);
   void configure_spi_analysis_requirements_();
   void push_spi_fundamental_sample_(const SpiRawScan &scan, const SpiRawScan &main_current_scan,
                                     const SpiRawScan &mux_current_scan);

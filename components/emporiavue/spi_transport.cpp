@@ -27,6 +27,7 @@ static constexpr uint8_t SPI_RAW_SCAN_SIZE = 18;
 static constexpr uint8_t SPI_RAW_SCAN_COUNT = 56;
 static constexpr float SPI_SAMPLE_TIMEBASE_HZ = 16000000.0f;
 static constexpr uint16_t SPI_RX_RECOVERY_INVALID_STREAK = 64;
+static constexpr uint8_t SPI_RX_MAX_IMMEDIATE_RESULTS = SPI_RX_QUEUE_SIZE;
 static constexpr uint32_t SPI_RX_VALID_FRAME_TIMEOUT_MS = 2000;
 static constexpr uint8_t SPI_RX_SOFT_RECOVERIES_BEFORE_SAMD_RESET = 3;
 static constexpr uint32_t SPI_RX_SAMD_RESET_MIN_INTERVAL_MS = 2000;
@@ -548,15 +549,31 @@ void EmporiaVueComponent::spi_rx_task_trampoline_(void *arg) {
 }
 
 void EmporiaVueComponent::spi_rx_task_() {
+  uint8_t immediate_results = 0;
   while (!this->spi_rx_task_stop_ || (!this->spi_rx_force_stop_ && this->spi_rx_inflight_ > 0)) {
     spi_slave_transaction_t *transaction = nullptr;
+    const TickType_t wait_start = xTaskGetTickCount();
     const esp_err_t err = spi_slave_get_trans_result(this->spi_host_, &transaction, pdMS_TO_TICKS(20));
+    const bool result_was_immediate = xTaskGetTickCount() == wait_start;
     if (err == ESP_OK) {
       this->process_spi_transaction_(transaction);
+      if (!result_was_immediate) {
+        immediate_results = 0;
+      } else if (++immediate_results >= SPI_RX_MAX_IMMEDIATE_RESULTS) {
+        immediate_results = 0;
+        if (!this->spi_rx_task_stop_) {
+          // A full queue was ready without blocking. Sleep for one scheduler tick so lower-priority system and idle
+          // tasks can run; normal receive waits already provide that opportunity and add no artificial delay.
+          vTaskDelay(1);
+        }
+      }
     } else if (err != ESP_ERR_TIMEOUT && !this->spi_rx_task_stop_) {
+      immediate_results = 0;
       this->spi_rx_queue_errors_++;
       this->spi_rx_recover_requested_ = true;
       ESP_LOGD(TAG, "SAMD09 SPI get result failed: %d", static_cast<int>(err));
+    } else {
+      immediate_results = 0;
     }
   }
   this->spi_rx_task_handle_ = nullptr;
@@ -980,7 +997,8 @@ void EmporiaVueComponent::decode_spi_raw_frame_(const uint8_t *frame, uint32_t s
 
   const uint8_t *payload = frame + SPI_RAW_FRAME_HEADER_SIZE;
   for (uint8_t scan_index = 0; scan_index < SPI_RAW_SCAN_COUNT; scan_index++) {
-    SpiRawScan scan{};
+    const uint8_t current_index = this->spi_raw_scan_ring_index_;
+    auto &scan = this->spi_raw_scan_ring_[current_index];
     const uint8_t *scan_data = payload + static_cast<uint16_t>(scan_index) * SPI_RAW_SCAN_SIZE;
     auto read_i16 = [](const uint8_t *data, uint8_t offset) -> int16_t {
       const uint16_t raw = static_cast<uint16_t>(data[offset]) | (static_cast<uint16_t>(data[offset + 1]) << 8);
@@ -992,7 +1010,7 @@ void EmporiaVueComponent::decode_spi_raw_frame_(const uint8_t *frame, uint32_t s
     scan.sample_counter = unwrapped_sample_counter + scan_index;
     scan.mux_index = scan_data[16];
 
-    this->process_spi_raw_scan_(scan);
+    this->process_spi_raw_scan_(current_index);
     auto &acc = this->spi_metering_accumulator_;
     if (this->spi_metering_window_synced_ && acc.line1_period_count != 0) {
       const float period_samples = acc.cycle_count[0] == 0
@@ -1008,9 +1026,8 @@ void EmporiaVueComponent::decode_spi_raw_frame_(const uint8_t *frame, uint32_t s
   }
 }
 
-void EmporiaVueComponent::process_spi_raw_scan_(const SpiRawScan &scan) {
-  this->spi_raw_scan_ring_[this->spi_raw_scan_ring_index_] = scan;
-  const uint8_t current_index = this->spi_raw_scan_ring_index_;
+void EmporiaVueComponent::process_spi_raw_scan_(uint8_t current_index) {
+  const auto &scan = this->spi_raw_scan_ring_[current_index];
   this->spi_raw_scan_ring_index_ = static_cast<uint8_t>((this->spi_raw_scan_ring_index_ + 1) % 6);
   if (this->spi_raw_scan_ring_count_ < 6) {
     this->spi_raw_scan_ring_count_++;
