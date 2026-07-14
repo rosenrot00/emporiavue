@@ -4,6 +4,7 @@
 
 #ifdef USE_ESP32
 #include <esp_heap_caps.h>
+#include <freertos/task.h>
 #endif
 
 #include <algorithm>
@@ -113,6 +114,42 @@ void EmporiaVueComponent::publish_spi_diagnostics_() {
   if (this->diag_sample_rate_sensor_ != nullptr && this->spi_sample_rate_hz_ > 1.0f) {
     this->diag_sample_rate_sensor_->publish_state(this->spi_sample_rate_hz_);
   }
+#ifdef USE_ESP32
+  const size_t heap_free = heap_caps_get_free_size(MALLOC_CAP_8BIT);
+  const size_t heap_minimum = heap_caps_get_minimum_free_size(MALLOC_CAP_8BIT);
+  const size_t heap_largest_block = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+  const bool heap_valid = heap_caps_check_integrity_all(true);
+  const UBaseType_t loop_stack_free = uxTaskGetStackHighWaterMark(nullptr);
+  UBaseType_t spi_stack_free = 0;
+  const TaskHandle_t spi_task = this->spi_rx_task_handle_;
+  if (spi_task != nullptr) {
+    spi_stack_free = uxTaskGetStackHighWaterMark(spi_task);
+  }
+  if (this->diag_heap_free_sensor_ != nullptr) {
+    this->diag_heap_free_sensor_->publish_state(static_cast<float>(heap_free));
+  }
+  if (this->diag_heap_minimum_sensor_ != nullptr) {
+    this->diag_heap_minimum_sensor_->publish_state(static_cast<float>(heap_minimum));
+  }
+  if (this->diag_heap_largest_block_sensor_ != nullptr) {
+    this->diag_heap_largest_block_sensor_->publish_state(static_cast<float>(heap_largest_block));
+  }
+  if (this->diag_heap_corruption_sensor_ != nullptr) {
+    this->diag_heap_corruption_sensor_->publish_state(!heap_valid);
+  }
+  if (this->diag_loop_stack_free_sensor_ != nullptr) {
+    this->diag_loop_stack_free_sensor_->publish_state(static_cast<float>(loop_stack_free));
+  }
+  if (this->diag_spi_stack_free_sensor_ != nullptr && spi_task != nullptr) {
+    this->diag_spi_stack_free_sensor_->publish_state(static_cast<float>(spi_stack_free));
+  }
+  ESP_LOGI(TAG,
+           "Runtime memory: heap_free=%u heap_min=%u largest_block=%u heap_valid=%s "
+           "loop_stack_free=%u spi_stack_free=%u bytes",
+           static_cast<unsigned>(heap_free), static_cast<unsigned>(heap_minimum),
+           static_cast<unsigned>(heap_largest_block), YESNO(heap_valid), static_cast<unsigned>(loop_stack_free),
+           static_cast<unsigned>(spi_stack_free));
+#endif
 }
 
 void EmporiaVueComponent::setup_spi_receiver_(bool reset_statistics) {
@@ -728,8 +765,6 @@ bool EmporiaVueComponent::accumulate_spi_voltage_cycle_(const SpiCrossingPositio
     return false;
   }
 
-  float cycle_i[3]{};
-  float cycle_q[3]{};
   bool voltage_thd_required[3]{};
   bool any_voltage_thd_required = false;
   for (const auto *phase_config : this->metering_phases_) {
@@ -740,70 +775,52 @@ bool EmporiaVueComponent::accumulate_spi_voltage_cycle_(const SpiCrossingPositio
     voltage_thd_required[phase_config->get_input_wire()] = true;
     any_voltage_thd_required = true;
   }
-  float harmonic_i[3][SPI_VOLTAGE_THD_HARMONIC_COUNT]{};
-  float harmonic_q[3][SPI_VOLTAGE_THD_HARMONIC_COUNT]{};
-  float harmonic_cos[SPI_VOLTAGE_THD_HARMONIC_COUNT]{};
-  float harmonic_sin[SPI_VOLTAGE_THD_HARMONIC_COUNT]{};
-  float harmonic_step_cos[SPI_VOLTAGE_THD_HARMONIC_COUNT]{};
-  float harmonic_step_sin[SPI_VOLTAGE_THD_HARMONIC_COUNT]{};
-  float current_cycle_i[19]{};
-  float current_cycle_q[19]{};
-  float current_cycle_weight[19]{};
-  float cycle_weight = 0.0f;
+
   const float phase_step = SPI_TWO_PI / period_samples;
   const float step_cos = std::cos(phase_step);
   const float step_sin = std::sin(phase_step);
   const float first_from_start = -start_from_first;
   const float first_phase = phase_step * first_from_start;
-  float fundamental_cos = std::cos(first_phase);
-  float fundamental_sin = std::sin(first_phase);
-  if (any_voltage_thd_required) {
-    // Build the H2..H40 oscillators recursively from the fundamental to avoid per-harmonic trig calls.
-    float order_cos = fundamental_cos;
-    float order_sin = fundamental_sin;
-    float order_step_cos = step_cos;
-    float order_step_sin = step_sin;
-    for (uint8_t index = 0; index < SPI_VOLTAGE_THD_HARMONIC_COUNT; index++) {
-      const float next_order_cos = order_cos * fundamental_cos - order_sin * fundamental_sin;
-      order_sin = order_sin * fundamental_cos + order_cos * fundamental_sin;
-      order_cos = next_order_cos;
-      harmonic_cos[index] = order_cos;
-      harmonic_sin[index] = order_sin;
+  const float first_fundamental_cos = std::cos(first_phase);
+  const float first_fundamental_sin = std::sin(first_phase);
 
-      const float next_order_step_cos = order_step_cos * step_cos - order_step_sin * step_sin;
-      order_step_sin = order_step_sin * step_cos + order_step_cos * step_sin;
-      order_step_cos = next_order_step_cos;
-      harmonic_step_cos[index] = order_step_cos;
-      harmonic_step_sin[index] = order_step_sin;
-    }
-  }
-  for (uint16_t offset = 0; offset < this->spi_voltage_sample_ring_count_; offset++) {
-    const uint16_t index = static_cast<uint16_t>((first_index + offset) % SPI_VOLTAGE_SAMPLE_RING_SIZE);
-    const auto &sample = this->spi_voltage_sample_ring_[index];
+  auto sample_weight = [first_from_start, period_samples](uint16_t offset) -> float {
     const float sample_from_start = first_from_start + static_cast<float>(offset);
     const float overlap_start = std::max(0.0f, sample_from_start - 0.5f);
     const float overlap_end = std::min(period_samples, sample_from_start + 0.5f);
-    const float weight = overlap_end - overlap_start;
+    return overlap_end - overlap_start;
+  };
+
+  // Verify the complete cycle before writing anything to the window accumulator.
+  // This lets the large current and THD workspaces be accumulated directly instead
+  // of placing almost 2 KiB of temporary arrays on the SPI receive task's stack.
+  float cycle_weight = 0.0f;
+  for (uint16_t offset = 0; offset < this->spi_voltage_sample_ring_count_; offset++) {
+    cycle_weight += std::max(0.0f, sample_weight(offset));
+  }
+  if (cycle_weight < period_samples * 0.99f) {
+    return false;
+  }
+
+  auto &acc = this->spi_metering_accumulator_;
+  float cycle_i[3]{};
+  float cycle_q[3]{};
+  float fundamental_cos = first_fundamental_cos;
+  float fundamental_sin = first_fundamental_sin;
+  for (uint16_t offset = 0; offset < this->spi_voltage_sample_ring_count_; offset++) {
+    const uint16_t index = static_cast<uint16_t>((first_index + offset) % SPI_VOLTAGE_SAMPLE_RING_SIZE);
+    const auto &sample = this->spi_voltage_sample_ring_[index];
+    const float weight = sample_weight(offset);
     if (weight > 0.0f) {
       for (uint8_t phase = 0; phase < 3; phase++) {
         cycle_i[phase] += static_cast<float>(sample.voltage[phase]) * fundamental_cos * weight;
         cycle_q[phase] += static_cast<float>(sample.voltage[phase]) * fundamental_sin * weight;
-
-        if (voltage_thd_required[phase]) {
-          const float voltage = static_cast<float>(static_cast<int32_t>(sample.voltage[phase]) -
-                                                   this->spi_adc_offsets_[phase]);
-          for (uint8_t index = 0; index < SPI_VOLTAGE_THD_HARMONIC_COUNT; index++) {
-            harmonic_i[phase][index] += voltage * harmonic_cos[index] * weight;
-            harmonic_q[phase][index] += voltage * harmonic_sin[index] * weight;
-          }
-        }
-
         const int32_t current_difference =
             static_cast<int32_t>(sample.main_current[phase]) - this->spi_adc_offsets_[3 + phase];
         const float oriented_current = -static_cast<float>(current_difference);
-        current_cycle_i[phase] += oriented_current * fundamental_cos * weight;
-        current_cycle_q[phase] += oriented_current * fundamental_sin * weight;
-        current_cycle_weight[phase] += weight;
+        acc.current_fund_i[phase] += oriented_current * fundamental_cos * weight;
+        acc.current_fund_q[phase] += oriented_current * fundamental_sin * weight;
+        acc.current_fund_weight[phase] += weight;
       }
       if (sample.mux_index < 8) {
         for (uint8_t mux_side = 0; mux_side < 2; mux_side++) {
@@ -813,48 +830,98 @@ bool EmporiaVueComponent::accumulate_spi_voltage_cycle_(const SpiCrossingPositio
           const int32_t current_difference =
               static_cast<int32_t>(sample.mux_current[mux_side]) - this->spi_adc_offsets_[offset_index];
           const float oriented_current = -static_cast<float>(current_difference);
-          current_cycle_i[clamp_index] += oriented_current * fundamental_cos * weight;
-          current_cycle_q[clamp_index] += oriented_current * fundamental_sin * weight;
-          current_cycle_weight[clamp_index] += weight;
+          acc.current_fund_i[clamp_index] += oriented_current * fundamental_cos * weight;
+          acc.current_fund_q[clamp_index] += oriented_current * fundamental_sin * weight;
+          acc.current_fund_weight[clamp_index] += weight;
         }
       }
-      cycle_weight += weight;
     }
     const float next_cos = fundamental_cos * step_cos - fundamental_sin * step_sin;
     fundamental_sin = fundamental_sin * step_cos + fundamental_cos * step_sin;
     fundamental_cos = next_cos;
-    if (any_voltage_thd_required) {
-      for (uint8_t index = 0; index < SPI_VOLTAGE_THD_HARMONIC_COUNT; index++) {
-        const float next_harmonic_cos = harmonic_cos[index] * harmonic_step_cos[index] -
-                                        harmonic_sin[index] * harmonic_step_sin[index];
-        harmonic_sin[index] = harmonic_sin[index] * harmonic_step_cos[index] +
-                              harmonic_cos[index] * harmonic_step_sin[index];
-        harmonic_cos[index] = next_harmonic_cos;
-      }
-    }
   }
 
-  if (cycle_weight < period_samples * 0.99f) {
-    return false;
-  }
-
-  auto &acc = this->spi_metering_accumulator_;
   for (uint8_t phase = 0; phase < 3; phase++) {
     acc.voltage_fund_i[phase] += cycle_i[phase];
     acc.voltage_fund_q[phase] += cycle_q[phase];
-    if (voltage_thd_required[phase]) {
-      acc.voltage_thd_requested[phase] = true;
-      for (uint8_t index = 0; index < SPI_VOLTAGE_THD_HARMONIC_COUNT; index++) {
-        acc.voltage_harmonic_i[phase][index] += harmonic_i[phase][index];
-        acc.voltage_harmonic_q[phase][index] += harmonic_q[phase][index];
+  }
+
+  if (any_voltage_thd_required) {
+    static constexpr uint8_t HARMONIC_BATCH_SIZE = 8;
+    float order_cos = first_fundamental_cos;
+    float order_sin = first_fundamental_sin;
+    float order_step_cos = step_cos;
+    float order_step_sin = step_sin;
+    for (uint8_t harmonic_base = 0; harmonic_base < SPI_VOLTAGE_THD_HARMONIC_COUNT;
+         harmonic_base = static_cast<uint8_t>(harmonic_base + HARMONIC_BATCH_SIZE)) {
+      const uint8_t harmonic_count = std::min<uint8_t>(
+          HARMONIC_BATCH_SIZE, static_cast<uint8_t>(SPI_VOLTAGE_THD_HARMONIC_COUNT - harmonic_base));
+      float harmonic_i[3][HARMONIC_BATCH_SIZE]{};
+      float harmonic_q[3][HARMONIC_BATCH_SIZE]{};
+      float harmonic_cos[HARMONIC_BATCH_SIZE]{};
+      float harmonic_sin[HARMONIC_BATCH_SIZE]{};
+      float harmonic_step_cos[HARMONIC_BATCH_SIZE]{};
+      float harmonic_step_sin[HARMONIC_BATCH_SIZE]{};
+
+      // Build the oscillators for this bounded H2..H40 batch recursively.
+      // Batching retains the sample-major calculation without placing every
+      // harmonic's workspace on the receive task's stack at once.
+      for (uint8_t harmonic = 0; harmonic < harmonic_count; harmonic++) {
+        const float next_order_cos =
+            order_cos * first_fundamental_cos - order_sin * first_fundamental_sin;
+        order_sin = order_sin * first_fundamental_cos + order_cos * first_fundamental_sin;
+        order_cos = next_order_cos;
+        harmonic_cos[harmonic] = order_cos;
+        harmonic_sin[harmonic] = order_sin;
+
+        const float next_order_step_cos = order_step_cos * step_cos - order_step_sin * step_sin;
+        order_step_sin = order_step_sin * step_cos + order_step_cos * step_sin;
+        order_step_cos = next_order_step_cos;
+        harmonic_step_cos[harmonic] = order_step_cos;
+        harmonic_step_sin[harmonic] = order_step_sin;
+      }
+
+      for (uint16_t offset = 0; offset < this->spi_voltage_sample_ring_count_; offset++) {
+        const uint16_t index = static_cast<uint16_t>((first_index + offset) % SPI_VOLTAGE_SAMPLE_RING_SIZE);
+        const auto &sample = this->spi_voltage_sample_ring_[index];
+        const float weight = sample_weight(offset);
+        if (weight > 0.0f) {
+          for (uint8_t phase = 0; phase < 3; phase++) {
+            if (!voltage_thd_required[phase]) {
+              continue;
+            }
+            const float voltage = static_cast<float>(static_cast<int32_t>(sample.voltage[phase]) -
+                                                     this->spi_adc_offsets_[phase]);
+            for (uint8_t harmonic = 0; harmonic < harmonic_count; harmonic++) {
+              harmonic_i[phase][harmonic] += voltage * harmonic_cos[harmonic] * weight;
+              harmonic_q[phase][harmonic] += voltage * harmonic_sin[harmonic] * weight;
+            }
+          }
+        }
+        for (uint8_t harmonic = 0; harmonic < harmonic_count; harmonic++) {
+          const float next_harmonic_cos =
+              harmonic_cos[harmonic] * harmonic_step_cos[harmonic] -
+              harmonic_sin[harmonic] * harmonic_step_sin[harmonic];
+          harmonic_sin[harmonic] = harmonic_sin[harmonic] * harmonic_step_cos[harmonic] +
+                                   harmonic_cos[harmonic] * harmonic_step_sin[harmonic];
+          harmonic_cos[harmonic] = next_harmonic_cos;
+        }
+      }
+
+      for (uint8_t phase = 0; phase < 3; phase++) {
+        if (!voltage_thd_required[phase]) {
+          continue;
+        }
+        acc.voltage_thd_requested[phase] = true;
+        for (uint8_t harmonic = 0; harmonic < harmonic_count; harmonic++) {
+          const uint8_t output_index = static_cast<uint8_t>(harmonic_base + harmonic);
+          acc.voltage_harmonic_i[phase][output_index] += harmonic_i[phase][harmonic];
+          acc.voltage_harmonic_q[phase][output_index] += harmonic_q[phase][harmonic];
+        }
       }
     }
   }
-  for (uint8_t clamp = 0; clamp < 19; clamp++) {
-    acc.current_fund_i[clamp] += current_cycle_i[clamp];
-    acc.current_fund_q[clamp] += current_cycle_q[clamp];
-    acc.current_fund_weight[clamp] += current_cycle_weight[clamp];
-  }
+
   acc.voltage_fund_weight += cycle_weight;
   acc.voltage_fund_cycle_count++;
   return true;

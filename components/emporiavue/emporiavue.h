@@ -1,5 +1,6 @@
 #pragma once
 
+#include "esphome/components/binary_sensor/binary_sensor.h"
 #include "esphome/components/button/button.h"
 #ifdef USE_I2C
 #include "esphome/components/i2c/i2c.h"
@@ -254,6 +255,16 @@ class EmporiaVueComponent : public Component
   void set_diag_recoveries_sensor(sensor::Sensor *sensor) { this->diag_recoveries_sensor_ = sensor; }
   void set_diag_last_frame_samples_sensor(sensor::Sensor *sensor) { this->diag_last_frame_samples_sensor_ = sensor; }
   void set_diag_sample_rate_sensor(sensor::Sensor *sensor) { this->diag_sample_rate_sensor_ = sensor; }
+  void set_diag_heap_free_sensor(sensor::Sensor *sensor) { this->diag_heap_free_sensor_ = sensor; }
+  void set_diag_heap_minimum_sensor(sensor::Sensor *sensor) { this->diag_heap_minimum_sensor_ = sensor; }
+  void set_diag_heap_largest_block_sensor(sensor::Sensor *sensor) {
+    this->diag_heap_largest_block_sensor_ = sensor;
+  }
+  void set_diag_heap_corruption_sensor(binary_sensor::BinarySensor *sensor) {
+    this->diag_heap_corruption_sensor_ = sensor;
+  }
+  void set_diag_loop_stack_free_sensor(sensor::Sensor *sensor) { this->diag_loop_stack_free_sensor_ = sensor; }
+  void set_diag_spi_stack_free_sensor(sensor::Sensor *sensor) { this->diag_spi_stack_free_sensor_ = sensor; }
 
   void backup_firmware();
   void install_firmware();
@@ -799,6 +810,12 @@ class EmporiaVueComponent : public Component
   sensor::Sensor *diag_recoveries_sensor_{nullptr};
   sensor::Sensor *diag_last_frame_samples_sensor_{nullptr};
   sensor::Sensor *diag_sample_rate_sensor_{nullptr};
+  sensor::Sensor *diag_heap_free_sensor_{nullptr};
+  sensor::Sensor *diag_heap_minimum_sensor_{nullptr};
+  sensor::Sensor *diag_heap_largest_block_sensor_{nullptr};
+  binary_sensor::BinarySensor *diag_heap_corruption_sensor_{nullptr};
+  sensor::Sensor *diag_loop_stack_free_sensor_{nullptr};
+  sensor::Sensor *diag_spi_stack_free_sensor_{nullptr};
 
   uint16_t hardware_id_{0};
   bool connect_under_reset_{false};
