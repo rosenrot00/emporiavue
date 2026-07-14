@@ -35,7 +35,7 @@ static constexpr uint32_t SPI_VUE3_MAIN_SAMPLE_COUNT = 10000;
 static constexpr uint16_t SPI_REFERENCE_WINDOW_MS = 500;
 static constexpr uint32_t SPI_RX_TASK_STACK_SIZE = 4096;
 static constexpr uint32_t SPI_METERING_TASK_STACK_SIZE = 8192;
-static constexpr uint8_t SPI_METERING_MAX_FRAMES_PER_SLICE = 4;
+static constexpr uint32_t SPI_METERING_MAX_CONTINUOUS_WORK_MS = 50;
 static constexpr uint32_t SPI_MAIN_RMS_SCALE_NUMERATOR = 100;
 static constexpr uint32_t SPI_CURRENT_RMS_SCALE_NUMERATOR = 100;
 static constexpr uint32_t SPI_CURRENT_PEAK_SCALE_MULTIPLIER = 10;
@@ -528,8 +528,10 @@ void EmporiaVueComponent::handoff_spi_transaction_(spi_slave_transaction_t *tran
   }
 
   SpiQueuedFrame *frame = nullptr;
+  // The transport task must never wait for metering. If every processing frame
+  // is busy, drop this complete frame and immediately requeue its DMA buffer.
   if (this->spi_processing_free_queue_ != nullptr && this->spi_processing_ready_queue_ != nullptr &&
-      xQueueReceive(this->spi_processing_free_queue_, &frame, pdMS_TO_TICKS(20)) == pdTRUE && frame != nullptr) {
+      xQueueReceive(this->spi_processing_free_queue_, &frame, 0) == pdTRUE && frame != nullptr) {
     frame->trans_len_bits = static_cast<uint16_t>(std::min<size_t>(transaction->trans_len, UINT16_MAX));
     std::memcpy(frame->data, transaction->rx_buffer, SPI_RAW_FRAME_SIZE);
     if (xQueueSend(this->spi_processing_ready_queue_, &frame, 0) != pdTRUE) {
@@ -636,7 +638,9 @@ void EmporiaVueComponent::spi_metering_task_trampoline_(void *arg) {
 }
 
 void EmporiaVueComponent::spi_metering_task_() {
-  uint8_t frames_in_slice = 0;
+  TickType_t work_slice_started = xTaskGetTickCount();
+  const TickType_t max_continuous_work_ticks =
+      std::max<TickType_t>(1, pdMS_TO_TICKS(SPI_METERING_MAX_CONTINUOUS_WORK_MS));
   while (true) {
     SpiQueuedFrame *frame = nullptr;
     const bool frame_ready = this->spi_processing_ready_queue_ != nullptr &&
@@ -649,18 +653,21 @@ void EmporiaVueComponent::spi_metering_task_() {
         this->spi_rx_recover_requested_ = true;
       }
 
-      frames_in_slice++;
-      if (frames_in_slice >= SPI_METERING_MAX_FRAMES_PER_SLICE) {
-        frames_in_slice = 0;
-        if (this->spi_processing_ready_queue_ != nullptr &&
-            uxQueueMessagesWaiting(this->spi_processing_ready_queue_) != 0) {
+      const bool backlog = this->spi_processing_ready_queue_ != nullptr &&
+                           uxQueueMessagesWaiting(this->spi_processing_ready_queue_) != 0;
+      if (!backlog) {
+        work_slice_started = xTaskGetTickCount();
+      } else {
+        const TickType_t now = xTaskGetTickCount();
+        if (now - work_slice_started >= max_continuous_work_ticks) {
           vTaskDelay(1);
+          work_slice_started = xTaskGetTickCount();
         }
       }
       continue;
     }
 
-    frames_in_slice = 0;
+    work_slice_started = xTaskGetTickCount();
     const bool ready_queue_empty = this->spi_processing_ready_queue_ == nullptr ||
                                    uxQueueMessagesWaiting(this->spi_processing_ready_queue_) == 0;
     if (this->spi_metering_task_stop_ && !this->spi_rx_task_running_ && ready_queue_empty) {

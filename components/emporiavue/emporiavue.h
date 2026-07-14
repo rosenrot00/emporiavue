@@ -42,7 +42,7 @@ static constexpr float VUE2_STOCK_CYCLE_TIMEBASE_HZ = 25310.0f;
 static constexpr float VUE3_STOCK_CYCLE_TIMEBASE_HZ = 19610.0f;
 static constexpr uint8_t SPI_RX_QUEUE_SIZE = 16;
 static constexpr uint16_t SPI_RAW_FRAME_SIZE = 1024;
-static constexpr uint8_t SPI_PROCESSING_FRAME_COUNT = 8;
+static constexpr uint8_t SPI_PROCESSING_FRAME_COUNT = SPI_RX_QUEUE_SIZE;
 // Voltage THD uses the conventional harmonic range H2 through H40.
 static constexpr uint8_t SPI_VOLTAGE_THD_MAX_HARMONIC = 40;
 static constexpr uint8_t SPI_VOLTAGE_THD_HARMONIC_COUNT = SPI_VOLTAGE_THD_MAX_HARMONIC - 1;
