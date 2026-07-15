@@ -7,7 +7,7 @@ or use the ESPHome SPI path when you specifically want synchronized raw-waveform
 
 | Version | Changes |
 |---|---|
-| 2026.07.15 | Separated direction-aware line diagnostics from automatic line assignment and added import/export auto modes. |
+| 2026.07.10 | Separated direction-aware line diagnostics from automatic line assignment and added import/export auto modes. |
 | 2026.07.9 | Added native ESPHome subdevices, validated Vue 3 SPI on real hardware, and added optional SPI voltage THD. |
 | 2026.07.8 | Added persistent automatic circuit line assignment with an optional Home Assistant line selector. |
 | 2026.07.7 | Renamed voltage calibration options and added optional per-CT current gain and SPI phase calibration. |
