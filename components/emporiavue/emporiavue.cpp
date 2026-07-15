@@ -481,6 +481,7 @@ void MeteringCTClampConfig::start_auto_line_detection(bool save) {
   this->line_pair_ = false;
   this->auto_line_detection_active_ = true;
   this->reset_phase_detection();
+  this->reset_phase_detection_reference();
   this->reset_phase_detection_stability();
   this->phase_detection_window_start_ms_ = 0;
   this->power_demand_.invalidate_window();
@@ -500,6 +501,7 @@ bool MeteringCTClampConfig::select_line(uint8_t line, bool save) {
     this->set_phase(candidate.phase);
     this->auto_line_detection_active_ = false;
     this->reset_phase_detection();
+    this->reset_phase_detection_reference();
     this->reset_phase_detection_stability();
     this->phase_detection_window_start_ms_ = 0;
     this->power_demand_.invalidate_window();

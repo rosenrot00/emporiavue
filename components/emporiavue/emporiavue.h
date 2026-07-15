@@ -1197,7 +1197,15 @@ class MeteringCTClampConfig {
   bool is_line_pair() const { return this->line_pair_; }
   void set_input_port(uint8_t input_port) { this->input_port_ = input_port; }
   uint8_t get_input_port() const { return this->input_port_; }
-  void set_current_gain(float gain) { this->current_gain_ = gain; }
+  void set_current_gain(float gain) {
+    if (std::fabs(this->current_gain_ - gain) > 0.000001f) {
+      this->current_gain_ = gain;
+      this->reset_phase_detection();
+      this->reset_phase_detection_reference();
+      this->reset_phase_detection_stability();
+      this->phase_detection_window_start_ms_ = 0;
+    }
+  }
   float get_current_gain() const { return this->current_gain_; }
   void set_current_phase_correction(float degrees) { this->current_phase_correction_degrees_ = degrees; }
   float get_current_phase_correction() const { return this->current_phase_correction_degrees_; }
@@ -1324,7 +1332,23 @@ class MeteringCTClampConfig {
   }
   void reset_phase_detection() {
     this->phase_detection_scores_.fill(0.0f);
+    this->phase_detection_current_sum_ = 0.0f;
     this->phase_detection_samples_ = 0;
+  }
+  void reset_phase_detection_reference() {
+    this->phase_detection_reference_scores_.fill(0.0f);
+    this->phase_detection_reference_current_ = 0.0f;
+    this->phase_detection_reference_valid_ = false;
+  }
+  bool has_phase_detection_reference() const { return this->phase_detection_reference_valid_; }
+  const std::array<float, 3> &get_phase_detection_reference_scores() const {
+    return this->phase_detection_reference_scores_;
+  }
+  float get_phase_detection_reference_current() const { return this->phase_detection_reference_current_; }
+  void set_phase_detection_reference(const std::array<float, 3> &scores, float current) {
+    this->phase_detection_reference_scores_ = scores;
+    this->phase_detection_reference_current_ = current;
+    this->phase_detection_reference_valid_ = true;
   }
   void reset_phase_detection_stability() {
     this->phase_detection_candidate_line_ = 0;
@@ -1351,6 +1375,8 @@ class MeteringCTClampConfig {
     }
   }
   const std::array<float, 3> &get_phase_detection_scores() const { return this->phase_detection_scores_; }
+  void add_phase_detection_current(float current) { this->phase_detection_current_sum_ += current; }
+  float get_phase_detection_current_sum() const { return this->phase_detection_current_sum_; }
   void increment_phase_detection_samples() { this->phase_detection_samples_++; }
   uint32_t get_phase_detection_samples() const { return this->phase_detection_samples_; }
   void set_phase_detection_window_start_ms(uint32_t value) { this->phase_detection_window_start_ms_ = value; }
@@ -1397,8 +1423,12 @@ class MeteringCTClampConfig {
   bool phase_detection_export_{false};
   std::vector<PhaseDetectionCandidate> phase_detection_candidates_{};
   std::array<float, 3> phase_detection_scores_{0.0f, 0.0f, 0.0f};
+  std::array<float, 3> phase_detection_reference_scores_{0.0f, 0.0f, 0.0f};
+  float phase_detection_current_sum_{0.0f};
+  float phase_detection_reference_current_{0.0f};
   uint32_t phase_detection_samples_{0};
   uint32_t phase_detection_window_start_ms_{0};
+  bool phase_detection_reference_valid_{false};
   uint8_t phase_detection_candidate_line_{0};
   uint8_t phase_detection_candidate_windows_{0};
 };

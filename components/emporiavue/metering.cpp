@@ -669,7 +669,6 @@ void EmporiaVueComponent::update_phase_detection_(const MeteringFrame &frame, Me
 
   const float correction_factor = port < 3 ? 5.5f : 22.0f;
   std::array<float, 3> sample_scores{0.0f, 0.0f, 0.0f};
-  float max_sample_score = 0.0f;
   uint8_t valid_candidates = 0;
 
   for (const auto &candidate : candidates) {
@@ -684,102 +683,138 @@ void EmporiaVueComponent::update_phase_detection_(const MeteringFrame &frame, Me
     const float power = raw_power * candidate.phase->get_calibration() / correction_factor *
                         ct_clamp->get_current_gain();
     sample_scores[candidate.line - 1] = power;
-    max_sample_score = std::max(max_sample_score, std::fabs(power));
     valid_candidates++;
   }
   if (valid_candidates < 2) {
     return;
   }
 
-  if (max_sample_score >= ct_clamp->get_phase_detection_power_min()) {
-    for (uint8_t line = 1; line <= 3; line++) {
-      ct_clamp->add_phase_detection_score(line, sample_scores[line - 1]);
-    }
-    ct_clamp->increment_phase_detection_samples();
+  // Keep every valid sample so the first complete window can become a neutral
+  // reference even when the circuit is idle. The configured power threshold is
+  // applied to the change from that reference, not to the absolute load.
+  for (uint8_t line = 1; line <= 3; line++) {
+    ct_clamp->add_phase_detection_score(line, sample_scores[line - 1]);
   }
+  const float current_scalar = port < 3 ? (775.0f / 42624.0f) : (775.0f / 170496.0f);
+  ct_clamp->add_phase_detection_current(frame.clamps[port].current_raw * current_scalar *
+                                        ct_clamp->get_current_gain());
+  ct_clamp->increment_phase_detection_samples();
 
   if ((now - window_start) < this->phase_detection_update_interval_ms_) {
     return;
   }
 
-  std::string state;
   const uint32_t samples = ct_clamp->get_phase_detection_samples();
   const auto &scores = ct_clamp->get_phase_detection_scores();
   if (samples == 0) {
-    state = "low load";
+    return;
+  }
+
+  const float divisor = static_cast<float>(samples);
+  std::array<float, 3> average_scores{0.0f, 0.0f, 0.0f};
+  const float average_current = ct_clamp->get_phase_detection_current_sum() / divisor;
+  uint8_t valid_line_mask = 0;
+  for (const auto &candidate : candidates) {
+    if (candidate.line >= 1 && candidate.line <= 3) {
+      valid_line_mask |= static_cast<uint8_t>(1U << (candidate.line - 1));
+      average_scores[candidate.line - 1] = scores[candidate.line - 1] / divisor;
+    }
+  }
+
+  std::string state;
+  if (!ct_clamp->has_phase_detection_reference()) {
+    ct_clamp->set_phase_detection_reference(average_scores, average_current);
     ct_clamp->reset_phase_detection_stability();
+    state = "waiting for change";
     if (ct_clamp->get_phase_detection_sensor() != nullptr) {
       ct_clamp->get_phase_detection_sensor()->publish_state(state);
     }
-    ESP_LOGV(TAG, "%s: low load window=%" PRIu32 "ms power_min=%.1fW",
-             detection_name, now - window_start, ct_clamp->get_phase_detection_power_min());
+    ESP_LOGV(TAG,
+             "%s: state=%s window=%" PRIu32 "ms samples=%" PRIu32
+             " reference L1=%.1fW L2=%.1fW L3=%.1fW current=%.3fA",
+             detection_name, state.c_str(), now - window_start, samples,
+             average_scores[0], average_scores[1], average_scores[2], average_current);
     ct_clamp->reset_phase_detection();
     ct_clamp->set_phase_detection_window_start_ms(now);
     return;
   }
 
-  const float divisor = static_cast<float>(samples);
-  const float direction = ct_clamp->is_phase_detection_export() ? -1.0f : 1.0f;
-  std::array<float, 3> directed_scores{0.0f, 0.0f, 0.0f};
-  uint8_t valid_line_mask = 0;
-  for (const auto &candidate : candidates) {
-    if (candidate.line >= 1 && candidate.line <= 3) {
-      valid_line_mask |= static_cast<uint8_t>(1U << (candidate.line - 1));
-      directed_scores[candidate.line - 1] = scores[candidate.line - 1] * direction / divisor;
-    }
-  }
-
-  uint8_t best_line = 0;
-  uint8_t second_line = 0;
-  float best_score = -std::numeric_limits<float>::infinity();
-  float second_score = -std::numeric_limits<float>::infinity();
+  const auto &reference_scores = ct_clamp->get_phase_detection_reference_scores();
+  const float reference_current = ct_clamp->get_phase_detection_reference_current();
+  std::array<float, 3> delta_scores{0.0f, 0.0f, 0.0f};
+  float max_delta_score = 0.0f;
   for (uint8_t line = 1; line <= 3; line++) {
     if ((valid_line_mask & (1U << (line - 1))) == 0) {
       continue;
     }
-    const float score = directed_scores[line - 1];
-    if (score > best_score) {
-      second_score = best_score;
-      second_line = best_line;
-      best_score = score;
-      best_line = line;
-    } else if (score > second_score) {
-      second_score = score;
-      second_line = line;
-    }
+    const uint8_t index = line - 1;
+    delta_scores[index] = average_scores[index] - reference_scores[index];
+    max_delta_score = std::max(max_delta_score, std::fabs(delta_scores[index]));
   }
+  const float current_change = average_current - reference_current;
+  const float minimum_current_change = std::max(0.01f, std::max(reference_current, average_current) * 0.05f);
 
-  // A correct import phase has one positive correlation and negative
-  // correlations against every other configured voltage reference. Export is
-  // the exact inverse. Requiring the opposite signs avoids guessing for highly
-  // reactive loads where an unrelated phase can have the largest magnitude.
-  const float opposite_sign_margin = std::max(1.0f, ct_clamp->get_phase_detection_power_min() * 0.05f);
   uint8_t detected_line = 0;
-  for (uint8_t line = 1; line <= 3; line++) {
-    if ((valid_line_mask & (1U << (line - 1))) == 0 ||
-        directed_scores[line - 1] < ct_clamp->get_phase_detection_power_min()) {
-      continue;
-    }
-    bool all_others_opposite = true;
-    for (uint8_t other = 1; other <= 3; other++) {
-      if (other == line || (valid_line_mask & (1U << (other - 1))) == 0) {
+  uint8_t best_line = 0;
+  uint8_t second_line = 0;
+  float best_score = -std::numeric_limits<float>::infinity();
+  float second_score = -std::numeric_limits<float>::infinity();
+  if (max_delta_score < ct_clamp->get_phase_detection_power_min()) {
+    state = "waiting for change";
+  } else if (std::fabs(current_change) < minimum_current_change) {
+    // A rotating current phasor can create a large correlation delta without a
+    // real load transition. It is not safe to infer a physical line from that.
+    state = "ambiguous change";
+  } else {
+    const float transition_direction = current_change >= 0.0f ? 1.0f : -1.0f;
+    const float configured_direction = ct_clamp->is_phase_detection_export() ? -1.0f : 1.0f;
+    std::array<float, 3> directed_scores{0.0f, 0.0f, 0.0f};
+    for (uint8_t line = 1; line <= 3; line++) {
+      if ((valid_line_mask & (1U << (line - 1))) == 0) {
         continue;
       }
-      if (directed_scores[other - 1] > -opposite_sign_margin) {
-        all_others_opposite = false;
-        break;
+      directed_scores[line - 1] = delta_scores[line - 1] * transition_direction * configured_direction;
+      const float score = directed_scores[line - 1];
+      if (score > best_score) {
+        second_score = best_score;
+        second_line = best_line;
+        best_score = score;
+        best_line = line;
+      } else if (score > second_score) {
+        second_score = score;
+        second_line = line;
       }
     }
-    if (all_others_opposite) {
-      detected_line = line;
-      break;
+
+    // The relative margin forms a guard band around the 30-degree boundaries
+    // between voltage phases. In particular, a nearly 90-degree reactive load
+    // cannot be mistaken for an adjacent phase merely because one tiny noisy
+    // correlation happens to have the expected sign.
+    const float opposite_sign_margin = std::max(1.0f, best_score * 0.05f);
+    if (best_line != 0 && best_score >= ct_clamp->get_phase_detection_power_min()) {
+      bool all_others_opposite = true;
+      for (uint8_t other = 1; other <= 3; other++) {
+        if (other == best_line || (valid_line_mask & (1U << (other - 1))) == 0) {
+          continue;
+        }
+        if (directed_scores[other - 1] > -opposite_sign_margin) {
+          all_others_opposite = false;
+          break;
+        }
+      }
+      if (all_others_opposite) {
+        detected_line = best_line;
+      }
+    }
+    if (detected_line == 0) {
+      state = str_sprintf("ambiguous L%u/L%u", static_cast<unsigned>(best_line),
+                         static_cast<unsigned>(second_line));
     }
   }
 
   bool auto_detection_complete = false;
   if (detected_line == 0) {
     ct_clamp->reset_phase_detection_stability();
-    state = str_sprintf("ambiguous L%u/L%u", static_cast<unsigned>(best_line), static_cast<unsigned>(second_line));
   } else {
     const uint8_t stable_windows = ct_clamp->update_phase_detection_candidate(detected_line);
     if (stable_windows >= 3) {
@@ -796,10 +831,12 @@ void EmporiaVueComponent::update_phase_detection_(const MeteringFrame &frame, Me
 
   ESP_LOGV(TAG,
            "%s: state=%s window=%" PRIu32 "ms samples=%" PRIu32
-           " direction=%s scores L1=%.1fW L2=%.1fW L3=%.1fW power_min=%.1fW",
+           " direction=%s reference L1=%.1fW L2=%.1fW L3=%.1fW"
+           " current L1=%.1fW L2=%.1fW L3=%.1fW current_change=%.3fA power_min=%.1fW",
            detection_name, state.c_str(), now - window_start, samples,
            ct_clamp->is_phase_detection_export() ? "export" : "import",
-           scores[0] / divisor, scores[1] / divisor, scores[2] / divisor,
+           reference_scores[0], reference_scores[1], reference_scores[2],
+           average_scores[0], average_scores[1], average_scores[2], current_change,
            ct_clamp->get_phase_detection_power_min());
 
   ct_clamp->reset_phase_detection();

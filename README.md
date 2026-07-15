@@ -239,9 +239,10 @@ utility label printed on the conductor. If the black Vue voltage lead is physica
 measures that real L2. Assign every circuit from the actual installation rather than assuming CT socket order determines
 the phase.
 
-If you do not know the correct line, use `line: auto`. The existing phase-detection logic waits for three stable
-measurement windows, applies the detected line, and stores it for the next restart. Automatic assignment does not
-require a Home Assistant entity and assumes a normally oriented consuming circuit (`import`):
+If you do not know the correct line, use `line: auto`. Phase detection first records the current operating state as a
+reference, then waits for a clear load change. After three stable change windows it applies the detected line and stores
+it for the next restart. Automatic assignment does not require a Home Assistant entity and assumes a normally oriented
+consuming circuit (`import`):
 
 ```yaml
 cir2:
@@ -843,22 +844,27 @@ emporiavue:
 ```
 
 `phase_detection: true` and `phase_detection: import` are identical and expect power flowing into a consumer.
-Use `phase_detection: export` for a normally exporting circuit. Detection keeps the signed correlations: the expected
-line must carry at least `power_min` in the configured direction, while every other voltage reference must have the
-opposite sign. This avoids falsely assigning strongly reactive loads merely because a wrong phase has a large absolute
-correlation.
+Use `phase_detection: export` for a normally exporting circuit. The first complete window becomes the reference state;
+it may be standby, full load, or anything in between. Detection then evaluates the signed change from that reference.
+Both load increases and decreases are supported, and `power_min` is the minimum required correlation change rather
+than a minimum absolute circuit load.
 
-Possible text states are `low load`, `L2 weak`, `L2`, or `ambiguous L2/L3`. It is intentionally unavailable for
-line-to-line circuits.
+The expected line must change by at least `power_min` in the configured direction. Every other voltage reference must
+change in the opposite direction with a relative safety margin, and the independently measured RMS current must confirm
+that an actual load transition occurred. This prevents a nearly 90-degree reactive standby current from being mistaken
+for an adjacent phase. A doubtful measurement is never stored.
 
-No particular startup state is required. The detector continuously waits for a suitable operating interval while the
-assignment remains automatic. Keep a clear, steady load above `power_min` until the same line is shown without `weak`.
-A stable result needs three consecutive update windows, so with the defaults the suitable load should run for about
-30 seconds. If the result is `L3`, set that circuit to `line: 3` (`L1` means `line: 1`, and so on). `L3 weak` is only a
-preliminary result; keep the load running. `low load` means every correlation is below the threshold, while
-`ambiguous L2/L3` means the measured direction and phase displacement do not permit a reliable choice. The detector
-intentionally remains ambiguous instead of guessing. After assigning the line, you can remove `phase_detection: true`
-again.
+Possible text states are `waiting for change`, `ambiguous change`, `L2 weak`, `L2`, or `ambiguous L2/L3`. It is
+intentionally unavailable for line-to-line circuits.
+
+No particular startup state is required, but the circuit must change operating state at least once. For example, let a
+heat pump start or stop and then keep the new state steady. `waiting for change` means no sufficiently large transition
+has occurred. `ambiguous change` means the current changed but not in a way that safely identifies a physical line.
+`ambiguous L2/L3` means the direction or phase displacement is still too close to a decision boundary. `L3 weak` is a
+preliminary result. A stable result needs three consecutive update windows, so with the defaults the new state should
+remain steady for about 30 seconds. If the result is `L3`, set that circuit to `line: 3` (`L1` means `line: 1`, and so
+on). The detector intentionally waits instead of guessing. After assigning the line, you can remove
+`phase_detection: true` again.
 
 ### Three phase without neutral
 
