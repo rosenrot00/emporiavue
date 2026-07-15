@@ -582,6 +582,29 @@ class EmporiaVueComponent : public Component
   };
 #endif
 
+  enum class SpiFrameValidationError : uint8_t {
+    NONE = 0,
+    TRANSFER_LENGTH,
+    HEADER,
+    PAYLOAD_LENGTH,
+    CRC_MISMATCH,
+    SAMPLE_PERIOD,
+  };
+
+  struct SpiFrameValidationResult {
+    uint32_t sequence{0};
+    uint32_t flags{0};
+    uint32_t sample_counter{0};
+    uint32_t calculated_crc{0};
+    uint32_t received_crc{0};
+    uint16_t transfer_length_bits{0};
+    uint16_t payload_length{0};
+    uint16_t sample_period_ticks{0};
+    uint8_t version{0};
+    uint8_t type{0};
+    SpiFrameValidationError error{SpiFrameValidationError::NONE};
+  };
+
   struct SpiFundamentalSample {
     int16_t voltage[3]{};
     int16_t main_current[3]{};
@@ -789,8 +812,8 @@ class EmporiaVueComponent : public Component
   static void spi_metering_task_trampoline_(void *arg);
 #endif
   bool queue_spi_receive_(uint8_t index);
-  bool validate_spi_frame_(const uint8_t *frame, uint32_t *sequence, uint32_t *flags, uint32_t *sample_counter,
-                           uint16_t *sample_period_ticks) const;
+  SpiFrameValidationResult validate_spi_frame_(const uint8_t *frame, uint16_t transfer_length_bits) const;
+  void log_spi_frame_validation_error_(const SpiFrameValidationResult &result) const;
   void reset_spi_metering_state_();
   void decode_spi_raw_frame_(const uint8_t *frame, uint32_t sequence, uint32_t flags, uint32_t sample_counter);
   void process_spi_raw_scan_(uint8_t current_index);
@@ -972,6 +995,11 @@ class EmporiaVueComponent : public Component
   uint32_t spi_rx_frames_{0};
   uint32_t spi_rx_sync_errors_{0};
   uint32_t spi_rx_crc_errors_{0};
+  uint32_t spi_rx_transfer_length_errors_{0};
+  uint32_t spi_rx_header_errors_{0};
+  uint32_t spi_rx_payload_length_errors_{0};
+  uint32_t spi_rx_crc_mismatch_errors_{0};
+  uint32_t spi_rx_sample_period_errors_{0};
   uint32_t spi_rx_queue_errors_{0};
   volatile uint32_t spi_processing_overruns_{0};
   volatile uint32_t spi_processing_busy_us_{0};
@@ -987,6 +1015,12 @@ class EmporiaVueComponent : public Component
   uint32_t spi_last_frame_samples_{0};
   float spi_sample_rate_hz_{0.0f};
   uint32_t spi_invalid_window_last_log_ms_{0};
+  uint32_t spi_frame_error_last_log_ms_{0};
+#ifdef USE_ESP32
+  portMUX_TYPE spi_frame_error_lock_ = portMUX_INITIALIZER_UNLOCKED;
+  SpiFrameValidationResult spi_pending_frame_error_{};
+  bool spi_frame_error_log_pending_{false};
+#endif
   uint32_t spi_rx_last_log_ms_{0};
   bool spi_rx_logged_status_valid_{false};
   uint32_t spi_rx_logged_sync_errors_{0};

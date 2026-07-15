@@ -166,10 +166,9 @@ void EmporiaVueComponent::publish_spi_diagnostics_() {
     this->diag_spi_stack_free_sensor_->publish_state(static_cast<float>(spi_stack_free));
   }
   ESP_LOGI(TAG,
-           "SPI runtime: processing_load=%.1f%% processing_overruns=%" PRIu32 " heap_free=%u heap_min=%u "
-           "loop_stack_free=%u spi_stack_free=%u spi_rx_stack_free=%u spi_metering_stack_free=%u bytes",
-           processing_load, this->spi_processing_overruns_, static_cast<unsigned>(heap_free),
-           static_cast<unsigned>(heap_minimum), static_cast<unsigned>(loop_stack_free),
+           "SPI runtime: processing_load=%.1f%% processing_overruns=%" PRIu32
+           " loop_stack_free=%u spi_stack_free=%u spi_rx_stack_free=%u spi_metering_stack_free=%u bytes",
+           processing_load, this->spi_processing_overruns_, static_cast<unsigned>(loop_stack_free),
            static_cast<unsigned>(spi_stack_free), static_cast<unsigned>(spi_rx_stack_free),
            static_cast<unsigned>(spi_metering_stack_free));
 #endif
@@ -296,6 +295,11 @@ void EmporiaVueComponent::setup_spi_receiver_(bool reset_statistics) {
     this->spi_rx_frames_ = 0;
     this->spi_rx_sync_errors_ = 0;
     this->spi_rx_crc_errors_ = 0;
+    this->spi_rx_transfer_length_errors_ = 0;
+    this->spi_rx_header_errors_ = 0;
+    this->spi_rx_payload_length_errors_ = 0;
+    this->spi_rx_crc_mismatch_errors_ = 0;
+    this->spi_rx_sample_period_errors_ = 0;
     this->spi_rx_queue_errors_ = 0;
     this->spi_processing_overruns_ = 0;
     this->spi_processing_busy_us_ = 0;
@@ -313,6 +317,9 @@ void EmporiaVueComponent::setup_spi_receiver_(bool reset_statistics) {
     this->spi_diag_recoveries_published_ = false;
     this->spi_diag_published_recoveries_ = 0;
     this->spi_last_diagnostics_publish_ms_ = 0;
+    this->spi_frame_error_last_log_ms_ = 0;
+    this->spi_pending_frame_error_ = SpiFrameValidationResult{};
+    this->spi_frame_error_log_pending_ = false;
   }
   this->spi_rx_last_flags_ = 0;
   this->spi_rx_last_sample_counter_ = 0;
@@ -566,13 +573,12 @@ void EmporiaVueComponent::handoff_spi_transaction_(spi_slave_transaction_t *tran
 }
 
 void EmporiaVueComponent::process_spi_frame_(const SpiQueuedFrame &frame) {
-  uint32_t sequence = 0;
-  uint32_t flags = 0;
-  uint32_t sample_counter = 0;
-  uint16_t sample_period_ticks = 0;
-  const bool protocol_valid =
-      frame.trans_len_bits == SPI_RAW_FRAME_SIZE * 8 &&
-      this->validate_spi_frame_(frame.data, &sequence, &flags, &sample_counter, &sample_period_ticks);
+  const SpiFrameValidationResult validation = this->validate_spi_frame_(frame.data, frame.trans_len_bits);
+  const bool protocol_valid = validation.error == SpiFrameValidationError::NONE;
+  const uint32_t sequence = validation.sequence;
+  const uint32_t flags = validation.flags;
+  const uint32_t sample_counter = validation.sample_counter;
+  const uint16_t sample_period_ticks = validation.sample_period_ticks;
   if (protocol_valid && (flags & SPI_FRAME_FLAG_OVERRUN) != 0) {
     this->spi_rx_samd_overruns_++;
   }
@@ -613,10 +619,37 @@ void EmporiaVueComponent::process_spi_frame_(const SpiQueuedFrame &frame) {
         ESP_LOGW(TAG, "Discarding SAMD09 SPI frame seq=%" PRIu32 " after SAMD sample error flags=0x%04" PRIX32,
                  sequence, flags);
       }
-    } else if (this->spi_rx_frames_ == 0) {
-      this->spi_rx_sync_errors_++;
     } else {
-      this->spi_rx_crc_errors_++;
+      switch (validation.error) {
+        case SpiFrameValidationError::TRANSFER_LENGTH:
+          this->spi_rx_transfer_length_errors_++;
+          break;
+        case SpiFrameValidationError::HEADER:
+          this->spi_rx_header_errors_++;
+          break;
+        case SpiFrameValidationError::PAYLOAD_LENGTH:
+          this->spi_rx_payload_length_errors_++;
+          break;
+        case SpiFrameValidationError::CRC_MISMATCH:
+          this->spi_rx_crc_mismatch_errors_++;
+          break;
+        case SpiFrameValidationError::SAMPLE_PERIOD:
+          this->spi_rx_sample_period_errors_++;
+          break;
+        case SpiFrameValidationError::NONE:
+          break;
+      }
+      if (this->spi_rx_frames_ == 0) {
+        this->spi_rx_sync_errors_++;
+      } else {
+        this->spi_rx_crc_errors_++;
+      }
+      if (this->spi_rx_invalid_streak_ == 0) {
+        portENTER_CRITICAL(&this->spi_frame_error_lock_);
+        this->spi_pending_frame_error_ = validation;
+        this->spi_frame_error_log_pending_ = true;
+        portEXIT_CRITICAL(&this->spi_frame_error_lock_);
+      }
     }
     if (this->spi_rx_invalid_streak_ < UINT16_MAX) {
       this->spi_rx_invalid_streak_ = static_cast<uint16_t>(this->spi_rx_invalid_streak_ + 1);
@@ -687,17 +720,28 @@ void EmporiaVueComponent::spi_metering_task_() {
 }
 #endif
 
-bool EmporiaVueComponent::validate_spi_frame_(const uint8_t *frame, uint32_t *sequence, uint32_t *flags,
-                                              uint32_t *sample_counter, uint16_t *sample_period_ticks) const {
-  const uint8_t expected_version = this->hardware_id_ == 3 ? SPI_VUE3_RAW_FRAME_VERSION : SPI_VUE2_RAW_FRAME_VERSION;
-  const uint8_t expected_type = this->hardware_id_ == 3 ? SPI_VUE3_RAW_FRAME_TYPE : SPI_VUE2_RAW_FRAME_TYPE;
-  if (frame[0] != expected_version || frame[1] != expected_type) {
-    return false;
+EmporiaVueComponent::SpiFrameValidationResult EmporiaVueComponent::validate_spi_frame_(
+    const uint8_t *frame, uint16_t transfer_length_bits) const {
+  SpiFrameValidationResult result{};
+  result.transfer_length_bits = transfer_length_bits;
+  if (transfer_length_bits != SPI_RAW_FRAME_SIZE * 8) {
+    result.error = SpiFrameValidationError::TRANSFER_LENGTH;
+    return result;
   }
 
-  const uint16_t payload_length = static_cast<uint16_t>(frame[2]) | (static_cast<uint16_t>(frame[3]) << 8);
-  if (payload_length != SPI_RAW_FRAME_PAYLOAD_SIZE) {
-    return false;
+  const uint8_t expected_version = this->hardware_id_ == 3 ? SPI_VUE3_RAW_FRAME_VERSION : SPI_VUE2_RAW_FRAME_VERSION;
+  const uint8_t expected_type = this->hardware_id_ == 3 ? SPI_VUE3_RAW_FRAME_TYPE : SPI_VUE2_RAW_FRAME_TYPE;
+  result.version = frame[0];
+  result.type = frame[1];
+  if (result.version != expected_version || result.type != expected_type) {
+    result.error = SpiFrameValidationError::HEADER;
+    return result;
+  }
+
+  result.payload_length = static_cast<uint16_t>(frame[2]) | (static_cast<uint16_t>(frame[3]) << 8);
+  if (result.payload_length != SPI_RAW_FRAME_PAYLOAD_SIZE) {
+    result.error = SpiFrameValidationError::PAYLOAD_LENGTH;
+    return result;
   }
 
   uint32_t crc = 0xFFFFFFFFUL;
@@ -706,33 +750,66 @@ bool EmporiaVueComponent::validate_spi_frame_(const uint8_t *frame, uint32_t *se
     crc = (crc >> 4) ^ SPI_CRC32_NIBBLE_TABLE[crc & 0x0FUL];
     crc = (crc >> 4) ^ SPI_CRC32_NIBBLE_TABLE[crc & 0x0FUL];
   }
-  crc = ~crc;
-  const uint32_t expected_crc = static_cast<uint32_t>(frame[SPI_RAW_FRAME_SIZE - 4]) |
-                                (static_cast<uint32_t>(frame[SPI_RAW_FRAME_SIZE - 3]) << 8) |
-                                (static_cast<uint32_t>(frame[SPI_RAW_FRAME_SIZE - 2]) << 16) |
-                                (static_cast<uint32_t>(frame[SPI_RAW_FRAME_SIZE - 1]) << 24);
-  if (crc != expected_crc) {
-    return false;
+  result.calculated_crc = ~crc;
+  result.received_crc = static_cast<uint32_t>(frame[SPI_RAW_FRAME_SIZE - 4]) |
+                        (static_cast<uint32_t>(frame[SPI_RAW_FRAME_SIZE - 3]) << 8) |
+                        (static_cast<uint32_t>(frame[SPI_RAW_FRAME_SIZE - 2]) << 16) |
+                        (static_cast<uint32_t>(frame[SPI_RAW_FRAME_SIZE - 1]) << 24);
+  if (result.calculated_crc != result.received_crc) {
+    result.error = SpiFrameValidationError::CRC_MISMATCH;
+    return result;
   }
 
-  *sequence = static_cast<uint16_t>(frame[4]) | (static_cast<uint16_t>(frame[5]) << 8);
+  result.sequence = static_cast<uint16_t>(frame[4]) | (static_cast<uint16_t>(frame[5]) << 8);
   const uint16_t raw_flags = static_cast<uint16_t>(frame[6]) | (static_cast<uint16_t>(frame[7]) << 8);
-  *flags = raw_flags & SPI_FRAME_ERROR_FLAG_MASK;
-  *sample_counter = static_cast<uint32_t>(frame[8]) | (static_cast<uint32_t>(frame[9]) << 8) |
-                    (static_cast<uint32_t>(frame[10]) << 16) | (static_cast<uint32_t>(frame[11]) << 24);
-  if (sample_period_ticks != nullptr) {
-    if (this->hardware_id_ == 3) {
-      *sample_period_ticks = raw_flags >> 3;
-    } else {
-      const uint16_t reserved_low = frame[SPI_RAW_FRAME_HEADER_SIZE + 17];
-      const uint16_t reserved_high = frame[SPI_RAW_FRAME_HEADER_SIZE + SPI_RAW_SCAN_SIZE + 17];
-      *sample_period_ticks = static_cast<uint16_t>(reserved_low | (reserved_high << 8));
-    }
-    if (*sample_period_ticks == 0) {
-      return false;
-    }
+  result.flags = raw_flags & SPI_FRAME_ERROR_FLAG_MASK;
+  result.sample_counter = static_cast<uint32_t>(frame[8]) | (static_cast<uint32_t>(frame[9]) << 8) |
+                          (static_cast<uint32_t>(frame[10]) << 16) |
+                          (static_cast<uint32_t>(frame[11]) << 24);
+  if (this->hardware_id_ == 3) {
+    result.sample_period_ticks = raw_flags >> 3;
+  } else {
+    const uint16_t reserved_low = frame[SPI_RAW_FRAME_HEADER_SIZE + 17];
+    const uint16_t reserved_high = frame[SPI_RAW_FRAME_HEADER_SIZE + SPI_RAW_SCAN_SIZE + 17];
+    result.sample_period_ticks = static_cast<uint16_t>(reserved_low | (reserved_high << 8));
   }
-  return true;
+  if (result.sample_period_ticks == 0) {
+    result.error = SpiFrameValidationError::SAMPLE_PERIOD;
+    return result;
+  }
+  return result;
+}
+
+void EmporiaVueComponent::log_spi_frame_validation_error_(const SpiFrameValidationResult &result) const {
+  switch (result.error) {
+    case SpiFrameValidationError::TRANSFER_LENGTH:
+      ESP_LOGW(TAG, "Discarding SAMD09 SPI frame: transfer_length=%u bits expected=%u bits",
+               static_cast<unsigned>(result.transfer_length_bits), static_cast<unsigned>(SPI_RAW_FRAME_SIZE * 8));
+      break;
+    case SpiFrameValidationError::HEADER: {
+      const uint8_t expected_version =
+          this->hardware_id_ == 3 ? SPI_VUE3_RAW_FRAME_VERSION : SPI_VUE2_RAW_FRAME_VERSION;
+      const uint8_t expected_type = this->hardware_id_ == 3 ? SPI_VUE3_RAW_FRAME_TYPE : SPI_VUE2_RAW_FRAME_TYPE;
+      ESP_LOGW(TAG, "Discarding SAMD09 SPI frame: header version=%u/%u type=%u/%u (received/expected)",
+               static_cast<unsigned>(result.version), static_cast<unsigned>(expected_version),
+               static_cast<unsigned>(result.type), static_cast<unsigned>(expected_type));
+      break;
+    }
+    case SpiFrameValidationError::PAYLOAD_LENGTH:
+      ESP_LOGW(TAG, "Discarding SAMD09 SPI frame: payload_length=%u bytes expected=%u bytes",
+               static_cast<unsigned>(result.payload_length), static_cast<unsigned>(SPI_RAW_FRAME_PAYLOAD_SIZE));
+      break;
+    case SpiFrameValidationError::CRC_MISMATCH:
+      ESP_LOGW(TAG,
+               "Discarding SAMD09 SPI frame: crc_mismatch calculated=0x%08" PRIX32 " received=0x%08" PRIX32,
+               result.calculated_crc, result.received_crc);
+      break;
+    case SpiFrameValidationError::SAMPLE_PERIOD:
+      ESP_LOGW(TAG, "Discarding SAMD09 SPI frame seq=%" PRIu32 ": sample_period_ticks=0", result.sequence);
+      break;
+    case SpiFrameValidationError::NONE:
+      break;
+  }
 }
 
 void EmporiaVueComponent::reset_spi_metering_state_() {
@@ -1772,6 +1849,23 @@ void EmporiaVueComponent::process_spi_receiver_() {
     }
   }
 
+  if (this->spi_frame_error_last_log_ms_ == 0 ||
+      now - this->spi_frame_error_last_log_ms_ >= METERING_STATUS_LOG_INTERVAL_MS) {
+    SpiFrameValidationResult pending_error{};
+    bool error_pending = false;
+    portENTER_CRITICAL(&this->spi_frame_error_lock_);
+    if (this->spi_frame_error_log_pending_) {
+      pending_error = this->spi_pending_frame_error_;
+      this->spi_frame_error_log_pending_ = false;
+      error_pending = true;
+    }
+    portEXIT_CRITICAL(&this->spi_frame_error_lock_);
+    if (error_pending) {
+      this->log_spi_frame_validation_error_(pending_error);
+      this->spi_frame_error_last_log_ms_ = now;
+    }
+  }
+
   const bool status_changed =
       !this->spi_rx_logged_status_valid_ || this->spi_rx_sync_errors_ != this->spi_rx_logged_sync_errors_ ||
       this->spi_rx_crc_errors_ != this->spi_rx_logged_crc_errors_ ||
@@ -1788,14 +1882,19 @@ void EmporiaVueComponent::process_spi_receiver_() {
                                                ? 0
                                                : uxQueueMessagesWaiting(this->spi_processing_ready_queue_);
     ESP_LOGD(TAG,
-             "SAMD09 SPI rx status: sync_errors=%" PRIu32 " crc_errors=%" PRIu32 " queue_errors=%" PRIu32
+             "SAMD09 SPI rx status: frame_errors=%" PRIu32 " startup_errors=%" PRIu32
+             " runtime_errors=%" PRIu32 " length=%" PRIu32 " header=%" PRIu32 " payload=%" PRIu32
+             " crc=%" PRIu32 " period=%" PRIu32 " queue_errors=%" PRIu32
              " processing_overruns=%" PRIu32 " processing_pending=%u dma_errors=%" PRIu32
              " samd_overruns=%" PRIu32 " seq_gaps=%" PRIu32 " recoveries=%" PRIu32
              " inflight=%" PRIu16 " flags=0x%04" PRIx32 " sample_counter=%" PRIu32,
-             this->spi_rx_sync_errors_, this->spi_rx_crc_errors_, this->spi_rx_queue_errors_,
-             this->spi_processing_overruns_, static_cast<unsigned>(processing_pending), this->spi_rx_dma_errors_,
-             this->spi_rx_samd_overruns_, this->spi_rx_frame_gaps_, this->spi_rx_recoveries_, this->spi_rx_inflight_,
-             this->spi_rx_last_flags_, this->spi_rx_last_sample_counter_);
+             this->spi_rx_sync_errors_ + this->spi_rx_crc_errors_, this->spi_rx_sync_errors_,
+             this->spi_rx_crc_errors_, this->spi_rx_transfer_length_errors_, this->spi_rx_header_errors_,
+             this->spi_rx_payload_length_errors_, this->spi_rx_crc_mismatch_errors_,
+             this->spi_rx_sample_period_errors_, this->spi_rx_queue_errors_, this->spi_processing_overruns_,
+             static_cast<unsigned>(processing_pending), this->spi_rx_dma_errors_, this->spi_rx_samd_overruns_,
+             this->spi_rx_frame_gaps_, this->spi_rx_recoveries_, this->spi_rx_inflight_, this->spi_rx_last_flags_,
+             this->spi_rx_last_sample_counter_);
     this->spi_rx_logged_status_valid_ = true;
     this->spi_rx_logged_sync_errors_ = this->spi_rx_sync_errors_;
     this->spi_rx_logged_crc_errors_ = this->spi_rx_crc_errors_;
