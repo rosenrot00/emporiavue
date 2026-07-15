@@ -98,7 +98,7 @@ emporiavue:
       - multiply: 0.001
       - *throttle_time
 
-  phase_detection:
+  line_detection:
     power_min: 30W
     update_interval: 10s
 
@@ -122,7 +122,7 @@ emporiavue:
       power_factor:
     cir3:
       line: 1
-      phase_detection: true  # Same as import; use export for a generating circuit.
+      line_detection:  # Diagnostic only; fixed line 1 is never changed.
       power:
     cir4:
       line: 2

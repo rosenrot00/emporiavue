@@ -387,7 +387,7 @@ void EmporiaVueComponent::start_firmware_action_(FirmwareAction requested_action
   if (selected_action == FirmwareAction::RESTORE_STOCK) {
     this->install_source_ = FlashSource::BACKUP;
   } else if (selected_action == FirmwareAction::FLASH_EXTERNAL) {
-    this->install_source_ = FlashSource::EXTERNAL;
+    this->install_source_ = FlashSource::EXTERNAL_IMAGE;
   } else {
     this->install_source_ = FlashSource::BUNDLED;
   }
@@ -1164,7 +1164,7 @@ bool EmporiaVueComponent::read_install_source_(uint32_t offset, uint32_t length,
     return true;
   }
 
-  if (this->install_source_ == FlashSource::EXTERNAL) {
+  if (this->install_source_ == FlashSource::EXTERNAL_IMAGE) {
     const uint32_t external_size = this->external_firmware_size_(this->install_external_firmware_index_);
     const uint8_t *external_data = this->external_firmware_data_(this->install_external_firmware_index_);
     if (external_data == nullptr || external_size > this->install_flash_size_) {

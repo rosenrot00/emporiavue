@@ -156,8 +156,8 @@ CONF_MINIMUM_APPARENT_POWER = "minimum_apparent_power"
 CONF_MINIMUM_FUNDAMENTAL_CURRENT = "minimum_fundamental_current"
 CONF_DEMAND_INTERVAL = "demand_interval"
 CONF_PEAK_INTERVAL = "peak_interval"
-CONF_PHASE_DETECTION = "phase_detection"
-CONF_PHASE_DETECTION_DIRECTION = "_phase_detection_direction"
+CONF_LINE_DETECTION = "line_detection"
+CONF_LINE_DETECTION_DIRECTION = "_line_detection_direction"
 CONF_LINE_SELECT = "line_select"
 CONF_POWER_MIN = "power_min"
 CONF_UPDATE_INTERVAL = "update_interval"
@@ -237,7 +237,7 @@ CIRCUIT_DIRECT_ENTITY_KEYS = (
     CONF_MAXIMUM_CURRENT_DEMAND,
     CONF_CURRENT_PEAK,
     CONF_CURRENT_CREST_FACTOR,
-    CONF_PHASE_DETECTION,
+    CONF_LINE_DETECTION,
 )
 
 MAIN_DIRECT_ENTITY_KEYS = (
@@ -271,8 +271,10 @@ DIRECTION_BOTH = "both"
 DIRECTION_SIGNED_ALIAS = "signed"
 DIRECTION_POSITIVE = "positive"
 DIRECTION_NEGATIVE = "negative"
-PHASE_DETECTION_IMPORT = "import"
-PHASE_DETECTION_EXPORT = "export"
+LINE_DETECTION_IMPORT = "import"
+LINE_DETECTION_EXPORT = "export"
+LINE_AUTO_IMPORT = "auto_import"
+LINE_AUTO_EXPORT = "auto_export"
 
 HARDWARE_IDS = {
     HARDWARE_CUSTOM: 0,
@@ -575,8 +577,8 @@ def _circuit_default_power_name(circuit_key, circuit_config):
     return f"{_circuit_default_base_name(circuit_key, circuit_config)} Power"
 
 
-def _circuit_default_phase_name(circuit_key, circuit_config):
-    return f"{_circuit_default_base_name(circuit_key, circuit_config)} Phase"
+def _circuit_default_line_detection_name(circuit_key, circuit_config):
+    return f"{_circuit_default_base_name(circuit_key, circuit_config)} Line Detection"
 
 
 def _group_default_base_name(group_key, group_config):
@@ -1380,7 +1382,7 @@ def _apply_virtual_line_defaults(config):
     return config
 
 
-def _apply_phase_detection_defaults(config):
+def _apply_line_detection_defaults(config):
     config = dict(config)
     if CONF_CIRCUITS not in config or not isinstance(config[CONF_CIRCUITS], dict):
         return config
@@ -1411,49 +1413,57 @@ def _apply_phase_detection_defaults(config):
                 )
             circuit_config[CONF_LINE_SELECT] = line_select_config
 
-        if CONF_PHASE_DETECTION not in circuit_config:
+        if CONF_LINE_DETECTION not in circuit_config:
             circuits[circuit_key] = circuit_config
             continue
 
-        phase_detection_config = circuit_config[CONF_PHASE_DETECTION]
-        if phase_detection_config is False or phase_detection_config is None:
+        line_detection_config = circuit_config[CONF_LINE_DETECTION]
+        if line_detection_config is False:
             circuit_config = dict(circuit_config)
-            circuit_config.pop(CONF_PHASE_DETECTION, None)
+            circuit_config.pop(CONF_LINE_DETECTION, None)
             circuits[circuit_key] = circuit_config
             continue
-        phase_detection_direction = PHASE_DETECTION_IMPORT
-        if phase_detection_config is True:
-            phase_detection_config = {}
-        elif isinstance(phase_detection_config, str):
-            phase_detection_direction = phase_detection_config.strip().lower()
-            if phase_detection_direction not in (PHASE_DETECTION_IMPORT, PHASE_DETECTION_EXPORT):
+        line_config = circuit_config.get(CONF_LINE, 1)
+        if isinstance(line_config, str):
+            line_config = line_config.strip().lower()
+        inherited_direction = (
+            LINE_DETECTION_EXPORT
+            if line_config == LINE_AUTO_EXPORT
+            else LINE_DETECTION_IMPORT
+        )
+        line_detection_direction = inherited_direction
+        if line_detection_config is None or line_detection_config is True:
+            line_detection_config = {}
+        elif isinstance(line_detection_config, str):
+            line_detection_direction = line_detection_config.strip().lower()
+            if line_detection_direction not in (LINE_DETECTION_IMPORT, LINE_DETECTION_EXPORT):
                 raise cv.Invalid(
-                    f"circuits.{circuit_key}.phase_detection must be true, import, export, or a mapping"
+                    f"circuits.{circuit_key}.line_detection must be true, import, export, or a mapping"
                 )
-            phase_detection_config = {}
-        elif not isinstance(phase_detection_config, dict):
+            line_detection_config = {}
+        elif not isinstance(line_detection_config, dict):
             raise cv.Invalid(
-                f"circuits.{circuit_key}.phase_detection must be true, import, export, or a mapping"
+                f"circuits.{circuit_key}.line_detection must be true, import, export, or a mapping"
             )
         else:
-            phase_detection_config = dict(phase_detection_config)
-            phase_detection_direction = phase_detection_config.get(
-                CONF_PHASE_DETECTION_DIRECTION, PHASE_DETECTION_IMPORT
+            line_detection_config = dict(line_detection_config)
+            line_detection_direction = line_detection_config.pop(
+                CONF_DIRECTION, inherited_direction
             )
-        phase_detection_config[CONF_PHASE_DETECTION_DIRECTION] = phase_detection_direction
+        line_detection_config[CONF_LINE_DETECTION_DIRECTION] = line_detection_direction
 
-        default_name = _circuit_default_phase_name(circuit_key, circuit_config)
-        name_is_default = phase_detection_config.get(CONF_NAME) in (None, default_name)
-        if phase_detection_config.get(CONF_NAME) is None:
-            phase_detection_config[CONF_NAME] = _default_entity_name(default_name)
+        default_name = _circuit_default_line_detection_name(circuit_key, circuit_config)
+        name_is_default = line_detection_config.get(CONF_NAME) in (None, default_name)
+        if line_detection_config.get(CONF_NAME) is None:
+            line_detection_config[CONF_NAME] = _default_entity_name(default_name)
         if prefix and name_is_default:
-            phase_detection_config[CONF_NAME] = _prefixed_entity_name(
+            line_detection_config[CONF_NAME] = _prefixed_entity_name(
                 prefix, _default_entity_name(default_name)
             )
-        phase_detection_config[CONF_ENTITY_CATEGORY] = ENTITY_CATEGORY_DIAGNOSTIC
+        line_detection_config[CONF_ENTITY_CATEGORY] = ENTITY_CATEGORY_DIAGNOSTIC
 
         circuit_config = dict(circuit_config)
-        circuit_config[CONF_PHASE_DETECTION] = phase_detection_config
+        circuit_config[CONF_LINE_DETECTION] = line_detection_config
         circuits[circuit_key] = circuit_config
 
     config[CONF_CIRCUITS] = circuits
@@ -1556,7 +1566,7 @@ def _apply_defaults(config):
         _apply_entity_name_defaults(
             _apply_diagnostics_defaults(
                 _apply_filter_defaults(
-                    _apply_phase_detection_defaults(
+                    _apply_line_detection_defaults(
                         _apply_virtual_line_defaults(
                             _apply_raw_power_defaults(
                                 _apply_mains_defaults(
@@ -2080,21 +2090,21 @@ INTERNAL_POWER_FILTER_SCHEMA = cv.ensure_list(
     )
 )
 
-PHASE_DETECTION_GLOBAL_SCHEMA = cv.Schema(
+LINE_DETECTION_GLOBAL_SCHEMA = cv.Schema(
     {
         cv.Optional(CONF_POWER_MIN, default=30.0): _validate_watts,
         cv.Optional(CONF_UPDATE_INTERVAL, default="10s"): cv.positive_time_period_milliseconds,
     }
 )
 
-PHASE_DETECTION_SENSOR_SCHEMA = text_sensor.text_sensor_schema(
+LINE_DETECTION_SENSOR_SCHEMA = text_sensor.text_sensor_schema(
     icon="mdi:transmission-tower",
     entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
 ).extend(
     {
         cv.Optional(CONF_POWER_MIN): _validate_watts,
-        cv.Optional(CONF_PHASE_DETECTION_DIRECTION, default=PHASE_DETECTION_IMPORT): cv.one_of(
-            PHASE_DETECTION_IMPORT, PHASE_DETECTION_EXPORT, lower=True
+        cv.Optional(CONF_LINE_DETECTION_DIRECTION, default=LINE_DETECTION_IMPORT): cv.one_of(
+            LINE_DETECTION_IMPORT, LINE_DETECTION_EXPORT, lower=True
         ),
     }
 )
@@ -2106,19 +2116,19 @@ LINE_SELECT_SCHEMA = select.select_schema(
 )
 
 
-def _validate_phase_detection_sensor(value):
-    if value is True:
-        value = {CONF_PHASE_DETECTION_DIRECTION: PHASE_DETECTION_IMPORT}
+def _validate_line_detection_sensor(value):
+    if value is None or value is True:
+        value = {CONF_LINE_DETECTION_DIRECTION: LINE_DETECTION_IMPORT}
     elif isinstance(value, str):
         direction = value.strip().lower()
-        if direction not in (PHASE_DETECTION_IMPORT, PHASE_DETECTION_EXPORT):
-            raise cv.Invalid("phase_detection must be true, import, export, or a mapping")
-        value = {CONF_PHASE_DETECTION_DIRECTION: direction}
-    elif value is False or value is None:
+        if direction not in (LINE_DETECTION_IMPORT, LINE_DETECTION_EXPORT):
+            raise cv.Invalid("line_detection must be true, import, export, or a mapping")
+        value = {CONF_LINE_DETECTION_DIRECTION: direction}
+    elif value is False:
         return None
     elif not isinstance(value, dict):
-        raise cv.Invalid("phase_detection must be true, import, export, or a mapping")
-    return PHASE_DETECTION_SENSOR_SCHEMA(value)
+        raise cv.Invalid("line_detection must be true, import, export, or a mapping")
+    return LINE_DETECTION_SENSOR_SCHEMA(value)
 
 
 def _validate_metering_phases(value):
@@ -2202,8 +2212,12 @@ METERING_MAIN_SCHEMA = cv.Schema(
 
 
 def _validate_metering_line(value):
-    if isinstance(value, str) and value.lower() == "auto":
-        return "auto"
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized == "auto":
+            return LINE_AUTO_IMPORT
+        if normalized in (LINE_AUTO_IMPORT, LINE_AUTO_EXPORT):
+            return normalized
     if not isinstance(value, list):
         return cv.int_range(min=1, max=3)(value)
 
@@ -2230,7 +2244,7 @@ def _validate_virtual_line_lines(value):
 def _metering_line_numbers(value):
     if isinstance(value, list):
         return value
-    if value == "auto":
+    if value in (LINE_AUTO_IMPORT, LINE_AUTO_EXPORT):
         return []
     return [value]
 
@@ -2295,7 +2309,7 @@ METERING_CIRCUIT_SCHEMA = cv.Schema(
         cv.Optional(CONF_CURRENT_DEMAND): CURRENT_DEMAND_SENSOR_SCHEMA,
         cv.Optional(CONF_MAXIMUM_CURRENT_DEMAND): MAXIMUM_CURRENT_DEMAND_SENSOR_SCHEMA,
         cv.Optional(CONF_POWER_SPLIT): POWER_SPLIT_SENSOR_SCHEMA,
-        cv.Optional(CONF_PHASE_DETECTION): _validate_phase_detection_sensor,
+        cv.Optional(CONF_LINE_DETECTION): _validate_line_detection_sensor,
         cv.Optional(CONF_ENERGY): _validate_energy_sensor,
     }
 )
@@ -2401,7 +2415,8 @@ def _validate_metering_topology(config):
 
     for circuit_key, circuit_config in circuits.items():
         if (
-            circuit_config[CONF_LINE] == "auto" or CONF_LINE_SELECT in circuit_config
+            circuit_config[CONF_LINE] in (LINE_AUTO_IMPORT, LINE_AUTO_EXPORT)
+            or CONF_LINE_SELECT in circuit_config
         ) and len(mains) < 2:
             raise cv.Invalid(
                 f"circuits.{circuit_key} automatic line selection needs at least two configured mains lines"
@@ -2410,9 +2425,9 @@ def _validate_metering_topology(config):
             raise cv.Invalid(
                 f"circuits.{circuit_key}.line_select is only available for single-line circuits"
             )
-        if CONF_PHASE_DETECTION in circuit_config and isinstance(circuit_config[CONF_LINE], list):
+        if CONF_LINE_DETECTION in circuit_config and isinstance(circuit_config[CONF_LINE], list):
             raise cv.Invalid(
-                f"circuits.{circuit_key}.phase_detection is only supported for single-line circuits"
+                f"circuits.{circuit_key}.line_detection is only supported for single-line circuits"
             )
         if CONF_POWER_SPLIT in circuit_config:
             if not isinstance(circuit_config[CONF_LINE], list):
@@ -2728,7 +2743,7 @@ EMPORIAVUE_SCHEMA = cv.Schema(
         cv.Optional(CONF_PEAK_INTERVAL, default="5s"): _validate_peak_interval,
         cv.Optional(CONF_MINIMUM_APPARENT_POWER, default="5VA"): _validate_volt_amps,
         cv.Optional(CONF_MINIMUM_FUNDAMENTAL_CURRENT, default="20mA"): _validate_amperes,
-        cv.Optional(CONF_PHASE_DETECTION, default={}): PHASE_DETECTION_GLOBAL_SCHEMA,
+        cv.Optional(CONF_LINE_DETECTION, default={}): LINE_DETECTION_GLOBAL_SCHEMA,
         cv.Optional(CONF_FILTER_DEFAULTS): FILTER_DEFAULTS_SCHEMA,
         cv.Optional(CONF_MAINS): _validate_mains,
         cv.Optional(CONF_ESPHOME_SUBDEVICES, default=True): cv.boolean,
@@ -3091,8 +3106,8 @@ async def to_code(config):
     cg.add(var.set_metering_interval(config[CONF_METERING_INTERVAL]))
     cg.add(var.set_minimum_apparent_power(config[CONF_MINIMUM_APPARENT_POWER]))
     cg.add(var.set_minimum_fundamental_current(config[CONF_MINIMUM_FUNDAMENTAL_CURRENT]))
-    phase_detection_config = config[CONF_PHASE_DETECTION]
-    cg.add(var.set_phase_detection_update_interval(phase_detection_config[CONF_UPDATE_INTERVAL]))
+    line_detection_config = config[CONF_LINE_DETECTION]
+    cg.add(var.set_line_detection_update_interval(line_detection_config[CONF_UPDATE_INTERVAL]))
     cg.add(var.set_backup_partition_name(config[CONF_BACKUP_PARTITION]))
     if firmware_version_config := config.get(CONF_FIRMWARE_VERSION):
         sens = await text_sensor.new_text_sensor(firmware_version_config)
@@ -3221,7 +3236,7 @@ async def to_code(config):
             phase_a_var = main_phase_vars_by_line[line_config[0]]
             phase_b_var = main_phase_vars_by_line[line_config[1]]
             cg.add(ct_clamp_var.set_line_pair(phase_a_var, phase_b_var))
-        elif line_config != "auto":
+        elif line_config not in (LINE_AUTO_IMPORT, LINE_AUTO_EXPORT):
             phase_var = main_phase_vars_by_line[line_config]
             cg.add(ct_clamp_var.set_phase(phase_var))
         cg.add(ct_clamp_var.set_input_port(BRANCH_CT_INPUTS[circuit_config[CONF_INPUT]]))
@@ -3252,17 +3267,26 @@ async def to_code(config):
             if line_b_config := power_split_config.get(line_b_key):
                 sens = await sensor.new_sensor(line_b_config)
                 cg.add(ct_clamp_var.set_power_split_line_b_sensor(sens))
-        is_auto_line = line_config == "auto"
+        is_auto_line = line_config in (LINE_AUTO_IMPORT, LINE_AUTO_EXPORT)
         has_line_select = CONF_LINE_SELECT in circuit_config
         if is_auto_line or has_line_select:
             preference_key = _metering_preference_key(
                 f"circuits.{circuit_key}.line"
             )
-            initial_line = 0 if is_auto_line else line_config
+            initial_line = (
+                4
+                if line_config == LINE_AUTO_EXPORT
+                else 0 if is_auto_line else line_config
+            )
             cg.add(ct_clamp_var.configure_dynamic_line(initial_line, preference_key))
+            cg.add(
+                ct_clamp_var.set_auto_line_detection_power_min(
+                    line_detection_config[CONF_POWER_MIN]
+                )
+            )
 
         if has_line_select:
-            line_options = ["Auto"] + [
+            line_options = ["Auto Import", "Auto Export"] + [
                 f"L{line_number}" for line_number in sorted(main_phase_vars_by_line)
             ]
             line_select = await select.new_select(
@@ -3271,36 +3295,30 @@ async def to_code(config):
             await cg.register_parented(line_select, ct_clamp_var)
             cg.add(ct_clamp_var.set_line_select(line_select))
 
-        phase_detection_sensor_config = circuit_config.get(CONF_PHASE_DETECTION)
-        if phase_detection_sensor_config:
-            phase_detection_text_sensor_config = dict(phase_detection_sensor_config)
-            phase_detection_text_sensor_config.pop(CONF_POWER_MIN, None)
-            phase_detection_text_sensor_config.pop(CONF_PHASE_DETECTION_DIRECTION, None)
-            sens = await text_sensor.new_text_sensor(phase_detection_text_sensor_config)
-            cg.add(ct_clamp_var.set_phase_detection_sensor(sens))
-            cg.add(ct_clamp_var.set_phase_detection_name(phase_detection_sensor_config[CONF_NAME]))
+        line_detection_sensor_config = circuit_config.get(CONF_LINE_DETECTION)
+        if line_detection_sensor_config:
+            line_detection_text_sensor_config = dict(line_detection_sensor_config)
+            line_detection_text_sensor_config.pop(CONF_POWER_MIN, None)
+            line_detection_text_sensor_config.pop(CONF_LINE_DETECTION_DIRECTION, None)
+            sens = await text_sensor.new_text_sensor(line_detection_text_sensor_config)
+            cg.add(ct_clamp_var.set_line_detection_sensor(sens))
+            cg.add(ct_clamp_var.set_line_detection_name(line_detection_sensor_config[CONF_NAME]))
             cg.add(
-                ct_clamp_var.set_phase_detection_export(
-                    phase_detection_sensor_config[CONF_PHASE_DETECTION_DIRECTION]
-                    == PHASE_DETECTION_EXPORT
+                ct_clamp_var.set_line_detection_export(
+                    line_detection_sensor_config[CONF_LINE_DETECTION_DIRECTION]
+                    == LINE_DETECTION_EXPORT
                 )
             )
             cg.add(
-                ct_clamp_var.set_phase_detection_power_min(
-                    phase_detection_sensor_config.get(
-                        CONF_POWER_MIN, phase_detection_config[CONF_POWER_MIN]
+                ct_clamp_var.set_line_detection_power_min(
+                    line_detection_sensor_config.get(
+                        CONF_POWER_MIN, line_detection_config[CONF_POWER_MIN]
                     )
                 )
             )
-        if is_auto_line or has_line_select or phase_detection_sensor_config:
-            if not phase_detection_sensor_config:
-                cg.add(
-                    ct_clamp_var.set_phase_detection_power_min(
-                        phase_detection_config[CONF_POWER_MIN]
-                    )
-                )
+        if is_auto_line or has_line_select or line_detection_sensor_config:
             for line_number, phase_var in sorted(main_phase_vars_by_line.items()):
-                cg.add(ct_clamp_var.add_phase_detection_candidate(phase_var, line_number))
+                cg.add(ct_clamp_var.add_line_detection_candidate(phase_var, line_number))
 
         ct_clamps.append(ct_clamp_var)
         power_source_ct_clamps_by_key[circuit_key] = ct_clamp_var

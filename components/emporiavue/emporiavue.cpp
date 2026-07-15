@@ -19,6 +19,9 @@ namespace emporiavue {
 
 namespace {
 
+constexpr uint8_t LINE_ASSIGNMENT_AUTO_IMPORT = 0;
+constexpr uint8_t LINE_ASSIGNMENT_AUTO_EXPORT = 4;
+
 void append_config_item(char *buffer, size_t buffer_size, const char *item) {
   if (buffer_size == 0) {
     return;
@@ -195,7 +198,7 @@ void EmporiaVueComponent::dump_config() {
                 this->metering_interval_ms_, this->diagnostics_interval_ms_);
   ESP_LOGCONFIG(TAG, "  Analysis validity: apparent>=%.1f VA, fundamental_current>=%.3f A",
                 this->minimum_apparent_power_, this->minimum_fundamental_current_);
-  ESP_LOGCONFIG(TAG, "  Phase detection window: %" PRIu32 " ms", this->phase_detection_update_interval_ms_);
+  ESP_LOGCONFIG(TAG, "  Line detection window: %" PRIu32 " ms", this->line_detection_update_interval_ms_);
   if (!this->entity_prefix_.empty()) {
     ESP_LOGCONFIG(TAG, "  Entity prefix: %s", this->entity_prefix_.c_str());
   }
@@ -246,11 +249,13 @@ void EmporiaVueComponent::dump_config() {
     if (ct_clamp->get_line_select() != nullptr)
       append_config_item(settings, sizeof(settings), "line_select");
     if (ct_clamp->is_auto_line_detection_active())
-      append_config_item(settings, sizeof(settings), "auto_line");
-    if (!ct_clamp->get_phase_detection_candidates().empty())
       append_config_item(settings, sizeof(settings),
-                         ct_clamp->is_phase_detection_export() ? "phase_detection=export"
-                                                               : "phase_detection=import");
+                         ct_clamp->is_auto_line_detection_export() ? "auto_line=export"
+                                                                   : "auto_line=import");
+    if (ct_clamp->get_line_detection_sensor() != nullptr)
+      append_config_item(settings, sizeof(settings),
+                         ct_clamp->is_line_detection_export() ? "line_detection=export"
+                                                              : "line_detection=import");
     if (ct_clamp->get_current_gain_number() != nullptr || ct_clamp->get_current_phase_number() != nullptr ||
         std::fabs(ct_clamp->get_current_gain() - 1.0f) > 0.000001f ||
         std::fabs(ct_clamp->get_current_phase_correction()) > 0.0001f) {
@@ -293,8 +298,8 @@ void EmporiaVueComponent::dump_config() {
       append_config_item(features, sizeof(features), "current_thd");
     if (ct_clamp->get_power_split_line_a_sensor() != nullptr || ct_clamp->get_power_split_line_b_sensor() != nullptr)
       append_config_item(features, sizeof(features), "power_split");
-    if (ct_clamp->get_phase_detection_sensor() != nullptr)
-      append_config_item(features, sizeof(features), "phase_detection");
+    if (ct_clamp->get_line_detection_sensor() != nullptr)
+      append_config_item(features, sizeof(features), "line_detection");
 
     if (settings[0] == '\0') {
       ESP_LOGCONFIG(TAG, "  CT %s: input=%u, voltage=%s, entities=%s", ct_clamp->get_config_key(),
@@ -436,8 +441,12 @@ void MeteringLineSelect::control(const std::string &value) {
   if (this->parent_ == nullptr) {
     return;
   }
-  if (value == "Auto") {
-    this->parent_->start_auto_line_detection();
+  if (value == "Auto" || value == "Auto Import") {
+    this->parent_->start_auto_line_detection(false);
+    return;
+  }
+  if (value == "Auto Export") {
+    this->parent_->start_auto_line_detection(true);
     return;
   }
   if (value.size() == 2 && value[0] == 'L' && value[1] >= '1' && value[1] <= '3') {
@@ -453,11 +462,17 @@ void MeteringCTClampConfig::setup_line_assignment() {
   this->line_pref_ = global_preferences->make_preference<uint8_t>(this->line_preference_key_);
   this->line_pref_initialized_ = true;
   uint8_t line = this->initial_line_;
-  this->line_pref_.load(&line);
+  if (!this->line_pref_.load(&line)) {
+    line = this->initial_line_;
+  }
   if (line >= 1 && line <= 3 && this->select_line(line, false)) {
     return;
   }
-  this->start_auto_line_detection(false);
+  if (line != LINE_ASSIGNMENT_AUTO_IMPORT && line != LINE_ASSIGNMENT_AUTO_EXPORT) {
+    line = this->initial_line_;
+  }
+  const bool export_direction = line == LINE_ASSIGNMENT_AUTO_EXPORT;
+  this->start_auto_line_detection(export_direction, false);
 }
 
 void MeteringCTClampConfig::save_line_assignment_(uint8_t line) {
@@ -472,7 +487,7 @@ void MeteringCTClampConfig::save_line_assignment_(uint8_t line) {
   global_preferences->sync();
 }
 
-void MeteringCTClampConfig::start_auto_line_detection(bool save) {
+void MeteringCTClampConfig::start_auto_line_detection(bool export_direction, bool save) {
   if (!this->dynamic_line_enabled_) {
     return;
   }
@@ -480,30 +495,26 @@ void MeteringCTClampConfig::start_auto_line_detection(bool save) {
   this->line_pair_phase_b_ = nullptr;
   this->line_pair_ = false;
   this->auto_line_detection_active_ = true;
-  this->reset_phase_detection();
-  this->reset_phase_detection_reference();
-  this->reset_phase_detection_stability();
-  this->phase_detection_window_start_ms_ = 0;
+  this->auto_line_detection_export_ = export_direction;
+  this->auto_line_detection_state_.reset_all();
   this->power_demand_.invalidate_window();
   if (save) {
-    this->save_line_assignment_(0);
+    this->save_line_assignment_(export_direction ? LINE_ASSIGNMENT_AUTO_EXPORT
+                                                 : LINE_ASSIGNMENT_AUTO_IMPORT);
   }
   if (this->line_select_ != nullptr) {
-    this->line_select_->publish_state("Auto");
+    this->line_select_->publish_state(export_direction ? "Auto Export" : "Auto Import");
   }
 }
 
 bool MeteringCTClampConfig::select_line(uint8_t line, bool save) {
-  for (const auto &candidate : this->phase_detection_candidates_) {
+  for (const auto &candidate : this->line_detection_candidates_) {
     if (candidate.line != line || candidate.phase == nullptr) {
       continue;
     }
     this->set_phase(candidate.phase);
     this->auto_line_detection_active_ = false;
-    this->reset_phase_detection();
-    this->reset_phase_detection_reference();
-    this->reset_phase_detection_stability();
-    this->phase_detection_window_start_ms_ = 0;
+    this->auto_line_detection_state_.reset_all();
     this->power_demand_.invalidate_window();
     if (save) {
       this->save_line_assignment_(line);
@@ -566,9 +577,9 @@ std::string EmporiaVueComponent::hex16_(uint16_t value) { return str_sprintf("0x
 std::string EmporiaVueComponent::hex8_(uint8_t value) { return str_sprintf("0x%02" PRIx8, value); }
 
 void EmporiaVueComponent::append_hex_byte_(std::string *output, uint8_t value) {
-  static const char HEX[] = "0123456789abcdef";
-  output->push_back(HEX[(value >> 4) & 0x0F]);
-  output->push_back(HEX[value & 0x0F]);
+  static const char HEX_DIGITS[] = "0123456789abcdef";
+  output->push_back(HEX_DIGITS[(value >> 4) & 0x0F]);
+  output->push_back(HEX_DIGITS[value & 0x0F]);
 }
 
 std::string EmporiaVueComponent::sha256_hex_(const uint8_t hash[32]) {

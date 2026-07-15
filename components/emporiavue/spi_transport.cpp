@@ -979,11 +979,11 @@ void EmporiaVueComponent::configure_spi_analysis_requirements_() {
       }
     }
 
-    // Dynamic assignments and phase detection must retain all three products.
+    // Dynamic assignments and line detection must retain all three products.
     // For a static circuit, only its configured phase or line pair can be read
     // later, so the remaining products are provably unused.
     uint8_t voltage_mask = 0;
-    if (!ct_clamp->get_phase_detection_candidates().empty()) {
+    if (!ct_clamp->get_line_detection_candidates().empty()) {
       voltage_mask = 0x07;
     } else {
       const auto *phase_a = ct_clamp->get_phase();

@@ -7,6 +7,7 @@ or use the ESPHome SPI path when you specifically want synchronized raw-waveform
 
 | Version | Changes |
 |---|---|
+| 2026.07.15 | Separated direction-aware line diagnostics from automatic line assignment and added import/export auto modes. |
 | 2026.07.9 | Added native ESPHome subdevices, validated Vue 3 SPI on real hardware, and added optional SPI voltage THD. |
 | 2026.07.8 | Added persistent automatic circuit line assignment with an optional Home Assistant line selector. |
 | 2026.07.7 | Renamed voltage calibration options and added optional per-CT current gain and SPI phase calibration. |
@@ -239,48 +240,51 @@ utility label printed on the conductor. If the black Vue voltage lead is physica
 measures that real L2. Assign every circuit from the actual installation rather than assuming CT socket order determines
 the phase.
 
-If you do not know the correct line, use `line: auto`. Phase detection first records the current operating state as a
-reference, then waits for a clear load change. After three stable change windows it applies the detected line and stores
-it for the next restart. Automatic assignment does not require a Home Assistant entity and assumes a normally oriented
-consuming circuit (`import`):
+If you do not know the correct line, use `line: auto_import` for a consuming circuit or `line: auto_export` for a
+generating circuit. Line detection first records the current operating state as a reference, then waits for a clear load
+change. After three stable change windows it applies the detected line and stores it for the next restart. Automatic
+assignment does not require a Home Assistant entity:
 
 ```yaml
 cir2:
   name: "Heat Pump"
-  line: auto
+  line: auto_import
 ```
 
-For a circuit that normally feeds power back, request export-aware detection explicitly:
+For a circuit that normally feeds power back:
 
 ```yaml
 cir2:
   name: "Solar"
-  line: auto
-  phase_detection: export
+  line: auto_export
 ```
+
+`line: auto` remains a short alias for `line: auto_import`.
 
 Add `line_select:` only when Home Assistant should also provide a dropdown:
 
 ```yaml
 cir2:
   name: "Heat Pump"
-  line: auto
+  line: auto_import
   line_select:
 ```
 
-The optional `Heat Pump Line` selector offers `Auto` and every configured line, for example `L1`, `L2`, and `L3`.
-It stays on `Auto` until detection is reliable and then changes to the selected line. Choosing `Auto` later starts a
-new detection; choosing a line applies and stores it immediately.
+The optional `Heat Pump Line` selector offers `Auto Import`, `Auto Export`, and every configured line, for example
+`L1`, `L2`, and `L3`. It stays on the selected automatic mode until detection is reliable and then changes to the
+detected line. Choosing an automatic mode later starts a new detection; choosing a line applies and stores it
+immediately.
 
 | Circuit YAML | Assignment | Home Assistant dropdown |
 |---|---|---|
 | `line: 1` | Fixed by YAML | No |
-| `line: auto` | Detected once and stored | No |
+| `line: auto_import` or `auto_export` | Detected once and stored | No |
 | `line: 1` plus `line_select:` | Starts with L1; stored dropdown choice wins | Yes |
-| `line: auto` plus `line_select:` | Starts with Auto; changes to the detected line | Yes |
+| Automatic `line` plus `line_select:` | Starts in the requested auto mode; changes to the detected line | Yes |
 
 `line_select:` is only the optional Home Assistant control, just like `voltage_calibration_number:`. Removing it makes
-a numeric `line:` authoritative again. With `line: auto`, detection and storage continue to work without the dropdown.
+a numeric `line:` authoritative again. With an automatic `line`, detection and storage continue to work without the
+dropdown.
 
 On the first automatic run, phase-dependent values remain unknown until a line is detected; current values remain
 available. Once detected, the stored line is restored immediately after subsequent restarts. Storage follows the
@@ -522,8 +526,10 @@ emporiavue:
 
     cir2:
       name: "Heat Pump"
-      line: 2
-      # Optional Home Assistant dropdown; the selected line is stored.
+      line: auto_import
+      # Optional diagnostic; it follows auto_import and never changes line itself.
+      line_detection:
+      # Optional Home Assistant dropdown; automatic or manual choices are stored.
       line_select:
       power:
       current:
@@ -826,28 +832,41 @@ current phasor and corrects the fundamental contribution to active power, keepin
 consistent. Stored values follow the main or circuit key such as `line_1` or `cir2`; names and subdevice assignments can
 change without resetting them. Leave the defaults unchanged without a trusted meter and a suitable reference load.
 
-### Phase detection helper
+### Line detection helper
 
-Phase detection compares a single-line CT with all configured voltage references and suggests the most likely logical
-line. This diagnostic helper only reports its findings and never changes the assignment. Use `line: auto` instead when
-the component should apply and store the result automatically.
+Line detection compares a single-line CT with all configured voltage references and suggests the most likely logical
+line. `line_detection` only creates the diagnostic result: it never changes or stores the circuit assignment. Use
+`line: auto_import` or `line: auto_export` when the component should also apply and store a detected line.
 
 ```yaml
 emporiavue:
-  phase_detection:
+  line_detection:
     power_min: 30W
     update_interval: 10s
 
   circuits:
     cir3:
-      phase_detection: true
+      line: 1
+      line_detection:
 ```
 
-`phase_detection: true` and `phase_detection: import` are identical and expect power flowing into a consumer.
-Use `phase_detection: export` for a normally exporting circuit. The first complete window becomes the reference state;
-it may be standby, full load, or anything in between. Detection then evaluates the signed change from that reference.
-Both load increases and decreases are supported, and `power_min` is the minimum required correlation change rather
-than a minimum absolute circuit load.
+With a fixed `line`, an empty `line_detection:` defaults to `import`. With `line: auto_import` or `line: auto_export`,
+it inherits that automatic direction. Set `line_detection: import` or `line_detection: export` to choose the diagnostic
+direction explicitly. An explicit diagnostic direction may differ from the automatic assignment direction:
+
+```yaml
+cir3:
+  line: auto_import
+  line_detection: export
+```
+
+Here automatic assignment independently detects, applies, and stores the import line. The visible diagnostic observes
+export operation without ever changing the assignment. When both use the same direction they still have independent
+state, so the diagnostic remains active after automatic assignment has finished.
+
+The first complete window becomes the reference state; it may be standby, full load, or anything in between. Detection
+then evaluates the signed change from that reference. Both load increases and decreases are supported, and `power_min`
+is the minimum required correlation change rather than a minimum absolute circuit load.
 
 The expected line must change by at least `power_min` in the configured direction. Every other voltage reference must
 change in the opposite direction with a relative safety margin, and the independently measured RMS current must confirm
@@ -863,8 +882,8 @@ has occurred. `ambiguous change` means the current changed but not in a way that
 `ambiguous L2/L3` means the direction or phase displacement is still too close to a decision boundary. `L3 weak` is a
 preliminary result. A stable result needs three consecutive update windows, so with the defaults the new state should
 remain steady for about 30 seconds. If the result is `L3`, set that circuit to `line: 3` (`L1` means `line: 1`, and so
-on). The detector intentionally waits instead of guessing. After assigning the line, you can remove
-`phase_detection: true` again.
+on). The detector intentionally waits instead of guessing. After assigning the line, you can remove `line_detection:`
+if you no longer want the visible diagnostic; automatic assignment is controlled only by `line`.
 
 ### Three phase without neutral
 

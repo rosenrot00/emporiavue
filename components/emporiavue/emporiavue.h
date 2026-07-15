@@ -258,8 +258,8 @@ class EmporiaVueComponent : public Component
   void set_metering_interval(uint32_t metering_interval_ms) { this->metering_interval_ms_ = metering_interval_ms; }
   void set_minimum_apparent_power(float value) { this->minimum_apparent_power_ = value; }
   void set_minimum_fundamental_current(float value) { this->minimum_fundamental_current_ = value; }
-  void set_phase_detection_update_interval(uint32_t update_interval_ms) {
-    this->phase_detection_update_interval_ms_ = update_interval_ms;
+  void set_line_detection_update_interval(uint32_t update_interval_ms) {
+    this->line_detection_update_interval_ms_ = update_interval_ms;
   }
   void set_metering_phases(std::vector<MeteringPhaseConfig *> phases) {
     this->metering_phases_ = std::move(phases);
@@ -675,7 +675,7 @@ class EmporiaVueComponent : public Component
     NONE = 0,
     BUNDLED,
     BACKUP,
-    EXTERNAL,
+    EXTERNAL_IMAGE,
   };
 
   enum class FirmwareKind : uint8_t {
@@ -886,7 +886,7 @@ class EmporiaVueComponent : public Component
                               uint32_t generation) const;
   static float apply_power_direction_(float power, uint8_t direction);
   static void publish_power_outputs_(const std::vector<MeteringPowerOutput> &outputs, float power);
-  void update_phase_detection_(const MeteringFrame &frame, MeteringCTClampConfig *ct_clamp);
+  void update_line_detection_(const MeteringFrame &frame, MeteringCTClampConfig *ct_clamp);
 
   InternalGPIOPin *swdio_pin_{nullptr};
   InternalGPIOPin *swclk_pin_{nullptr};
@@ -1042,7 +1042,7 @@ class EmporiaVueComponent : public Component
   uint32_t spi_rx_last_samd_reset_ms_{0};
   float minimum_apparent_power_{5.0f};
   float minimum_fundamental_current_{0.02f};
-  uint32_t phase_detection_update_interval_ms_{10000};
+  uint32_t line_detection_update_interval_ms_{10000};
   std::vector<MeteringPhaseConfig *> metering_phases_{};
   std::vector<MeteringCTClampConfig *> metering_ct_clamps_{};
   std::vector<MeteringGroupConfig *> metering_groups_{};
@@ -1172,9 +1172,79 @@ class MeteringLineSelect : public select::Select, public Parented<MeteringCTClam
   void control(const std::string &value) override;
 };
 
+class MeteringLineDetectionState {
+ public:
+  void reset_window() {
+    this->scores_.fill(0.0f);
+    this->current_sum_ = 0.0f;
+    this->samples_ = 0;
+  }
+  void reset_reference() {
+    this->reference_scores_.fill(0.0f);
+    this->reference_current_ = 0.0f;
+    this->reference_valid_ = false;
+  }
+  void reset_stability() {
+    this->candidate_line_ = 0;
+    this->candidate_windows_ = 0;
+  }
+  void reset_all() {
+    this->reset_window();
+    this->reset_reference();
+    this->reset_stability();
+    this->window_start_ms_ = 0;
+  }
+  void add_score(uint8_t line, float score) {
+    if (line >= 1 && line <= 3) {
+      this->scores_[line - 1] += score;
+    }
+  }
+  const std::array<float, 3> &get_scores() const { return this->scores_; }
+  void add_current(float current) { this->current_sum_ += current; }
+  float get_current_sum() const { return this->current_sum_; }
+  void increment_samples() { this->samples_++; }
+  uint32_t get_samples() const { return this->samples_; }
+  bool has_reference() const { return this->reference_valid_; }
+  const std::array<float, 3> &get_reference_scores() const { return this->reference_scores_; }
+  float get_reference_current() const { return this->reference_current_; }
+  void set_reference(const std::array<float, 3> &scores, float current) {
+    this->reference_scores_ = scores;
+    this->reference_current_ = current;
+    this->reference_valid_ = true;
+  }
+  uint8_t update_candidate(uint8_t line) {
+    if (line < 1 || line > 3) {
+      this->reset_stability();
+      return 0;
+    }
+    if (this->candidate_line_ == line) {
+      if (this->candidate_windows_ < UINT8_MAX) {
+        this->candidate_windows_++;
+      }
+    } else {
+      this->candidate_line_ = line;
+      this->candidate_windows_ = 1;
+    }
+    return this->candidate_windows_;
+  }
+  void set_window_start_ms(uint32_t value) { this->window_start_ms_ = value; }
+  uint32_t get_window_start_ms() const { return this->window_start_ms_; }
+
+ protected:
+  std::array<float, 3> scores_{0.0f, 0.0f, 0.0f};
+  std::array<float, 3> reference_scores_{0.0f, 0.0f, 0.0f};
+  float current_sum_{0.0f};
+  float reference_current_{0.0f};
+  uint32_t samples_{0};
+  uint32_t window_start_ms_{0};
+  bool reference_valid_{false};
+  uint8_t candidate_line_{0};
+  uint8_t candidate_windows_{0};
+};
+
 class MeteringCTClampConfig {
  public:
-  struct PhaseDetectionCandidate {
+  struct LineDetectionCandidate {
     MeteringPhaseConfig *phase{nullptr};
     uint8_t line{0};
   };
@@ -1200,10 +1270,8 @@ class MeteringCTClampConfig {
   void set_current_gain(float gain) {
     if (std::fabs(this->current_gain_ - gain) > 0.000001f) {
       this->current_gain_ = gain;
-      this->reset_phase_detection();
-      this->reset_phase_detection_reference();
-      this->reset_phase_detection_stability();
-      this->phase_detection_window_start_ms_ = 0;
+      this->line_detection_state_.reset_all();
+      this->auto_line_detection_state_.reset_all();
     }
   }
   float get_current_gain() const { return this->current_gain_; }
@@ -1222,10 +1290,11 @@ class MeteringCTClampConfig {
     this->line_preference_key_ = preference_key;
   }
   void setup_line_assignment();
-  void start_auto_line_detection(bool save = true);
+  void start_auto_line_detection(bool export_direction, bool save = true);
   bool select_line(uint8_t line, bool save = true);
   void complete_auto_line_detection(uint8_t line);
   bool is_auto_line_detection_active() const { return this->auto_line_detection_active_; }
+  bool is_auto_line_detection_export() const { return this->auto_line_detection_export_; }
   void add_power_output(uint8_t direction, sensor::Sensor *raw_power_sensor, sensor::Sensor *power_sensor) {
     this->power_outputs_.emplace_back(direction, raw_power_sensor, power_sensor);
   }
@@ -1316,71 +1385,24 @@ class MeteringCTClampConfig {
   float apply_power_filters(float value) const { return this->power_filters_.apply(value); }
   size_t get_power_filter_count() const { return this->power_filters_.size(); }
   MeteringPowerCache &get_power_cache() { return this->power_cache_; }
-  void set_phase_detection_sensor(text_sensor::TextSensor *sensor) { this->phase_detection_sensor_ = sensor; }
-  text_sensor::TextSensor *get_phase_detection_sensor() const { return this->phase_detection_sensor_; }
-  void set_phase_detection_name(const std::string &name) { this->phase_detection_name_ = name; }
-  const std::string &get_phase_detection_name() const { return this->phase_detection_name_; }
-  void set_phase_detection_power_min(float power_min) { this->phase_detection_power_min_ = power_min; }
-  float get_phase_detection_power_min() const { return this->phase_detection_power_min_; }
-  void set_phase_detection_export(bool value) { this->phase_detection_export_ = value; }
-  bool is_phase_detection_export() const { return this->phase_detection_export_; }
-  void add_phase_detection_candidate(MeteringPhaseConfig *phase, uint8_t line) {
-    this->phase_detection_candidates_.push_back(PhaseDetectionCandidate{phase, line});
+  void set_line_detection_sensor(text_sensor::TextSensor *sensor) { this->line_detection_sensor_ = sensor; }
+  text_sensor::TextSensor *get_line_detection_sensor() const { return this->line_detection_sensor_; }
+  void set_line_detection_name(const std::string &name) { this->line_detection_name_ = name; }
+  const std::string &get_line_detection_name() const { return this->line_detection_name_; }
+  void set_line_detection_power_min(float power_min) { this->line_detection_power_min_ = power_min; }
+  float get_line_detection_power_min() const { return this->line_detection_power_min_; }
+  void set_auto_line_detection_power_min(float power_min) { this->auto_line_detection_power_min_ = power_min; }
+  float get_auto_line_detection_power_min() const { return this->auto_line_detection_power_min_; }
+  void set_line_detection_export(bool value) { this->line_detection_export_ = value; }
+  bool is_line_detection_export() const { return this->line_detection_export_; }
+  void add_line_detection_candidate(MeteringPhaseConfig *phase, uint8_t line) {
+    this->line_detection_candidates_.push_back(LineDetectionCandidate{phase, line});
   }
-  const std::vector<PhaseDetectionCandidate> &get_phase_detection_candidates() const {
-    return this->phase_detection_candidates_;
+  const std::vector<LineDetectionCandidate> &get_line_detection_candidates() const {
+    return this->line_detection_candidates_;
   }
-  void reset_phase_detection() {
-    this->phase_detection_scores_.fill(0.0f);
-    this->phase_detection_current_sum_ = 0.0f;
-    this->phase_detection_samples_ = 0;
-  }
-  void reset_phase_detection_reference() {
-    this->phase_detection_reference_scores_.fill(0.0f);
-    this->phase_detection_reference_current_ = 0.0f;
-    this->phase_detection_reference_valid_ = false;
-  }
-  bool has_phase_detection_reference() const { return this->phase_detection_reference_valid_; }
-  const std::array<float, 3> &get_phase_detection_reference_scores() const {
-    return this->phase_detection_reference_scores_;
-  }
-  float get_phase_detection_reference_current() const { return this->phase_detection_reference_current_; }
-  void set_phase_detection_reference(const std::array<float, 3> &scores, float current) {
-    this->phase_detection_reference_scores_ = scores;
-    this->phase_detection_reference_current_ = current;
-    this->phase_detection_reference_valid_ = true;
-  }
-  void reset_phase_detection_stability() {
-    this->phase_detection_candidate_line_ = 0;
-    this->phase_detection_candidate_windows_ = 0;
-  }
-  uint8_t update_phase_detection_candidate(uint8_t line) {
-    if (line < 1 || line > 3) {
-      this->reset_phase_detection_stability();
-      return 0;
-    }
-    if (this->phase_detection_candidate_line_ == line) {
-      if (this->phase_detection_candidate_windows_ < UINT8_MAX) {
-        this->phase_detection_candidate_windows_++;
-      }
-    } else {
-      this->phase_detection_candidate_line_ = line;
-      this->phase_detection_candidate_windows_ = 1;
-    }
-    return this->phase_detection_candidate_windows_;
-  }
-  void add_phase_detection_score(uint8_t line, float score) {
-    if (line >= 1 && line <= 3) {
-      this->phase_detection_scores_[line - 1] += score;
-    }
-  }
-  const std::array<float, 3> &get_phase_detection_scores() const { return this->phase_detection_scores_; }
-  void add_phase_detection_current(float current) { this->phase_detection_current_sum_ += current; }
-  float get_phase_detection_current_sum() const { return this->phase_detection_current_sum_; }
-  void increment_phase_detection_samples() { this->phase_detection_samples_++; }
-  uint32_t get_phase_detection_samples() const { return this->phase_detection_samples_; }
-  void set_phase_detection_window_start_ms(uint32_t value) { this->phase_detection_window_start_ms_ = value; }
-  uint32_t get_phase_detection_window_start_ms() const { return this->phase_detection_window_start_ms_; }
+  MeteringLineDetectionState &get_line_detection_state() { return this->line_detection_state_; }
+  MeteringLineDetectionState &get_auto_line_detection_state() { return this->auto_line_detection_state_; }
 
  protected:
   void save_line_assignment_(uint8_t line);
@@ -1401,6 +1423,7 @@ class MeteringCTClampConfig {
   ESPPreferenceObject line_pref_{};
   bool line_pref_initialized_{false};
   bool auto_line_detection_active_{false};
+  bool auto_line_detection_export_{false};
   std::vector<MeteringPowerOutput> power_outputs_{};
   sensor::Sensor *current_sensor_{nullptr};
   MeteringPeakTracker peak_tracker_{};
@@ -1417,20 +1440,14 @@ class MeteringCTClampConfig {
   sensor::Sensor *power_split_line_b_sensor_{nullptr};
   MeteringPowerFilters power_filters_{};
   MeteringPowerCache power_cache_{};
-  text_sensor::TextSensor *phase_detection_sensor_{nullptr};
-  std::string phase_detection_name_{};
-  float phase_detection_power_min_{30.0f};
-  bool phase_detection_export_{false};
-  std::vector<PhaseDetectionCandidate> phase_detection_candidates_{};
-  std::array<float, 3> phase_detection_scores_{0.0f, 0.0f, 0.0f};
-  std::array<float, 3> phase_detection_reference_scores_{0.0f, 0.0f, 0.0f};
-  float phase_detection_current_sum_{0.0f};
-  float phase_detection_reference_current_{0.0f};
-  uint32_t phase_detection_samples_{0};
-  uint32_t phase_detection_window_start_ms_{0};
-  bool phase_detection_reference_valid_{false};
-  uint8_t phase_detection_candidate_line_{0};
-  uint8_t phase_detection_candidate_windows_{0};
+  text_sensor::TextSensor *line_detection_sensor_{nullptr};
+  std::string line_detection_name_{};
+  float line_detection_power_min_{30.0f};
+  float auto_line_detection_power_min_{30.0f};
+  bool line_detection_export_{false};
+  std::vector<LineDetectionCandidate> line_detection_candidates_{};
+  MeteringLineDetectionState line_detection_state_{};
+  MeteringLineDetectionState auto_line_detection_state_{};
 };
 
 class MeteringGroupConfig {
