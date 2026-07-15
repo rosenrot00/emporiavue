@@ -198,7 +198,8 @@ void EmporiaVueComponent::dump_config() {
                 this->metering_interval_ms_, this->diagnostics_interval_ms_);
   ESP_LOGCONFIG(TAG, "  Analysis validity: apparent>=%.1f VA, fundamental_current>=%.3f A",
                 this->minimum_apparent_power_, this->minimum_fundamental_current_);
-  ESP_LOGCONFIG(TAG, "  Line detection window: %" PRIu32 " ms", this->line_detection_update_interval_ms_);
+  ESP_LOGCONFIG(TAG, "  Line detection: window=%" PRIu32 " ms, confidence=%.2f",
+                this->line_detection_update_interval_ms_, this->line_detection_confidence_ratio_);
   if (!this->entity_prefix_.empty()) {
     ESP_LOGCONFIG(TAG, "  Entity prefix: %s", this->entity_prefix_.c_str());
   }

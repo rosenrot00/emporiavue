@@ -261,6 +261,9 @@ class EmporiaVueComponent : public Component
   void set_line_detection_update_interval(uint32_t update_interval_ms) {
     this->line_detection_update_interval_ms_ = update_interval_ms;
   }
+  void set_line_detection_confidence_ratio(float confidence_ratio) {
+    this->line_detection_confidence_ratio_ = confidence_ratio;
+  }
   void set_metering_phases(std::vector<MeteringPhaseConfig *> phases) {
     this->metering_phases_ = std::move(phases);
   }
@@ -1043,6 +1046,7 @@ class EmporiaVueComponent : public Component
   float minimum_apparent_power_{5.0f};
   float minimum_fundamental_current_{0.02f};
   uint32_t line_detection_update_interval_ms_{10000};
+  float line_detection_confidence_ratio_{1.5f};
   std::vector<MeteringPhaseConfig *> metering_phases_{};
   std::vector<MeteringCTClampConfig *> metering_ct_clamps_{};
   std::vector<MeteringGroupConfig *> metering_groups_{};
@@ -1188,10 +1192,16 @@ class MeteringLineDetectionState {
     this->candidate_line_ = 0;
     this->candidate_windows_ = 0;
   }
+  void reset_transition() {
+    this->reset_stability();
+    this->transition_active_ = false;
+    this->transition_current_confirmed_ = false;
+    this->transition_windows_ = 0;
+  }
   void reset_all() {
     this->reset_window();
     this->reset_reference();
-    this->reset_stability();
+    this->reset_transition();
     this->window_start_ms_ = 0;
   }
   void add_score(uint8_t line, float score) {
@@ -1211,6 +1221,23 @@ class MeteringLineDetectionState {
     this->reference_scores_ = scores;
     this->reference_current_ = current;
     this->reference_valid_ = true;
+  }
+  void start_transition() {
+    if (!this->transition_active_) {
+      this->reset_stability();
+      this->transition_active_ = true;
+      this->transition_current_confirmed_ = false;
+      this->transition_windows_ = 0;
+    }
+  }
+  bool is_transition_active() const { return this->transition_active_; }
+  void confirm_transition_current() { this->transition_current_confirmed_ = true; }
+  bool is_transition_current_confirmed() const { return this->transition_current_confirmed_; }
+  uint8_t increment_transition_windows() {
+    if (this->transition_windows_ < UINT8_MAX) {
+      this->transition_windows_++;
+    }
+    return this->transition_windows_;
   }
   uint8_t update_candidate(uint8_t line) {
     if (line < 1 || line > 3) {
@@ -1238,6 +1265,9 @@ class MeteringLineDetectionState {
   uint32_t samples_{0};
   uint32_t window_start_ms_{0};
   bool reference_valid_{false};
+  bool transition_active_{false};
+  bool transition_current_confirmed_{false};
+  uint8_t transition_windows_{0};
   uint8_t candidate_line_{0};
   uint8_t candidate_windows_{0};
 };

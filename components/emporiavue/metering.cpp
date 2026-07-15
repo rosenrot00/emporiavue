@@ -717,14 +717,18 @@ void EmporiaVueComponent::update_line_detection_(const MeteringFrame &frame, Met
     }
     const float average_current = detection.get_current_sum() / divisor;
 
+    auto publish_detection_state = [&](const std::string &state) {
+      if (sensor != nullptr && (!sensor->has_state() || sensor->state != state)) {
+        sensor->publish_state(state);
+      }
+    };
+
     std::string state;
     if (!detection.has_reference()) {
       detection.set_reference(average_scores, average_current);
-      detection.reset_stability();
+      detection.reset_transition();
       state = "waiting for change";
-      if (sensor != nullptr) {
-        sensor->publish_state(state);
-      }
+      publish_detection_state(state);
       ESP_LOGV(TAG,
                "%s: state=%s window=%" PRIu32 "ms samples=%" PRIu32
                " direction=%s reference L1=%.1fW L2=%.1fW L3=%.1fW current=%.3fA",
@@ -736,7 +740,7 @@ void EmporiaVueComponent::update_line_detection_(const MeteringFrame &frame, Met
       return 0;
     }
 
-    const auto &reference_scores = detection.get_reference_scores();
+    const auto reference_scores = detection.get_reference_scores();
     const float reference_current = detection.get_reference_current();
     std::array<float, 3> delta_scores{0.0f, 0.0f, 0.0f};
     float max_delta_score = 0.0f;
@@ -751,14 +755,39 @@ void EmporiaVueComponent::update_line_detection_(const MeteringFrame &frame, Met
     const float current_change = average_current - reference_current;
     const float minimum_current_change = std::max(0.01f, std::max(reference_current, average_current) * 0.05f);
 
+    // A detector is armed against the most recent stable operating point. Once
+    // a change starts, retain that reference until the event either produces a
+    // stable line or expires as ambiguous. This prevents a single old startup
+    // reference from being evaluated forever while still allowing both rising
+    // and falling load transitions.
+    if (!detection.is_transition_active()) {
+      if (max_delta_score < power_min) {
+        detection.set_reference(average_scores, average_current);
+        detection.reset_window();
+        detection.set_window_start_ms(now);
+        return 0;
+      }
+      detection.start_transition();
+    } else if (max_delta_score < power_min * 0.75f) {
+      // The transition returned close to its reference before it was stable.
+      // Re-arm quietly at the current operating point.
+      detection.set_reference(average_scores, average_current);
+      detection.reset_transition();
+      detection.reset_window();
+      detection.set_window_start_ms(now);
+      return 0;
+    }
+    const uint8_t transition_windows = detection.increment_transition_windows();
+    if (std::fabs(current_change) >= minimum_current_change) {
+      detection.confirm_transition_current();
+    }
+
     uint8_t detected_line = 0;
     uint8_t best_line = 0;
     uint8_t second_line = 0;
     float best_score = -std::numeric_limits<float>::infinity();
     float second_score = -std::numeric_limits<float>::infinity();
-    if (max_delta_score < power_min) {
-      state = "waiting for change";
-    } else if (std::fabs(current_change) < minimum_current_change) {
+    if (!detection.is_transition_current_confirmed()) {
       // A rotating current phasor can create a large correlation delta without
       // a real load transition. It cannot safely identify a physical line.
       state = "ambiguous change";
@@ -783,42 +812,54 @@ void EmporiaVueComponent::update_line_detection_(const MeteringFrame &frame, Met
         }
       }
 
-      // The relative margin forms a guard band around the 30-degree boundaries
-      // between voltage phases and rejects nearly 90-degree reactive loads.
-      const float opposite_sign_margin = std::max(1.0f, best_score * 0.05f);
-      if (best_line != 0 && best_score >= power_min) {
-        bool all_others_opposite = true;
-        for (uint8_t other = 1; other <= 3; other++) {
-          if (other == best_line || (valid_line_mask & (1U << (other - 1))) == 0) {
-            continue;
-          }
-          if (directed_scores[other - 1] > -opposite_sign_margin) {
-            all_others_opposite = false;
-            break;
-          }
-        }
-        if (all_others_opposite) {
-          detected_line = best_line;
-        }
+      // Requiring every other correlation to be negative only works reliably
+      // above about PF 0.87 and rejected otherwise clear motor loads. A ratio
+      // against the runner-up gives the intended guard band around a phase
+      // boundary while accepting a moderately displaced but dominant line.
+      const bool confident = second_score <= 0.0f ||
+                             best_score >= second_score * this->line_detection_confidence_ratio_;
+      if (best_line != 0 && best_score >= power_min && confident) {
+        detected_line = best_line;
       }
       if (detected_line == 0) {
-        state = str_sprintf("ambiguous L%u/L%u", static_cast<unsigned>(best_line),
-                           static_cast<unsigned>(second_line));
+        const uint8_t first_line = std::min(best_line, second_line);
+        const uint8_t last_line = std::max(best_line, second_line);
+        state = str_sprintf("ambiguous L%u/L%u", static_cast<unsigned>(first_line),
+                           static_cast<unsigned>(last_line));
       }
     }
 
     uint8_t stable_line = 0;
     if (detected_line == 0) {
       detection.reset_stability();
-    } else if (detection.update_candidate(detected_line) >= 3) {
-      stable_line = detected_line;
-      state = str_sprintf("L%u", static_cast<unsigned>(detected_line));
+      // Do not expose every small ranking or current-threshold fluctuation.
+      // After a bounded observation period, publish one canonical result and
+      // use the new stable operating point as the next reference.
+      if (transition_windows >= 5) {
+        publish_detection_state(state);
+        detection.set_reference(average_scores, average_current);
+        detection.reset_transition();
+      }
     } else {
+      const uint8_t candidate_windows = detection.update_candidate(detected_line);
       state = str_sprintf("L%u weak", static_cast<unsigned>(detected_line));
-    }
-
-    if (sensor != nullptr) {
-      sensor->publish_state(state);
+      if (candidate_windows >= 3) {
+        stable_line = detected_line;
+        state = str_sprintf("L%u", static_cast<unsigned>(detected_line));
+        publish_detection_state(state);
+        detection.set_reference(average_scores, average_current);
+        detection.reset_transition();
+      } else if (transition_windows >= 5) {
+        const uint8_t first_line = std::min(best_line, second_line);
+        const uint8_t last_line = std::max(best_line, second_line);
+        state = str_sprintf("ambiguous L%u/L%u", static_cast<unsigned>(first_line),
+                           static_cast<unsigned>(last_line));
+        publish_detection_state(state);
+        detection.set_reference(average_scores, average_current);
+        detection.reset_transition();
+      } else if (candidate_windows >= 2) {
+        publish_detection_state(state);
+      }
     }
     ESP_LOGV(TAG,
              "%s: state=%s window=%" PRIu32 "ms samples=%" PRIu32

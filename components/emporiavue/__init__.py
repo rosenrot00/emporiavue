@@ -160,6 +160,7 @@ CONF_LINE_DETECTION = "line_detection"
 CONF_LINE_DETECTION_DIRECTION = "_line_detection_direction"
 CONF_LINE_SELECT = "line_select"
 CONF_POWER_MIN = "power_min"
+CONF_CONFIDENCE_RATIO = "confidence_ratio"
 CONF_UPDATE_INTERVAL = "update_interval"
 CONF_ENTITY_CATEGORY = "entity_category"
 CONF_RAW_POWER = "raw_power"
@@ -2093,6 +2094,7 @@ INTERNAL_POWER_FILTER_SCHEMA = cv.ensure_list(
 LINE_DETECTION_GLOBAL_SCHEMA = cv.Schema(
     {
         cv.Optional(CONF_POWER_MIN, default=30.0): _validate_watts,
+        cv.Optional(CONF_CONFIDENCE_RATIO, default=1.5): cv.float_range(min=1.01),
         cv.Optional(CONF_UPDATE_INTERVAL, default="10s"): cv.positive_time_period_milliseconds,
     }
 )
@@ -3108,6 +3110,7 @@ async def to_code(config):
     cg.add(var.set_minimum_fundamental_current(config[CONF_MINIMUM_FUNDAMENTAL_CURRENT]))
     line_detection_config = config[CONF_LINE_DETECTION]
     cg.add(var.set_line_detection_update_interval(line_detection_config[CONF_UPDATE_INTERVAL]))
+    cg.add(var.set_line_detection_confidence_ratio(line_detection_config[CONF_CONFIDENCE_RATIO]))
     cg.add(var.set_backup_partition_name(config[CONF_BACKUP_PARTITION]))
     if firmware_version_config := config.get(CONF_FIRMWARE_VERSION):
         sens = await text_sensor.new_text_sensor(firmware_version_config)

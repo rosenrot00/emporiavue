@@ -868,10 +868,11 @@ The first complete window becomes the reference state; it may be standby, full l
 then evaluates the signed change from that reference. Both load increases and decreases are supported, and `power_min`
 is the minimum required correlation change rather than a minimum absolute circuit load.
 
-The expected line must change by at least `power_min` in the configured direction. Every other voltage reference must
-change in the opposite direction with a relative safety margin, and the independently measured RMS current must confirm
-that an actual load transition occurred. This prevents a nearly 90-degree reactive standby current from being mistaken
-for an adjacent phase. A doubtful measurement is never stored.
+The expected line must change by at least `power_min` in the configured direction. `confidence_ratio` controls how
+clearly its correlation must exceed the next-best positive candidate and defaults to `1.5`; normally it does not need to
+be configured. This guard band accepts a dominant line even for moderately phase-shifted motor loads, while remaining
+ambiguous near a phase boundary. The independently measured RMS current must also confirm that an actual load transition
+occurred. A doubtful measurement is never stored.
 
 Possible text states are `waiting for change`, `ambiguous change`, `L2 weak`, `L2`, or `ambiguous L2/L3`. It is
 intentionally unavailable for line-to-line circuits.
@@ -882,8 +883,10 @@ has occurred. `ambiguous change` means the current changed but not in a way that
 `ambiguous L2/L3` means the direction or phase displacement is still too close to a decision boundary. `L3 weak` is a
 preliminary result. A stable result needs three consecutive update windows, so with the defaults the new state should
 remain steady for about 30 seconds. If the result is `L3`, set that circuit to `line: 3` (`L1` means `line: 1`, and so
-on). The detector intentionally waits instead of guessing. After assigning the line, you can remove `line_detection:`
-if you no longer want the visible diagnostic; automatic assignment is controlled only by `line`.
+on). The result remains visible while the detector quietly re-arms at the new operating point. An unresolved transition
+is reported once and also becomes the new reference, rather than being evaluated repeatedly. The detector intentionally
+waits for the next real change instead of guessing. After assigning the line, you can remove `line_detection:` if you no
+longer want the visible diagnostic; automatic assignment is controlled only by `line`.
 
 ### Three phase without neutral
 
