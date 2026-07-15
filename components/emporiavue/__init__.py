@@ -157,9 +157,9 @@ CONF_MINIMUM_FUNDAMENTAL_CURRENT = "minimum_fundamental_current"
 CONF_DEMAND_INTERVAL = "demand_interval"
 CONF_PEAK_INTERVAL = "peak_interval"
 CONF_PHASE_DETECTION = "phase_detection"
+CONF_PHASE_DETECTION_DIRECTION = "_phase_detection_direction"
 CONF_LINE_SELECT = "line_select"
 CONF_POWER_MIN = "power_min"
-CONF_CONFIDENCE_RATIO = "confidence_ratio"
 CONF_UPDATE_INTERVAL = "update_interval"
 CONF_ENTITY_CATEGORY = "entity_category"
 CONF_RAW_POWER = "raw_power"
@@ -271,6 +271,8 @@ DIRECTION_BOTH = "both"
 DIRECTION_SIGNED_ALIAS = "signed"
 DIRECTION_POSITIVE = "positive"
 DIRECTION_NEGATIVE = "negative"
+PHASE_DETECTION_IMPORT = "import"
+PHASE_DETECTION_EXPORT = "export"
 
 HARDWARE_IDS = {
     HARDWARE_CUSTOM: 0,
@@ -1419,12 +1421,26 @@ def _apply_phase_detection_defaults(config):
             circuit_config.pop(CONF_PHASE_DETECTION, None)
             circuits[circuit_key] = circuit_config
             continue
+        phase_detection_direction = PHASE_DETECTION_IMPORT
         if phase_detection_config is True:
             phase_detection_config = {}
+        elif isinstance(phase_detection_config, str):
+            phase_detection_direction = phase_detection_config.strip().lower()
+            if phase_detection_direction not in (PHASE_DETECTION_IMPORT, PHASE_DETECTION_EXPORT):
+                raise cv.Invalid(
+                    f"circuits.{circuit_key}.phase_detection must be true, import, export, or a mapping"
+                )
+            phase_detection_config = {}
         elif not isinstance(phase_detection_config, dict):
-            raise cv.Invalid(f"circuits.{circuit_key}.phase_detection must be true or a mapping")
+            raise cv.Invalid(
+                f"circuits.{circuit_key}.phase_detection must be true, import, export, or a mapping"
+            )
         else:
             phase_detection_config = dict(phase_detection_config)
+            phase_detection_direction = phase_detection_config.get(
+                CONF_PHASE_DETECTION_DIRECTION, PHASE_DETECTION_IMPORT
+            )
+        phase_detection_config[CONF_PHASE_DETECTION_DIRECTION] = phase_detection_direction
 
         default_name = _circuit_default_phase_name(circuit_key, circuit_config)
         name_is_default = phase_detection_config.get(CONF_NAME) in (None, default_name)
@@ -2049,13 +2065,6 @@ def _validate_peak_interval(value):
     return value
 
 
-def _validate_confidence_ratio(value):
-    value = cv.float_(value)
-    if value <= 1.0:
-        raise cv.Invalid("confidence_ratio must be greater than 1.0")
-    return value
-
-
 def _validate_gpio_number(value):
     if isinstance(value, str):
         normalized = value.strip().upper()
@@ -2074,7 +2083,6 @@ INTERNAL_POWER_FILTER_SCHEMA = cv.ensure_list(
 PHASE_DETECTION_GLOBAL_SCHEMA = cv.Schema(
     {
         cv.Optional(CONF_POWER_MIN, default=30.0): _validate_watts,
-        cv.Optional(CONF_CONFIDENCE_RATIO, default=1.5): _validate_confidence_ratio,
         cv.Optional(CONF_UPDATE_INTERVAL, default="10s"): cv.positive_time_period_milliseconds,
     }
 )
@@ -2085,6 +2093,9 @@ PHASE_DETECTION_SENSOR_SCHEMA = text_sensor.text_sensor_schema(
 ).extend(
     {
         cv.Optional(CONF_POWER_MIN): _validate_watts,
+        cv.Optional(CONF_PHASE_DETECTION_DIRECTION, default=PHASE_DETECTION_IMPORT): cv.one_of(
+            PHASE_DETECTION_IMPORT, PHASE_DETECTION_EXPORT, lower=True
+        ),
     }
 )
 
@@ -2097,11 +2108,16 @@ LINE_SELECT_SCHEMA = select.select_schema(
 
 def _validate_phase_detection_sensor(value):
     if value is True:
-        value = {}
+        value = {CONF_PHASE_DETECTION_DIRECTION: PHASE_DETECTION_IMPORT}
+    elif isinstance(value, str):
+        direction = value.strip().lower()
+        if direction not in (PHASE_DETECTION_IMPORT, PHASE_DETECTION_EXPORT):
+            raise cv.Invalid("phase_detection must be true, import, export, or a mapping")
+        value = {CONF_PHASE_DETECTION_DIRECTION: direction}
     elif value is False or value is None:
         return None
     elif not isinstance(value, dict):
-        raise cv.Invalid("phase_detection must be true or a mapping")
+        raise cv.Invalid("phase_detection must be true, import, export, or a mapping")
     return PHASE_DETECTION_SENSOR_SCHEMA(value)
 
 
@@ -3076,7 +3092,6 @@ async def to_code(config):
     cg.add(var.set_minimum_apparent_power(config[CONF_MINIMUM_APPARENT_POWER]))
     cg.add(var.set_minimum_fundamental_current(config[CONF_MINIMUM_FUNDAMENTAL_CURRENT]))
     phase_detection_config = config[CONF_PHASE_DETECTION]
-    cg.add(var.set_phase_detection_confidence_ratio(phase_detection_config[CONF_CONFIDENCE_RATIO]))
     cg.add(var.set_phase_detection_update_interval(phase_detection_config[CONF_UPDATE_INTERVAL]))
     cg.add(var.set_backup_partition_name(config[CONF_BACKUP_PARTITION]))
     if firmware_version_config := config.get(CONF_FIRMWARE_VERSION):
@@ -3260,9 +3275,16 @@ async def to_code(config):
         if phase_detection_sensor_config:
             phase_detection_text_sensor_config = dict(phase_detection_sensor_config)
             phase_detection_text_sensor_config.pop(CONF_POWER_MIN, None)
+            phase_detection_text_sensor_config.pop(CONF_PHASE_DETECTION_DIRECTION, None)
             sens = await text_sensor.new_text_sensor(phase_detection_text_sensor_config)
             cg.add(ct_clamp_var.set_phase_detection_sensor(sens))
             cg.add(ct_clamp_var.set_phase_detection_name(phase_detection_sensor_config[CONF_NAME]))
+            cg.add(
+                ct_clamp_var.set_phase_detection_export(
+                    phase_detection_sensor_config[CONF_PHASE_DETECTION_DIRECTION]
+                    == PHASE_DETECTION_EXPORT
+                )
+            )
             cg.add(
                 ct_clamp_var.set_phase_detection_power_min(
                     phase_detection_sensor_config.get(

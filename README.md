@@ -241,12 +241,21 @@ the phase.
 
 If you do not know the correct line, use `line: auto`. The existing phase-detection logic waits for three stable
 measurement windows, applies the detected line, and stores it for the next restart. Automatic assignment does not
-require a Home Assistant entity:
+require a Home Assistant entity and assumes a normally oriented consuming circuit (`import`):
 
 ```yaml
 cir2:
   name: "Heat Pump"
   line: auto
+```
+
+For a circuit that normally feeds power back, request export-aware detection explicitly:
+
+```yaml
+cir2:
+  name: "Solar"
+  line: auto
+  phase_detection: export
 ```
 
 Add `line_select:` only when Home Assistant should also provide a dropdown:
@@ -826,7 +835,6 @@ the component should apply and store the result automatically.
 emporiavue:
   phase_detection:
     power_min: 30W
-    confidence_ratio: 1.5
     update_interval: 10s
 
   circuits:
@@ -834,15 +842,23 @@ emporiavue:
       phase_detection: true
 ```
 
+`phase_detection: true` and `phase_detection: import` are identical and expect power flowing into a consumer.
+Use `phase_detection: export` for a normally exporting circuit. Detection keeps the signed correlations: the expected
+line must carry at least `power_min` in the configured direction, while every other voltage reference must have the
+opposite sign. This avoids falsely assigning strongly reactive loads merely because a wrong phase has a large absolute
+correlation.
+
 Possible text states are `low load`, `L2 weak`, `L2`, or `ambiguous L2/L3`. It is intentionally unavailable for
 line-to-line circuits.
 
-To use it, switch on a clear, steady load on that circuit and keep it above `power_min` until the same line is shown
-without `weak`. A stable result needs three consecutive update windows, so with the defaults the load should run for
-about 30 seconds. If the result is `L3`, set that circuit to `line: 3` (`L1` means `line: 1`, and so on). `L3 weak` is
-only a preliminary result; keep the load running. `low load` means the load is below the threshold, while
-`ambiguous L2/L3` means the helper cannot make a reliable choice. After assigning the line, you can remove
-`phase_detection: true` again.
+No particular startup state is required. The detector continuously waits for a suitable operating interval while the
+assignment remains automatic. Keep a clear, steady load above `power_min` until the same line is shown without `weak`.
+A stable result needs three consecutive update windows, so with the defaults the suitable load should run for about
+30 seconds. If the result is `L3`, set that circuit to `line: 3` (`L1` means `line: 1`, and so on). `L3 weak` is only a
+preliminary result; keep the load running. `low load` means every correlation is below the threshold, while
+`ambiguous L2/L3` means the measured direction and phase displacement do not permit a reliable choice. The detector
+intentionally remains ambiguous instead of guessing. After assigning the line, you can remove `phase_detection: true`
+again.
 
 ### Three phase without neutral
 

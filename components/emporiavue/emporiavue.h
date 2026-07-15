@@ -258,9 +258,6 @@ class EmporiaVueComponent : public Component
   void set_metering_interval(uint32_t metering_interval_ms) { this->metering_interval_ms_ = metering_interval_ms; }
   void set_minimum_apparent_power(float value) { this->minimum_apparent_power_ = value; }
   void set_minimum_fundamental_current(float value) { this->minimum_fundamental_current_ = value; }
-  void set_phase_detection_confidence_ratio(float confidence_ratio) {
-    this->phase_detection_confidence_ratio_ = confidence_ratio;
-  }
   void set_phase_detection_update_interval(uint32_t update_interval_ms) {
     this->phase_detection_update_interval_ms_ = update_interval_ms;
   }
@@ -1045,7 +1042,6 @@ class EmporiaVueComponent : public Component
   uint32_t spi_rx_last_samd_reset_ms_{0};
   float minimum_apparent_power_{5.0f};
   float minimum_fundamental_current_{0.02f};
-  float phase_detection_confidence_ratio_{1.5f};
   uint32_t phase_detection_update_interval_ms_{10000};
   std::vector<MeteringPhaseConfig *> metering_phases_{};
   std::vector<MeteringCTClampConfig *> metering_ct_clamps_{};
@@ -1318,6 +1314,8 @@ class MeteringCTClampConfig {
   const std::string &get_phase_detection_name() const { return this->phase_detection_name_; }
   void set_phase_detection_power_min(float power_min) { this->phase_detection_power_min_ = power_min; }
   float get_phase_detection_power_min() const { return this->phase_detection_power_min_; }
+  void set_phase_detection_export(bool value) { this->phase_detection_export_ = value; }
+  bool is_phase_detection_export() const { return this->phase_detection_export_; }
   void add_phase_detection_candidate(MeteringPhaseConfig *phase, uint8_t line) {
     this->phase_detection_candidates_.push_back(PhaseDetectionCandidate{phase, line});
   }
@@ -1396,6 +1394,7 @@ class MeteringCTClampConfig {
   text_sensor::TextSensor *phase_detection_sensor_{nullptr};
   std::string phase_detection_name_{};
   float phase_detection_power_min_{30.0f};
+  bool phase_detection_export_{false};
   std::vector<PhaseDetectionCandidate> phase_detection_candidates_{};
   std::array<float, 3> phase_detection_scores_{0.0f, 0.0f, 0.0f};
   uint32_t phase_detection_samples_{0};

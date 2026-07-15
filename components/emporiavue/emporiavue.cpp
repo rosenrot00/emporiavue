@@ -195,8 +195,7 @@ void EmporiaVueComponent::dump_config() {
                 this->metering_interval_ms_, this->diagnostics_interval_ms_);
   ESP_LOGCONFIG(TAG, "  Analysis validity: apparent>=%.1f VA, fundamental_current>=%.3f A",
                 this->minimum_apparent_power_, this->minimum_fundamental_current_);
-  ESP_LOGCONFIG(TAG, "  Phase detection: confidence=%.2f, window=%" PRIu32 " ms",
-                this->phase_detection_confidence_ratio_, this->phase_detection_update_interval_ms_);
+  ESP_LOGCONFIG(TAG, "  Phase detection window: %" PRIu32 " ms", this->phase_detection_update_interval_ms_);
   if (!this->entity_prefix_.empty()) {
     ESP_LOGCONFIG(TAG, "  Entity prefix: %s", this->entity_prefix_.c_str());
   }
@@ -248,6 +247,10 @@ void EmporiaVueComponent::dump_config() {
       append_config_item(settings, sizeof(settings), "line_select");
     if (ct_clamp->is_auto_line_detection_active())
       append_config_item(settings, sizeof(settings), "auto_line");
+    if (!ct_clamp->get_phase_detection_candidates().empty())
+      append_config_item(settings, sizeof(settings),
+                         ct_clamp->is_phase_detection_export() ? "phase_detection=export"
+                                                               : "phase_detection=import");
     if (ct_clamp->get_current_gain_number() != nullptr || ct_clamp->get_current_phase_number() != nullptr ||
         std::fabs(ct_clamp->get_current_gain() - 1.0f) > 0.000001f ||
         std::fabs(ct_clamp->get_current_phase_correction()) > 0.0001f) {

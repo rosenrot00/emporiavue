@@ -100,7 +100,6 @@ emporiavue:
 
   phase_detection:
     power_min: 30W
-    confidence_ratio: 1.5
     update_interval: 10s
 
   virtual_lines:
@@ -123,7 +122,7 @@ emporiavue:
       power_factor:
     cir3:
       line: 1
-      phase_detection: true
+      phase_detection: true  # Same as import; use export for a generating circuit.
       power:
     cir4:
       line: 2

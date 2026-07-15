@@ -683,9 +683,8 @@ void EmporiaVueComponent::update_phase_detection_(const MeteringFrame &frame, Me
     const int32_t raw_power = frame.clamps[port].power_raw_by_phase[input];
     const float power = raw_power * candidate.phase->get_calibration() / correction_factor *
                         ct_clamp->get_current_gain();
-    const float score = std::fabs(power);
-    sample_scores[candidate.line - 1] = score;
-    max_sample_score = std::max(max_sample_score, score);
+    sample_scores[candidate.line - 1] = power;
+    max_sample_score = std::max(max_sample_score, std::fabs(power));
     valid_candidates++;
   }
   if (valid_candidates < 2) {
@@ -719,12 +718,26 @@ void EmporiaVueComponent::update_phase_detection_(const MeteringFrame &frame, Me
     return;
   }
 
-  uint8_t best_line = 1;
-  uint8_t second_line = 2;
-  float best_score = -1.0f;
-  float second_score = -1.0f;
+  const float divisor = static_cast<float>(samples);
+  const float direction = ct_clamp->is_phase_detection_export() ? -1.0f : 1.0f;
+  std::array<float, 3> directed_scores{0.0f, 0.0f, 0.0f};
+  uint8_t valid_line_mask = 0;
+  for (const auto &candidate : candidates) {
+    if (candidate.line >= 1 && candidate.line <= 3) {
+      valid_line_mask |= static_cast<uint8_t>(1U << (candidate.line - 1));
+      directed_scores[candidate.line - 1] = scores[candidate.line - 1] * direction / divisor;
+    }
+  }
+
+  uint8_t best_line = 0;
+  uint8_t second_line = 0;
+  float best_score = -std::numeric_limits<float>::infinity();
+  float second_score = -std::numeric_limits<float>::infinity();
   for (uint8_t line = 1; line <= 3; line++) {
-    const float score = scores[line - 1];
+    if ((valid_line_mask & (1U << (line - 1))) == 0) {
+      continue;
+    }
+    const float score = directed_scores[line - 1];
     if (score > best_score) {
       second_score = best_score;
       second_line = best_line;
@@ -736,20 +749,44 @@ void EmporiaVueComponent::update_phase_detection_(const MeteringFrame &frame, Me
     }
   }
 
-  const float ratio = second_score > 0.0f ? best_score / second_score : 999.0f;
-  const float confidence = (best_score + second_score) > 0.0f ? best_score * 100.0f / (best_score + second_score)
-                                                              : 0.0f;
+  // A correct import phase has one positive correlation and negative
+  // correlations against every other configured voltage reference. Export is
+  // the exact inverse. Requiring the opposite signs avoids guessing for highly
+  // reactive loads where an unrelated phase can have the largest magnitude.
+  const float opposite_sign_margin = std::max(1.0f, ct_clamp->get_phase_detection_power_min() * 0.05f);
+  uint8_t detected_line = 0;
+  for (uint8_t line = 1; line <= 3; line++) {
+    if ((valid_line_mask & (1U << (line - 1))) == 0 ||
+        directed_scores[line - 1] < ct_clamp->get_phase_detection_power_min()) {
+      continue;
+    }
+    bool all_others_opposite = true;
+    for (uint8_t other = 1; other <= 3; other++) {
+      if (other == line || (valid_line_mask & (1U << (other - 1))) == 0) {
+        continue;
+      }
+      if (directed_scores[other - 1] > -opposite_sign_margin) {
+        all_others_opposite = false;
+        break;
+      }
+    }
+    if (all_others_opposite) {
+      detected_line = line;
+      break;
+    }
+  }
+
   bool auto_detection_complete = false;
-  if (ratio < this->phase_detection_confidence_ratio_) {
+  if (detected_line == 0) {
     ct_clamp->reset_phase_detection_stability();
     state = str_sprintf("ambiguous L%u/L%u", static_cast<unsigned>(best_line), static_cast<unsigned>(second_line));
   } else {
-    const uint8_t stable_windows = ct_clamp->update_phase_detection_candidate(best_line);
+    const uint8_t stable_windows = ct_clamp->update_phase_detection_candidate(detected_line);
     if (stable_windows >= 3) {
-      state = str_sprintf("L%u", static_cast<unsigned>(best_line));
+      state = str_sprintf("L%u", static_cast<unsigned>(detected_line));
       auto_detection_complete = ct_clamp->is_auto_line_detection_active();
     } else {
-      state = str_sprintf("L%u weak", static_cast<unsigned>(best_line));
+      state = str_sprintf("L%u weak", static_cast<unsigned>(detected_line));
     }
   }
 
@@ -757,20 +794,20 @@ void EmporiaVueComponent::update_phase_detection_(const MeteringFrame &frame, Me
     ct_clamp->get_phase_detection_sensor()->publish_state(state);
   }
 
-  const float divisor = samples == 0 ? 1.0f : static_cast<float>(samples);
   ESP_LOGV(TAG,
            "%s: state=%s window=%" PRIu32 "ms samples=%" PRIu32
-           " scores L1=%.1fW L2=%.1fW L3=%.1fW confidence=%.0f%% power_min=%.1fW",
+           " direction=%s scores L1=%.1fW L2=%.1fW L3=%.1fW power_min=%.1fW",
            detection_name, state.c_str(), now - window_start, samples,
+           ct_clamp->is_phase_detection_export() ? "export" : "import",
            scores[0] / divisor, scores[1] / divisor, scores[2] / divisor,
-           confidence, ct_clamp->get_phase_detection_power_min());
+           ct_clamp->get_phase_detection_power_min());
 
   ct_clamp->reset_phase_detection();
   ct_clamp->set_phase_detection_window_start_ms(now);
   if (auto_detection_complete) {
     ESP_LOGI(TAG, "%s: selected L%u and stored the assignment", detection_name,
-             static_cast<unsigned>(best_line));
-    ct_clamp->complete_auto_line_detection(best_line);
+             static_cast<unsigned>(detected_line));
+    ct_clamp->complete_auto_line_detection(detected_line);
   }
 }
 
