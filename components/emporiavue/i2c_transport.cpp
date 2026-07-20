@@ -4,7 +4,6 @@
 
 #include <cinttypes>
 #include <cstddef>
-#include <limits>
 
 namespace esphome {
 namespace emporiavue {
@@ -15,17 +14,6 @@ static uint8_t metering_crc8_update(uint8_t crc, uint8_t value) {
     crc = (crc & 0x80) != 0 ? static_cast<uint8_t>((crc << 1) ^ 0x07) : static_cast<uint8_t>(crc << 1);
   }
   return crc;
-}
-
-static int32_t orient_i2c_power_raw(uint16_t hardware_id, uint8_t clamp, int32_t raw_power) {
-  // The Vue 3 branch-current signal has the opposite polarity from its mains
-  // inputs. The stock ESP32 firmware hides this by publishing branch power as
-  // an absolute value. Keep signed metering while making the documented CT
-  // orientation represent positive consumption on both transports.
-  if (hardware_id != 3 || clamp < 3) {
-    return raw_power;
-  }
-  return raw_power == std::numeric_limits<int32_t>::min() ? std::numeric_limits<int32_t>::max() : -raw_power;
 }
 
 EmporiaVueComponent::ManagedI2CDiagnosticResult EmporiaVueComponent::query_managed_i2c_diagnostic_(
@@ -218,8 +206,7 @@ bool EmporiaVueComponent::decode_i2c_metering_packet_(const I2CMeteringPacket &p
     candidate.clamps[clamp].current_raw = packet.current[clamp];
     candidate.clamps[clamp].power_phase_valid_mask = 0x07;
     for (uint8_t phase = 0; phase < 3; phase++) {
-      candidate.clamps[clamp].power_raw_by_phase[phase] =
-          orient_i2c_power_raw(this->hardware_id_, clamp, packet.power[clamp].phase[phase]);
+      candidate.clamps[clamp].power_raw_by_phase[phase] = packet.power[clamp].phase[phase];
     }
   }
 

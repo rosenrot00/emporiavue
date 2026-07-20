@@ -65,15 +65,6 @@ static constexpr uint8_t SPI_VUE3_MUX_TABLE[16] = {16, 8, 17, 9, 12, 4, 13, 5, 1
 static uint8_t spi_mux_output_port(uint16_t hardware_id, uint8_t internal_index) {
   return hardware_id == 3 ? SPI_VUE3_MUX_TABLE[internal_index] : SPI_VUE2_MUX_TABLE[internal_index];
 }
-
-static int32_t orient_spi_current_difference(uint16_t hardware_id, bool branch_input,
-                                             int32_t current_difference) {
-  // Vue 3 branch inputs have the opposite signal polarity from its mains
-  // inputs. Normalize that hardware detail here so all waveform-derived signed
-  // values use the same documented CT orientation. Vue 2 remains unchanged.
-  return hardware_id == 3 && branch_input ? current_difference : -current_difference;
-}
-
 static constexpr uint32_t SPI_CRC32_NIBBLE_TABLE[16] = {
     0x00000000UL, 0x1DB71064UL, 0x3B6E20C8UL, 0x26D930ACUL,
     0x76DC4190UL, 0x6B6B51F4UL, 0x4DB26158UL, 0x5005713CUL,
@@ -1098,8 +1089,7 @@ bool EmporiaVueComponent::accumulate_spi_voltage_cycle_(const SpiCrossingPositio
         }
         const int32_t current_difference =
             static_cast<int32_t>(sample.main_current[phase]) - this->spi_adc_offsets_[3 + phase];
-        const float oriented_current =
-            static_cast<float>(orient_spi_current_difference(this->hardware_id_, false, current_difference));
+        const float oriented_current = -static_cast<float>(current_difference);
         acc.current_fund_i[phase] += oriented_current * sample_cos;
         acc.current_fund_q[phase] += oriented_current * sample_sin;
         acc.current_fund_weight[phase] += weight;
@@ -1115,8 +1105,7 @@ bool EmporiaVueComponent::accumulate_spi_voltage_cycle_(const SpiCrossingPositio
           const uint8_t offset_index = static_cast<uint8_t>(6 + internal_index);
           const int32_t current_difference =
               static_cast<int32_t>(sample.mux_current[mux_side]) - this->spi_adc_offsets_[offset_index];
-          const float oriented_current =
-              static_cast<float>(orient_spi_current_difference(this->hardware_id_, true, current_difference));
+          const float oriented_current = -static_cast<float>(current_difference);
           acc.current_fund_i[clamp_index] += oriented_current * sample_cos;
           acc.current_fund_q[clamp_index] += oriented_current * sample_sin;
           acc.current_fund_weight[clamp_index] += weight;
@@ -1426,8 +1415,6 @@ void EmporiaVueComponent::process_spi_raw_scan_(uint8_t current_index) {
     acc.current_sum[phase] += main_current_scan.value[current_index_for_phase];
     const int32_t current_difference =
         static_cast<int32_t>(main_current_scan.value[current_index_for_phase]) - this->spi_adc_offsets_[3 + phase];
-    const int32_t oriented_current =
-        orient_spi_current_difference(this->hardware_id_, false, current_difference);
     acc.current_square_sum[phase] += static_cast<int64_t>(current_difference) * current_difference;
     acc.current_peak_abs[phase] =
         std::max(acc.current_peak_abs[phase], static_cast<uint32_t>(std::abs(current_difference)));
@@ -1436,8 +1423,8 @@ void EmporiaVueComponent::process_spi_raw_scan_(uint8_t current_index) {
       if ((voltage_mask & (1U << voltage_phase)) == 0) {
         continue;
       }
-      acc.raw_power_sum[phase][voltage_phase] +=
-          static_cast<int64_t>(oriented_current) * voltage_differences[voltage_phase];
+      acc.raw_power_sum[phase][voltage_phase] -=
+          static_cast<int64_t>(current_difference) * voltage_differences[voltage_phase];
     }
   }
 
@@ -1457,8 +1444,6 @@ void EmporiaVueComponent::process_spi_raw_scan_(uint8_t current_index) {
       acc.current_sum[clamp_index] += current_raw;
       acc.mux_sample_count[internal_index]++;
       const int32_t current_difference = static_cast<int32_t>(current_raw) - this->spi_adc_offsets_[offset_index];
-      const int32_t oriented_current =
-          orient_spi_current_difference(this->hardware_id_, true, current_difference);
       acc.current_square_sum[clamp_index] += static_cast<int64_t>(current_difference) * current_difference;
       acc.current_peak_abs[clamp_index] =
           std::max(acc.current_peak_abs[clamp_index], static_cast<uint32_t>(std::abs(current_difference)));
@@ -1467,8 +1452,8 @@ void EmporiaVueComponent::process_spi_raw_scan_(uint8_t current_index) {
         if ((voltage_mask & (1U << voltage_phase)) == 0) {
           continue;
         }
-        acc.raw_power_sum[clamp_index][voltage_phase] +=
-            static_cast<int64_t>(oriented_current) * voltage_differences[voltage_phase];
+        acc.raw_power_sum[clamp_index][voltage_phase] -=
+            static_cast<int64_t>(current_difference) * voltage_differences[voltage_phase];
       }
     }
   }
