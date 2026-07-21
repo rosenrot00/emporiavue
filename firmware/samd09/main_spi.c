@@ -71,6 +71,7 @@ typedef volatile       uint32_t RoReg;   /**< Read only 32-bit register (volatil
 #define REG_GCLK_GENCTRL           (*(RwReg  *)0x40000C04UL) /**< \brief (GCLK) Generic Clock Generator Control */
 #define REG_GCLK_GENDIV            (*(RwReg  *)0x40000C08UL) /**< \brief (GCLK) Generic Clock Generator Division */
 
+#define REG_PM_SLEEP               (*(RwReg8 *)0x40000401UL) /**< \brief (PM) Sleep Mode */
 #define REG_PM_APBCMASK            (*(RwReg  *)0x40000420UL) /**< \brief (PM) APBC Mask */
 
 #define REG_NVMCTRL_CTRLB          (*(RwReg  *)0x41004004UL) /**< \brief (NVMCTRL) Control B */
@@ -117,8 +118,14 @@ typedef volatile       uint32_t RoReg;   /**< Read only 32-bit register (volatil
 #define REG_PORT_PMUX11            (*(RwReg8 *)0x4100443BUL)
 
 #define REG_DMAC_CTRL              (*(RwReg16*)0x41004800UL) /**< \brief (DMAC) Control */
+#define REG_DMAC_CRCCTRL           (*(RwReg16*)0x41004802UL) /**< \brief (DMAC) CRC Control */
+#define REG_DMAC_CRCDATAIN         (*(RwReg  *)0x41004804UL) /**< \brief (DMAC) CRC Data Input */
+#define REG_DMAC_CRCCHKSUM         (*(RwReg  *)0x41004808UL) /**< \brief (DMAC) CRC Checksum */
+#define REG_DMAC_CRCSTATUS         (*(RwReg8 *)0x4100480CUL) /**< \brief (DMAC) CRC Status */
 #define REG_DMAC_PRICTRL0          (*(RwReg  *)0x41004814UL) /**< \brief (DMAC) Priority Control 0 */
-#define REG_DMAC_INTPEND           (*(RwReg16*)0x41004820UL) /**< \brief (DMAC) Interrupt Pending */
+#define REG_DMAC_INTSTATUS         (*(RoReg  *)0x41004824UL) /**< \brief (DMAC) Interrupt Status */
+#define REG_DMAC_BUSYCH            (*(RoReg  *)0x41004828UL) /**< \brief (DMAC) Busy Channels */
+#define REG_DMAC_PENDCH            (*(RoReg  *)0x4100482CUL) /**< \brief (DMAC) Pending Channels */
 #define REG_DMAC_BASEADDR          (*(RwReg  *)0x41004834UL) /**< \brief (DMAC) Descriptor Memory Section Base Address */
 #define REG_DMAC_WRBADDR           (*(RwReg  *)0x41004838UL) /**< \brief (DMAC) Write-Back Memory Section Base Address */
 #define REG_DMAC_CHID              (*(RwReg8 *)0x4100483FUL) /**< \brief (DMAC) Channel ID */
@@ -131,10 +138,15 @@ typedef volatile       uint32_t RoReg;   /**< Read only 32-bit register (volatil
 #define REG_NVIC_PRIO1		    (*(RwReg  *)0xE000E404UL) //Interrupt Priority Register 1
 #define REG_NVIC_PRIO2		    (*(RwReg  *)0xE000E408UL) //Interrupt Priority Register 1
 #define REG_NVIC_PRIO3		    (*(RwReg  *)0xE000E40CUL) //Interrupt Priority Register 3
+#define REG_SCB_SCR                (*(RwReg  *)0xE000ED10UL) //System Control Register
+
+#define SCB_SCR_SLEEPDEEP_MASK     (1UL << 2)
 
 #define REG_SERCOM1_CTRLA          (*(RwReg  *)0x42000C00UL)
 #define REG_SERCOM1_CTRLB          (*(RwReg  *)0x42000C04UL)
 #define REG_SERCOM1_BAUD           (*(RwReg8 *)0x42000C0CUL)
+#define REG_SERCOM1_INTENCLR       (*(RwReg8 *)0x42000C14UL)
+#define REG_SERCOM1_INTENSET       (*(RwReg8 *)0x42000C16UL)
 #define REG_SERCOM1_INTFLAG        (*(RwReg8 *)0x42000C18UL)
 #define REG_SERCOM1_SYNCBUSY       (*(RoReg  *)0x42000C1CUL)
 #define REG_SERCOM1_DATA           (*(RwReg8 *)0x42000C28UL)
@@ -198,8 +210,8 @@ static inline void set_boot_stage(uint32_t stage)
 	BootDiagnostic.stage = stage;
 }
 
-bool dmabool = false;
-uint8_t DMAresultIndex = 0;
+volatile bool dmabool = false;
+volatile uint8_t DMAresultIndex = 0;
 #ifdef EMPORIAVUE_TARGET_VUE3
 #define ADC_CHANNEL_COUNT 5
 int16_t DMAresults[6][ADC_CHANNEL_COUNT];
@@ -256,6 +268,23 @@ const uint32_t outputpinTable [8] = { 0x1000000, 0x1010000, 0x1020000, 0x1030000
 #define SPI_FLAG_VOLTAGE_ERROR         0x0004
 #define SPI_FRAME_CS_PIN_MASK          0x80000000UL  // PA31/SWDIO, active-low SPI frame/CS.
 
+#define DMA_CHANNEL_ADC                0
+#define DMA_CHANNEL_SPI_TX             1
+#define DMA_CHANNEL_COUNT              2
+#define DMA_CHANNEL_MASK               ((1UL << DMA_CHANNEL_COUNT) - 1UL)
+#define DMA_TRIGGER_ADC_RESRDY         0x12
+#define DMA_TRIGGER_SERCOM1_TX         0x04
+#define DMA_CHCTRLB_TRIGACT_BEAT       0x800000UL
+#define DMA_CHCTRLB_PRIORITY(level)    (((uint32_t) (level) & 0x3UL) << 5)
+#define DMA_CHCTRLB_PRIORITY_LOW       DMA_CHCTRLB_PRIORITY(0)
+#define DMA_CHCTRLB_PRIORITY_HIGH      DMA_CHCTRLB_PRIORITY(3)
+#define DMA_INT_TRANSFER_ERROR         0x01
+#define DMA_INT_TRANSFER_COMPLETE      0x02
+#define DMA_INT_SUSPEND                0x04
+#define DMA_CHANNEL_ENABLE             0x02
+#define SERCOM_INT_TXC                  0x02
+#define SERCOM_INT_RXC                  0x04
+
 struct __attribute__((__packed__)) SpiFrameHeader
 {
 	uint8_t version;
@@ -296,6 +325,8 @@ volatile uint16_t SpiFrameSequence = 0;
 volatile uint16_t SpiPendingFlags = 0;
 volatile uint32_t SpiSampleCounter = 0;
 volatile uint32_t SpiFrameOverruns = 0;
+volatile bool SpiTxActive = false;
+volatile bool SpiTxAwaitingComplete = false;
 
 #ifdef EMPORIAVUE_TARGET_VUE3
 volatile uint8_t VoltagePacketBuild[6];
@@ -320,6 +351,30 @@ static void spi_exit_critical(uint32_t primask)
 	__asm__ __volatile__("msr primask, %0" : : "r" (primask) : "memory");
 }
 
+static void configure_idle_sleep(void)
+{
+	// IDLE0 stops only the CPU clock. Timer, ADC, DMA and SERCOM clocks keep
+	// running, so raw-sample acquisition remains entirely hardware-timed.
+	REG_PM_SLEEP = 0;
+	REG_SCB_SCR &= ~SCB_SCR_SLEEPDEEP_MASK;
+	__asm__ __volatile__("dsb sy" ::: "memory");
+	__asm__ __volatile__("isb sy" ::: "memory");
+}
+
+static void wait_for_spi_work(void)
+{
+	// Sleep while DMA owns the transmitter or no complete frame exists. An
+	// interrupt that becomes pending while PRIMASK is set wakes WFI, then runs
+	// as soon as PRIMASK is restored.
+	const uint32_t primask = spi_enter_critical();
+	if (SpiTxActive || SpiReadyCount == 0)
+	{
+		__asm__ __volatile__("dsb sy" ::: "memory");
+		__asm__ __volatile__("wfi");
+	}
+	spi_exit_critical(primask);
+}
+
 static uint8_t spi_ready_queue_contains(uint8_t frame_index)
 {
 	for (uint8_t offset = 0; offset < SpiReadyCount; offset++)
@@ -341,18 +396,33 @@ static uint8_t spi_find_free_build_frame(void)
 	return SpiBuildFrameIndex;
 }
 
-static const uint32_t Crc32NibbleTable[16] = {
-	0x00000000UL, 0x1DB71064UL, 0x3B6E20C8UL, 0x26D930ACUL,
-	0x76DC4190UL, 0x6B6B51F4UL, 0x4DB26158UL, 0x5005713CUL,
-	0xEDB88320UL, 0xF00F9344UL, 0xD6D6A3E8UL, 0xCB61B38CUL,
-	0x9B64C2B0UL, 0x86D3D2D4UL, 0xA00AE278UL, 0xBDBDF21CUL,
-};
-
-static uint32_t crc32_update_byte(uint32_t crc, uint8_t value)
+static void crc32_hardware_begin(void)
 {
-	crc ^= value;
-	crc = (crc >> 4) ^ Crc32NibbleTable[crc & 0x0FUL];
-	crc = (crc >> 4) ^ Crc32NibbleTable[crc & 0x0FUL];
+	// CRCCTRL and CRCCHKSUM are writable only while the CRC engine is disabled.
+	// The DMA engine and ADC DMA channel remain enabled and are not reconfigured.
+	REG_DMAC_CTRL &= (uint16_t) ~4U;
+	REG_DMAC_CRCCTRL = 0x0104; // I/O source, IEEE CRC-32, byte beats.
+	REG_DMAC_CRCCHKSUM = 0xFFFFFFFFUL;
+	REG_DMAC_CTRL |= 4; // CRCENABLE
+}
+
+static void crc32_hardware_update_byte(uint8_t value)
+{
+	REG_DMAC_CRCDATAIN = value;
+	// SAMD09 rev. B erratum 13507 requires a NOP between consecutive
+	// CRCDATAIN writes. Keep it explicit even though status handling also
+	// separates the writes.
+	__asm__ __volatile__("nop");
+	while ((REG_DMAC_CRCSTATUS & 1) == 0) // CRCBUSY signals beat completion.
+	{
+	}
+	REG_DMAC_CRCSTATUS = 1; // Clear CRCBUSY before accepting the next beat.
+}
+
+static uint32_t crc32_hardware_end(void)
+{
+	const uint32_t crc = REG_DMAC_CRCCHKSUM;
+	REG_DMAC_CTRL &= (uint16_t) ~4U;
 	return crc;
 }
 
@@ -433,7 +503,11 @@ struct DMAdescriptorType {
   uint32_t SRCADDR;
   uint32_t DSTADDR;
   uint32_t DESCADDR;
-}  __attribute__((packed, aligned(16)))DMAdescriptor, __attribute__((packed, aligned(16)))DMAdescriptorwriteback;
+};
+
+typedef char DMADescriptorSizeCheck[(sizeof(struct DMAdescriptorType) == 16) ? 1 : -1];
+volatile struct DMAdescriptorType DMAdescriptor[DMA_CHANNEL_COUNT] __attribute__((aligned(16)));
+volatile struct DMAdescriptorType DMAdescriptorwriteback[DMA_CHANNEL_COUNT] __attribute__((aligned(16)));
 
 #define __SIZE_OF__(x) \
 ({x __tmp_x_[2]; \
@@ -598,8 +672,6 @@ void irq_handler_reset(void)
   while (1);
 }
 
-void irq_handler_sercom1(void) {}
-
 #ifdef EMPORIAVUE_TARGET_VUE3
 void irq_handler_sercom0(void)
 {
@@ -650,54 +722,52 @@ static bool decode_vue3_voltage_packet(void)
 }
 #endif
 
-void  enableDMA ()
+static void finish_spi_tx(void);
+
+static void enable_adc_dma(void)
 {
 	if (dmabool == false)
 	{
 		dmabool = true;
-		DMAdescriptor.BTCNT = ADC_CHANNEL_COUNT;
-		DMAdescriptor.SRCADDR = (uint32_t) &REG_ADC_RESULT;//Source address
-		DMAdescriptor.DSTADDR = (uint32_t) &DMAresults[DMAresultIndex+1][0] ;//Destination address + (transaction length), see manual
-		DMAdescriptor.DESCADDR = 0;
-		REG_DMAC_CHID = 0;
-		REG_DMAC_CHCTRLA = REG_DMAC_CHCTRLA | 2;//Enable the DMA channel;
+		DMAdescriptor[DMA_CHANNEL_ADC].BTCNT = ADC_CHANNEL_COUNT;
+		DMAdescriptor[DMA_CHANNEL_ADC].SRCADDR = (uint32_t) &REG_ADC_RESULT;//Source address
+		DMAdescriptor[DMA_CHANNEL_ADC].DSTADDR =
+			(uint32_t) &DMAresults[DMAresultIndex][ADC_CHANNEL_COUNT];
+		// DMAC incrementing destinations use the address immediately after the block.
+		DMAdescriptor[DMA_CHANNEL_ADC].DESCADDR = 0;
+		__asm__ __volatile__("dmb sy" ::: "memory");
+		REG_DMAC_CHID = DMA_CHANNEL_ADC;
+		REG_DMAC_CHINTFLAG = DMA_INT_TRANSFER_ERROR | DMA_INT_TRANSFER_COMPLETE | DMA_INT_SUSPEND;
+		REG_DMAC_CHCTRLA = DMA_CHANNEL_ENABLE;
 	}
 }
 
-void irq_handler_dmac(void) //We've configured it to enable Channel Transfer Complete interrupt and Channel Transfer Error interrupt.
+static void handle_adc_dma_interrupt(uint8_t flags)
 {
+	dmabool = false;
+	if ((flags & DMA_INT_TRANSFER_ERROR) != 0 || (flags & DMA_INT_TRANSFER_COMPLETE) == 0)
+	{
+		// Never promote a partial or stale ADC scan into the metering stream.
+		SpiPendingFlags |= SPI_FLAG_DMA_ERROR;
+		enable_adc_dma();
+		return;
+	}
 
-	uint8_t lastindex = DMAresultIndex;
-
+	const uint8_t lastindex = DMAresultIndex;
 	DMAresultIndex++;
 	if (DMAresultIndex > 5)
 		DMAresultIndex = 0;
 
-	REG_DMAC_CHID = REG_DMAC_INTPEND & 7; //These bits store the lowest channel number with pending interrupts.
-	uint8_t CHintflag = REG_DMAC_CHINTFLAG;
-	if ((CHintflag & 2) == 2) //TCMPL: Transfer Complete. This flag is set when a block transfer is completed and the corresponding interrupt block action is enabled
-	{
-		REG_DMAC_CHINTFLAG = 2; //This flag is cleared by writing a one to it
-		dmabool = false;
-	}
-
-	if ((CHintflag & 1) == 1) //Transfer Error. This flag is set when a bus error is detected during a beat transfer or when the DMAC fetches an invalid descriptor
-	{
-		REG_DMAC_CHINTFLAG = 1; //This flag is cleared by writing a one to it
-		dmabool = false;
-		SpiPendingFlags |= SPI_FLAG_DMA_ERROR;
-	}
-
 	__asm__ __volatile__("dmb sy" ::: "memory");
 
-	uint8_t Muxnr = MuxCounter;
+	const uint8_t Muxnr = MuxCounter;
 	MuxCounter++;
 	MuxCounter = MuxCounter & 7; //max 7
 
 	REG_PORT_OUTSET = MUX_SWITCH_GUARD_PIN_MASK;
 	REG_PORT_OUT = ((REG_PORT_OUT ^ outputpinTable[MuxCounter]) & 0x1030000) ^ REG_PORT_OUT; //0x1030000 = 00000001 00000011 00000000 00000000 = pins 16, 17, 24.
 
-	enableDMA();
+	enable_adc_dma();
 
 #ifdef EMPORIAVUE_TARGET_VUE3
 	if (!decode_vue3_voltage_packet())
@@ -706,6 +776,64 @@ void irq_handler_dmac(void) //We've configured it to enable Channel Transfer Com
 	capture_spi_scan(lastindex, Muxnr);
 
 	REG_PORT_OUTCLR = MUX_SWITCH_GUARD_PIN_MASK;
+}
+
+static void handle_spi_tx_dma_interrupt(uint8_t flags)
+{
+	if (!SpiTxActive)
+	{
+		SpiPendingFlags |= SPI_FLAG_DMA_ERROR;
+		return;
+	}
+
+	if ((flags & DMA_INT_TRANSFER_ERROR) != 0 || (flags & DMA_INT_TRANSFER_COMPLETE) == 0)
+	{
+		SpiPendingFlags |= SPI_FLAG_DMA_ERROR;
+		// A transfer error can happen before any byte reaches SERCOM, in which
+		// case TXC would never be raised after it was cleared at frame start.
+		// Abort the partial frame immediately; no register polling is needed.
+		REG_DMAC_CHCTRLA = 0;
+		SpiTxAwaitingComplete = true;
+		finish_spi_tx();
+		return;
+	}
+
+	// DMA completion only means that the final byte reached SERCOM DATA. The
+	// lower-priority SERCOM interrupt releases CS after TXC confirms that the
+	// byte has left the shift register.
+	SpiTxAwaitingComplete = true;
+	__asm__ __volatile__("dmb sy" ::: "memory");
+	REG_SERCOM1_INTENSET = SERCOM_INT_TXC;
+}
+
+void irq_handler_dmac(void)
+{
+	// Several channels can become pending before this shared handler runs.
+	// Drain all of them so an SPI completion can never hide an ADC completion.
+	for (;;)
+	{
+		const uint32_t pending = REG_DMAC_INTSTATUS & DMA_CHANNEL_MASK;
+		if (pending == 0)
+			break;
+
+		const uint8_t channel = (pending & (1UL << DMA_CHANNEL_ADC)) != 0
+			? DMA_CHANNEL_ADC : DMA_CHANNEL_SPI_TX;
+		REG_DMAC_CHID = channel;
+		const uint8_t flags = REG_DMAC_CHINTFLAG &
+			(DMA_INT_TRANSFER_ERROR | DMA_INT_TRANSFER_COMPLETE | DMA_INT_SUSPEND);
+		if (flags == 0)
+		{
+			SpiPendingFlags |= SPI_FLAG_DMA_ERROR;
+			REG_DMAC_CHINTFLAG = DMA_INT_TRANSFER_ERROR | DMA_INT_TRANSFER_COMPLETE | DMA_INT_SUSPEND;
+			break;
+		}
+		REG_DMAC_CHINTFLAG = flags;
+
+		if (channel == DMA_CHANNEL_ADC)
+			handle_adc_dma_interrupt(flags);
+		else
+			handle_spi_tx_dma_interrupt(flags);
+	}
 }
 
 void enableADC()
@@ -720,16 +848,6 @@ void enable_TC1()
 	REG_TC1_CTRLA = REG_TC1_CTRLA | 2;
 	do {
 	} while (REG_TC1_STATUS >= 0x80); //We defined it as unsigned, checking for bit 7, SYNCBUSY.
-}
-
-static void spi_write_byte_queued(uint8_t value)
-{
-	while ((REG_SERCOM1_INTFLAG & 1) == 0) // DRE
-	{
-	}
-	REG_SERCOM1_DATA = value;
-	if ((REG_SERCOM1_INTFLAG & 4) != 0) // RXC, clear previous dummy received data
-		(void) REG_SERCOM1_DATA;
 }
 
 static void spi_frame_guard_delay(void)
@@ -750,36 +868,79 @@ static void spi_frame_cs_deassert(void)
 	REG_PORT_OUTSET = SPI_FRAME_CS_PIN_MASK;
 }
 
-static void transmit_spi_frame_if_ready(void)
+static void finish_spi_tx(void)
 {
-	if (SpiReadyCount == 0)
+	REG_SERCOM1_INTENCLR = SERCOM_INT_TXC;
+	REG_SERCOM1_INTFLAG = SERCOM_INT_TXC;
+	if ((REG_SERCOM1_INTFLAG & SERCOM_INT_RXC) != 0)
+		(void) REG_SERCOM1_DATA;
+
+	if (!SpiTxActive || !SpiTxAwaitingComplete)
+		return;
+
+	spi_frame_cs_deassert();
+	const uint32_t primask = spi_enter_critical();
+	if (SpiReadyCount != 0)
+	{
+		SpiReadyHead = (uint8_t) ((SpiReadyHead + 1) % SPI_READY_QUEUE_CAPACITY);
+		SpiReadyCount--;
+	}
+	else
+		SpiPendingFlags |= SPI_FLAG_DMA_ERROR;
+	SpiTxAwaitingComplete = false;
+	SpiTxActive = false;
+	spi_exit_critical(primask);
+	__asm__ __volatile__("dmb sy" ::: "memory");
+}
+
+void irq_handler_sercom1(void)
+{
+	if ((REG_SERCOM1_INTFLAG & SERCOM_INT_TXC) != 0)
+		finish_spi_tx();
+}
+
+static void start_spi_dma_if_ready(void)
+{
+	if (SpiTxActive || SpiReadyCount == 0)
 		return;
 
 	const uint8_t frame_index = SpiReadyFrameIndex[SpiReadyHead];
-	const struct SpiRawFrame* frame = &SpiFrames[frame_index];
+	struct SpiRawFrame* frame = &SpiFrames[frame_index];
 	const uint8_t* bytes = (const uint8_t*) frame;
-	uint32_t crc = 0xFFFFFFFFUL;
+	crc32_hardware_begin();
 
-	spi_frame_cs_assert();
 	for (uint16_t index = 0; index < SPI_FRAME_SIZE - SPI_CRC_SIZE; index++)
-	{
-		crc = crc32_update_byte(crc, bytes[index]);
-		spi_write_byte_queued(bytes[index]);
-	}
-	crc ^= 0xFFFFFFFFUL;
-	spi_write_byte_queued((uint8_t) crc);
-	spi_write_byte_queued((uint8_t) (crc >> 8));
-	spi_write_byte_queued((uint8_t) (crc >> 16));
-	spi_write_byte_queued((uint8_t) (crc >> 24));
-	while ((REG_SERCOM1_INTFLAG & 2) == 0) // TXC
-	{
-	}
-	if ((REG_SERCOM1_INTFLAG & 4) != 0)
-		(void) REG_SERCOM1_DATA;
-	spi_frame_cs_deassert();
+		crc32_hardware_update_byte(bytes[index]);
+	frame->crc32 = crc32_hardware_end();
+
+	volatile struct DMAdescriptorType* descriptor = &DMAdescriptor[DMA_CHANNEL_SPI_TX];
+	descriptor->BTCTRL = 0x409; // Valid, block interrupt, byte beats, incrementing source.
+	descriptor->BTCNT = SPI_FRAME_SIZE;
+	descriptor->SRCADDR = (uint32_t) bytes + SPI_FRAME_SIZE;
+	descriptor->DSTADDR = (uint32_t) &REG_SERCOM1_DATA;
+	descriptor->DESCADDR = 0;
+	__asm__ __volatile__("dmb sy" ::: "memory");
+
 	const uint32_t primask = spi_enter_critical();
-	SpiReadyHead = (uint8_t) ((SpiReadyHead + 1) % SPI_READY_QUEUE_CAPACITY);
-	SpiReadyCount--;
+	REG_DMAC_CHID = DMA_CHANNEL_SPI_TX;
+	const uint32_t spi_dma_mask = 1UL << DMA_CHANNEL_SPI_TX;
+	if ((REG_DMAC_CHCTRLA & DMA_CHANNEL_ENABLE) != 0 ||
+		((REG_DMAC_BUSYCH | REG_DMAC_PENDCH) & spi_dma_mask) != 0)
+	{
+		SpiPendingFlags |= SPI_FLAG_DMA_ERROR;
+		spi_exit_critical(primask);
+		return;
+	}
+
+	REG_DMAC_CHINTFLAG = DMA_INT_TRANSFER_ERROR | DMA_INT_TRANSFER_COMPLETE | DMA_INT_SUSPEND;
+	REG_SERCOM1_INTENCLR = SERCOM_INT_TXC;
+	REG_SERCOM1_INTFLAG = SERCOM_INT_TXC;
+	if ((REG_SERCOM1_INTFLAG & SERCOM_INT_RXC) != 0)
+		(void) REG_SERCOM1_DATA;
+	SpiTxAwaitingComplete = false;
+	SpiTxActive = true;
+	spi_frame_cs_assert();
+	REG_DMAC_CHCTRLA = DMA_CHANNEL_ENABLE;
 	spi_exit_critical(primask);
 }
 
@@ -799,6 +960,8 @@ void COnfigSerCom1 ()
 	REG_SERCOM1_CTRLA = REG_SERCOM1_CTRLA | 2; // ENABLE
 	do {
 	} while (REG_SERCOM1_SYNCBUSY != 0);
+	REG_SERCOM1_INTENCLR = 0xFF;
+	REG_SERCOM1_INTFLAG = SERCOM_INT_TXC;
 }
 
 #ifdef EMPORIAVUE_TARGET_VUE3
@@ -833,14 +996,18 @@ void configureNestedVectoredInterruptController ()
 #ifdef EMPORIAVUE_TARGET_VUE3
 	REG_NVIC_SETENA = 0x200; // SERCOM0 voltage-controller receive interrupt.
 #endif
+	// SERCOM1 only releases CS after DMA completion. Keep it below the DMAC
+	// handler so it cannot preempt ADC queue maintenance.
+	REG_NVIC_PRIO2 = (REG_NVIC_PRIO2 & 0xFF00FFFF) | 0x800000;
+	REG_NVIC_SETENA = 0x400; // Interrupt 10 = SERCOM1.
 	REG_NVIC_PRIO3 = (REG_NVIC_PRIO3 & 0xFFFF00FF) | 0xC000;
 	REG_NVIC_SETENA = 0x2000; //Enable interrupt: 00100000 00000000 = int 13, why ??
 }
 
 void configureDirectMemoryAccessController ()
 {
-	REG_DMAC_BASEADDR = (uint32_t) &DMAdescriptor;
-	DMAdescriptor.BTCTRL = 0x909; //0000 1001 0000 1001.  stepsize = 0, So next address = beatsize*1
+	REG_DMAC_BASEADDR = (uint32_t) &DMAdescriptor[0];
+	DMAdescriptor[DMA_CHANNEL_ADC].BTCTRL = 0x909; //0000 1001 0000 1001.  stepsize = 0, So next address = beatsize*1
 					   //STEPSEL = 0, so DST
 					   // DSTINC = 1, so auto increment destination
 					   // SRCINC = 0, so no auto increment on source.
@@ -848,19 +1015,26 @@ void configureDirectMemoryAccessController ()
 					   // blockact = 1 = INT = Channel in normal operation and block interrupt
 					   //Event Output Selection = 0, DISABLE, no event generation
 					   //valid.
-	REG_DMAC_WRBADDR  = (uint32_t) &DMAdescriptorwriteback; //Write-Back Memory Section Base Address, 0x10 bytes long
+	DMAdescriptor[DMA_CHANNEL_SPI_TX].BTCTRL = 0x409; // Valid, block interrupt, byte beats, incrementing source.
+	REG_DMAC_WRBADDR  = (uint32_t) &DMAdescriptorwriteback[0];
 	REG_DMAC_PRICTRL0 = 0x81818181; //10000001 10000001 10000001 10000001, Round-robin scheduling scheme for channels with level 3 priority.
-	REG_DMAC_CHID = 0;//Channel ID 0
-	REG_DMAC_CHCTRLB = 0x801200 ; // 00000000 10000000 00010010 00000000
+	REG_DMAC_CHID = DMA_CHANNEL_ADC;
+	REG_DMAC_CHCTRLB = DMA_CHCTRLB_TRIGACT_BEAT | (DMA_TRIGGER_ADC_RESRDY << 8) |
+		DMA_CHCTRLB_PRIORITY_HIGH;
 					//Software Command: no action
 					//Trigger action: BEAT. One trigger required for each beat transfer
 					//Channel resume operation
 					//Trigger source = ADC Result Ready Trigger
-					//Channel priority level 0
+					//Channel priority level 3, above the SPI transmitter
 					//Channel event generation is disabled.
 					//Channel event action will not be executed on any incoming event.
 					//Event Input Action = NO action
-	REG_DMAC_CHINTENSET = 3;//enable Channel Transfer Complete interrupt and Channel Transfer Error interrupt.
+	REG_DMAC_CHINTENSET = DMA_INT_TRANSFER_ERROR | DMA_INT_TRANSFER_COMPLETE | DMA_INT_SUSPEND;
+
+	REG_DMAC_CHID = DMA_CHANNEL_SPI_TX;
+	REG_DMAC_CHCTRLB = DMA_CHCTRLB_TRIGACT_BEAT | (DMA_TRIGGER_SERCOM1_TX << 8) |
+		DMA_CHCTRLB_PRIORITY_LOW;
+	REG_DMAC_CHINTENSET = DMA_INT_TRANSFER_ERROR | DMA_INT_TRANSFER_COMPLETE | DMA_INT_SUSPEND;
 	REG_DMAC_CTRL = 0xF02; //00001111 00000010 = Transfer requests for all Priority levels are handled. No CRC. DMA enable.
 }
 
@@ -1033,6 +1207,7 @@ int main(void)
 	config_PORT();
 	set_boot_stage(BOOT_STAGE_PORT_CONFIGURED);
 	config_Sysctrl_PM_and_GCLK ();
+	configure_idle_sleep();
 	set_boot_stage(BOOT_STAGE_CLOCK_CONFIGURED);
 	Config_NVMCTRL();
 	set_boot_stage(BOOT_STAGE_NVM_MANUAL_WRITE);
@@ -1050,7 +1225,7 @@ int main(void)
 	set_boot_stage(BOOT_STAGE_TC1_CONFIGURED);
 	configureNestedVectoredInterruptController();
 	set_boot_stage(BOOT_STAGE_NVIC_CONFIGURED);
-	enableDMA ();
+	enable_adc_dma();
 	set_boot_stage(BOOT_STAGE_DMA_ENABLED);
 	enableADC ();
 	set_boot_stage(BOOT_STAGE_ADC_ENABLED);
@@ -1062,7 +1237,8 @@ int main(void)
 	set_boot_stage(BOOT_STAGE_MAIN_LOOP);
 	for (;;) //main program loop
 	{
-		transmit_spi_frame_if_ready();
+		start_spi_dma_if_ready();
+		wait_for_spi_work();
 	}
 	return 0;
 }
