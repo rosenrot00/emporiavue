@@ -55,8 +55,10 @@ static constexpr float SPI_MIN_VOLTAGE_FUNDAMENTAL_AMPLITUDE = 16.0f;
 static constexpr uint16_t SPI_FRAME_FLAG_OVERRUN = 0x0001;
 static constexpr uint16_t SPI_FRAME_FLAG_DMA_ERROR = 0x0002;
 static constexpr uint16_t SPI_FRAME_FLAG_VOLTAGE_ERROR = 0x0004;
+static constexpr uint16_t SPI_FRAME_FLAG_ADC_OVERRUN = 0x8000;
+static constexpr uint16_t SPI_VUE3_SAMPLE_PERIOD_MASK = 0x7FF8;
 static constexpr uint16_t SPI_FRAME_ERROR_FLAG_MASK =
-    SPI_FRAME_FLAG_OVERRUN | SPI_FRAME_FLAG_DMA_ERROR | SPI_FRAME_FLAG_VOLTAGE_ERROR;
+    SPI_FRAME_FLAG_OVERRUN | SPI_FRAME_FLAG_DMA_ERROR | SPI_FRAME_FLAG_VOLTAGE_ERROR | SPI_FRAME_FLAG_ADC_OVERRUN;
 static_assert(SPI_RAW_SCAN_SIZE * SPI_RAW_SCAN_COUNT == SPI_RAW_FRAME_PAYLOAD_SIZE,
               "SPI raw scan payload must fill the 1024-byte frame payload");
 static constexpr uint8_t SPI_VUE2_MUX_TABLE[16] = {12, 4, 13, 5, 14, 6, 11, 3, 15, 7, 18, 10, 16, 8, 17, 9};
@@ -90,6 +92,38 @@ static uint32_t integer_sqrt_u64(uint64_t value) {
   return static_cast<uint32_t>(result);
 }
 
+static uint32_t squared_sample_count(uint32_t count) {
+  return count * count;
+}
+
+static uint64_t centered_square_numerator(int64_t square_sum, int32_t sum, uint32_t count) {
+  if (count == 0 || square_sum <= 0) {
+    return 0;
+  }
+  const int64_t numerator = square_sum * static_cast<int64_t>(count) - static_cast<int64_t>(sum) * sum;
+  return numerator > 0 ? static_cast<uint64_t>(numerator) : 0;
+}
+
+static int64_t centered_product_numerator(int64_t product_sum, int32_t first_sum, int32_t second_sum,
+                                          uint32_t count) {
+  if (count == 0) {
+    return 0;
+  }
+  return product_sum * static_cast<int64_t>(count) - static_cast<int64_t>(first_sum) * second_sum;
+}
+
+static void update_current_extrema(int16_t *minimum, int16_t *maximum, bool *valid, uint8_t source_index,
+                                   int16_t sample) {
+  if (!valid[source_index]) {
+    minimum[source_index] = sample;
+    maximum[source_index] = sample;
+    valid[source_index] = true;
+    return;
+  }
+  minimum[source_index] = std::min(minimum[source_index], sample);
+  maximum[source_index] = std::max(maximum[source_index], sample);
+}
+
 void EmporiaVueComponent::publish_spi_diagnostics_() {
   if (this->diag_frame_errors_sensor_ != nullptr) {
     this->diag_frame_errors_sensor_->publish_state(
@@ -101,6 +135,9 @@ void EmporiaVueComponent::publish_spi_diagnostics_() {
   }
   if (this->diag_frame_overruns_sensor_ != nullptr) {
     this->diag_frame_overruns_sensor_->publish_state(static_cast<float>(this->spi_rx_samd_overruns_));
+  }
+  if (this->diag_adc_overruns_sensor_ != nullptr) {
+    this->diag_adc_overruns_sensor_->publish_state(static_cast<float>(this->spi_rx_adc_overruns_));
   }
   if (this->diag_recoveries_sensor_ != nullptr &&
       (!this->spi_diag_recoveries_published_ ||
@@ -307,6 +344,7 @@ void EmporiaVueComponent::setup_spi_receiver_(bool reset_statistics) {
     this->spi_processing_load_window_start_ms_ = millis();
     this->spi_rx_dma_errors_ = 0;
     this->spi_rx_samd_overruns_ = 0;
+    this->spi_rx_adc_overruns_ = 0;
     this->spi_rx_frame_gaps_ = 0;
     this->spi_rx_recoveries_ = 0;
     this->spi_rx_last_sequence_ = 0;
@@ -334,6 +372,7 @@ void EmporiaVueComponent::setup_spi_receiver_(bool reset_statistics) {
   this->spi_rx_logged_processing_overruns_ = this->spi_processing_overruns_;
   this->spi_rx_logged_dma_errors_ = this->spi_rx_dma_errors_;
   this->spi_rx_logged_samd_overruns_ = this->spi_rx_samd_overruns_;
+  this->spi_rx_logged_adc_overruns_ = this->spi_rx_adc_overruns_;
   this->spi_rx_logged_frame_gaps_ = this->spi_rx_frame_gaps_;
   this->spi_rx_logged_recoveries_ = this->spi_rx_recoveries_;
   this->spi_rx_logged_flags_ = this->spi_rx_last_flags_;
@@ -582,8 +621,12 @@ void EmporiaVueComponent::process_spi_frame_(const SpiQueuedFrame &frame) {
   if (protocol_valid && (flags & SPI_FRAME_FLAG_OVERRUN) != 0) {
     this->spi_rx_samd_overruns_++;
   }
-  const bool samd_sample_error =
-      protocol_valid && (flags & (SPI_FRAME_FLAG_DMA_ERROR | SPI_FRAME_FLAG_VOLTAGE_ERROR)) != 0;
+  if (protocol_valid && (flags & SPI_FRAME_FLAG_ADC_OVERRUN) != 0) {
+    this->spi_rx_adc_overruns_++;
+  }
+  const bool samd_sample_error = protocol_valid &&
+                                 (flags & (SPI_FRAME_FLAG_DMA_ERROR | SPI_FRAME_FLAG_VOLTAGE_ERROR |
+                                           SPI_FRAME_FLAG_ADC_OVERRUN)) != 0;
   if (protocol_valid && !samd_sample_error) {
     if (this->spi_rx_frames_ > 0) {
       const uint16_t last_sequence = static_cast<uint16_t>(this->spi_rx_last_sequence_);
@@ -612,7 +655,9 @@ void EmporiaVueComponent::process_spi_frame_(const SpiQueuedFrame &frame) {
     this->decode_spi_raw_frame_(frame.data, sequence, flags, sample_counter);
   } else {
     if (samd_sample_error) {
-      this->spi_rx_dma_errors_++;
+      if ((flags & (SPI_FRAME_FLAG_DMA_ERROR | SPI_FRAME_FLAG_VOLTAGE_ERROR)) != 0) {
+        this->spi_rx_dma_errors_++;
+      }
       this->spi_rx_last_flags_ = flags;
       this->reset_spi_metering_state_();
       if (this->spi_rx_invalid_streak_ == 0) {
@@ -767,7 +812,7 @@ EmporiaVueComponent::SpiFrameValidationResult EmporiaVueComponent::validate_spi_
                           (static_cast<uint32_t>(frame[10]) << 16) |
                           (static_cast<uint32_t>(frame[11]) << 24);
   if (this->hardware_id_ == 3) {
-    result.sample_period_ticks = raw_flags >> 3;
+    result.sample_period_ticks = static_cast<uint16_t>((raw_flags & SPI_VUE3_SAMPLE_PERIOD_MASK) >> 3);
   } else {
     const uint16_t reserved_low = frame[SPI_RAW_FRAME_HEADER_SIZE + 17];
     const uint16_t reserved_high = frame[SPI_RAW_FRAME_HEADER_SIZE + SPI_RAW_SCAN_SIZE + 17];
@@ -1405,55 +1450,54 @@ void EmporiaVueComponent::process_spi_raw_scan_(uint8_t current_index) {
   }
 
   for (uint8_t phase = 0; phase < 3; phase++) {
-    const int32_t voltage_difference = voltage_differences[phase];
     const uint8_t voltage_index = static_cast<uint8_t>(phase * 2);
     const uint8_t current_index_for_phase = static_cast<uint8_t>(voltage_index + 1);
+    const int16_t voltage_raw = scan.value[voltage_index];
+    const int16_t current_raw = main_current_scan.value[current_index_for_phase];
 
-    acc.voltage_sum[phase] += scan.value[voltage_index];
-    acc.voltage_square_sum[phase] += static_cast<int64_t>(voltage_difference) * voltage_difference;
+    acc.voltage_sum[phase] += voltage_raw;
+    acc.voltage_square_sum[phase] += static_cast<int64_t>(voltage_raw) * voltage_raw;
 
-    acc.current_sum[phase] += main_current_scan.value[current_index_for_phase];
-    const int32_t current_difference =
-        static_cast<int32_t>(main_current_scan.value[current_index_for_phase]) - this->spi_adc_offsets_[3 + phase];
-    acc.current_square_sum[phase] += static_cast<int64_t>(current_difference) * current_difference;
-    acc.current_peak_abs[phase] =
-        std::max(acc.current_peak_abs[phase], static_cast<uint32_t>(std::abs(current_difference)));
+    acc.current_sum[phase] += current_raw;
+    acc.current_square_sum[phase] += static_cast<int64_t>(current_raw) * current_raw;
+    update_current_extrema(acc.current_min_raw, acc.current_max_raw, acc.current_extrema_valid, phase, current_raw);
     const uint8_t voltage_mask = this->spi_power_voltage_mask_[phase];
     for (uint8_t voltage_phase = 0; voltage_phase < 3; voltage_phase++) {
       if ((voltage_mask & (1U << voltage_phase)) == 0) {
         continue;
       }
       acc.raw_power_sum[phase][voltage_phase] -=
-          static_cast<int64_t>(current_difference) * voltage_differences[voltage_phase];
+          static_cast<int64_t>(current_raw) * scan.value[voltage_phase * 2];
     }
   }
 
   acc.voltage_product_sum[0] +=
-      static_cast<int64_t>(voltage_differences[0]) * voltage_differences[1];
+      static_cast<int64_t>(scan.value[0]) * scan.value[2];
   acc.voltage_product_sum[1] +=
-      static_cast<int64_t>(voltage_differences[0]) * voltage_differences[2];
+      static_cast<int64_t>(scan.value[0]) * scan.value[4];
   acc.voltage_product_sum[2] +=
-      static_cast<int64_t>(voltage_differences[1]) * voltage_differences[2];
+      static_cast<int64_t>(scan.value[2]) * scan.value[4];
 
   if (scan.mux_index < 8) {
+    for (uint8_t phase = 0; phase < 3; phase++) {
+      acc.mux_voltage_sum[scan.mux_index][phase] += scan.value[phase * 2];
+    }
     for (uint8_t mux_side = 0; mux_side < 2; mux_side++) {
       const uint8_t internal_index = static_cast<uint8_t>(scan.mux_index * 2 + mux_side);
       const uint8_t clamp_index = static_cast<uint8_t>(3 + internal_index);
-      const uint8_t offset_index = static_cast<uint8_t>(6 + internal_index);
       const int16_t current_raw = mux_current_scan.value[6 + mux_side];
       acc.current_sum[clamp_index] += current_raw;
       acc.mux_sample_count[internal_index]++;
-      const int32_t current_difference = static_cast<int32_t>(current_raw) - this->spi_adc_offsets_[offset_index];
-      acc.current_square_sum[clamp_index] += static_cast<int64_t>(current_difference) * current_difference;
-      acc.current_peak_abs[clamp_index] =
-          std::max(acc.current_peak_abs[clamp_index], static_cast<uint32_t>(std::abs(current_difference)));
+      acc.current_square_sum[clamp_index] += static_cast<int64_t>(current_raw) * current_raw;
+      update_current_extrema(acc.current_min_raw, acc.current_max_raw, acc.current_extrema_valid, clamp_index,
+                             current_raw);
       const uint8_t voltage_mask = this->spi_power_voltage_mask_[clamp_index];
       for (uint8_t voltage_phase = 0; voltage_phase < 3; voltage_phase++) {
         if ((voltage_mask & (1U << voltage_phase)) == 0) {
           continue;
         }
         acc.raw_power_sum[clamp_index][voltage_phase] -=
-            static_cast<int64_t>(current_difference) * voltage_differences[voltage_phase];
+            static_cast<int64_t>(current_raw) * scan.value[voltage_phase * 2];
       }
     }
   }
@@ -1625,15 +1669,21 @@ void EmporiaVueComponent::finish_spi_metering_window_(uint32_t sequence, uint32_
   frame.timestamp_ms = millis();
   frame.valid = true;
   frame.quality_flags = static_cast<uint8_t>(flags & 0xFFU);
+  const uint32_t main_sample_count_squared = squared_sample_count(acc.sample_count);
   for (uint8_t phase = 0; phase < 3; phase++) {
-    frame.voltage_square_raw[phase] = static_cast<float>(acc.voltage_square_sum[phase]) *
-                                      SPI_VOLTAGE_STATISTIC_SCALE_MULTIPLIER /
-                                      static_cast<float>(acc.sample_count);
+    const uint64_t centered =
+        centered_square_numerator(acc.voltage_square_sum[phase], acc.voltage_sum[phase], acc.sample_count);
+    frame.voltage_square_raw[phase] = static_cast<float>(
+        static_cast<double>(centered) * SPI_VOLTAGE_STATISTIC_SCALE_MULTIPLIER / main_sample_count_squared);
   }
+  static constexpr uint8_t VOLTAGE_PRODUCT_PHASES[3][2] = {{0, 1}, {0, 2}, {1, 2}};
   for (uint8_t pair = 0; pair < 3; pair++) {
-    frame.voltage_product_raw[pair] = static_cast<float>(acc.voltage_product_sum[pair]) *
-                                      SPI_VOLTAGE_STATISTIC_SCALE_MULTIPLIER /
-                                      static_cast<float>(acc.sample_count);
+    const uint8_t first_phase = VOLTAGE_PRODUCT_PHASES[pair][0];
+    const uint8_t second_phase = VOLTAGE_PRODUCT_PHASES[pair][1];
+    const int64_t centered = centered_product_numerator(
+        acc.voltage_product_sum[pair], acc.voltage_sum[first_phase], acc.voltage_sum[second_phase], acc.sample_count);
+    frame.voltage_product_raw[pair] = static_cast<float>(
+        static_cast<double>(centered) * SPI_VOLTAGE_STATISTIC_SCALE_MULTIPLIER / main_sample_count_squared);
   }
   frame.voltage_statistics_valid = true;
 
@@ -1729,25 +1779,30 @@ void EmporiaVueComponent::finish_spi_metering_window_(uint32_t sequence, uint32_
         acc.current_fund_q[source_index] * SPI_FUNDAMENTAL_RMS_COMPONENT_SCALE / weight;
     clamp.current_fundamental_valid = true;
   };
-  auto set_current_peak = [this, &acc](MeteringClamp &clamp, uint8_t source_index) {
-    if (this->spi_offset_warmup_windows_ < SPI_ADC_OFFSET_STARTUP_WINDOWS) {
+  auto set_current_peak = [this, &acc](MeteringClamp &clamp, uint8_t source_index, uint32_t sample_count) {
+    if (this->spi_offset_warmup_windows_ < SPI_ADC_OFFSET_STARTUP_WINDOWS || sample_count == 0 ||
+        !acc.current_extrema_valid[source_index]) {
       return;
     }
-    const uint64_t scaled =
-        static_cast<uint64_t>(acc.current_peak_abs[source_index]) * SPI_CURRENT_PEAK_SCALE_MULTIPLIER;
-    clamp.current_peak_raw =
-        scaled >= UINT16_MAX ? UINT16_MAX : static_cast<uint16_t>(scaled);
+    const int64_t sum = acc.current_sum[source_index];
+    const int64_t positive = static_cast<int64_t>(acc.current_max_raw[source_index]) * sample_count - sum;
+    const int64_t negative = sum - static_cast<int64_t>(acc.current_min_raw[source_index]) * sample_count;
+    const uint64_t peak_numerator = static_cast<uint64_t>(std::max<int64_t>(0, std::max(positive, negative)));
+    const uint64_t scaled = peak_numerator * SPI_CURRENT_PEAK_SCALE_MULTIPLIER / sample_count;
+    clamp.current_peak_raw = scaled >= UINT16_MAX ? UINT16_MAX : static_cast<uint16_t>(scaled);
     clamp.current_peak_valid = true;
   };
 
   for (uint8_t phase = 0; phase < 3; phase++) {
+    const uint64_t centered_voltage =
+        centered_square_numerator(acc.voltage_square_sum[phase], acc.voltage_sum[phase], acc.sample_count);
+    const uint64_t centered_current =
+        centered_square_numerator(acc.current_square_sum[phase], acc.current_sum[phase], acc.sample_count);
     frame.phases[phase].voltage_raw =
-        scale_spi_rms_(static_cast<uint64_t>(acc.voltage_square_sum[phase]), SPI_MAIN_RMS_SCALE_NUMERATOR,
-                       acc.sample_count);
+        scale_spi_rms_(centered_voltage, SPI_MAIN_RMS_SCALE_NUMERATOR, main_sample_count_squared);
     frame.clamps[phase].current_raw =
-        scale_spi_rms_(static_cast<uint64_t>(acc.current_square_sum[phase]), SPI_CURRENT_RMS_SCALE_NUMERATOR,
-                       acc.sample_count);
-    set_current_peak(frame.clamps[phase], phase);
+        scale_spi_rms_(centered_current, SPI_CURRENT_RMS_SCALE_NUMERATOR, main_sample_count_squared);
+    set_current_peak(frame.clamps[phase], phase, acc.sample_count);
     if ((this->spi_current_fundamental_mask_ & (1UL << phase)) != 0) {
       set_current_fundamental(frame.clamps[phase], phase);
     }
@@ -1757,8 +1812,11 @@ void EmporiaVueComponent::finish_spi_metering_window_(uint32_t sequence, uint32_
       if ((voltage_mask & (1U << voltage_phase)) == 0) {
         continue;
       }
+      const int64_t centered_power = centered_product_numerator(
+          acc.raw_power_sum[phase][voltage_phase], -acc.current_sum[phase], acc.voltage_sum[voltage_phase],
+          acc.sample_count);
       frame.clamps[phase].power_raw_by_phase[voltage_phase] =
-          scale_spi_power_(acc.raw_power_sum[phase][voltage_phase], SPI_POWER_SCALE_MULTIPLIER, acc.sample_count);
+          scale_spi_power_(centered_power, SPI_POWER_SCALE_MULTIPLIER, main_sample_count_squared);
     }
     if (phase == 0 || !std::isnan(frame.phases[phase].phase_angle_degrees)) {
       continue;
@@ -1782,10 +1840,12 @@ void EmporiaVueComponent::finish_spi_metering_window_(uint32_t sequence, uint32_
       continue;
     }
     const uint8_t source_index = static_cast<uint8_t>(3 + internal_index);
+    const uint32_t mux_sample_count_squared = squared_sample_count(mux_count);
+    const uint64_t centered_current =
+        centered_square_numerator(acc.current_square_sum[source_index], acc.current_sum[source_index], mux_count);
     frame.clamps[output_port].current_raw =
-        scale_spi_rms_(static_cast<uint64_t>(acc.current_square_sum[source_index]), SPI_CURRENT_RMS_SCALE_NUMERATOR,
-                       mux_count);
-    set_current_peak(frame.clamps[output_port], source_index);
+        scale_spi_rms_(centered_current, SPI_CURRENT_RMS_SCALE_NUMERATOR, mux_sample_count_squared);
+    set_current_peak(frame.clamps[output_port], source_index, mux_count);
     if ((this->spi_current_fundamental_mask_ & (1UL << output_port)) != 0) {
       set_current_fundamental(frame.clamps[output_port], source_index);
     }
@@ -1795,8 +1855,11 @@ void EmporiaVueComponent::finish_spi_metering_window_(uint32_t sequence, uint32_
       if ((voltage_mask & (1U << voltage_phase)) == 0) {
         continue;
       }
+      const int64_t centered_power = centered_product_numerator(
+          acc.raw_power_sum[source_index][voltage_phase], -acc.current_sum[source_index],
+          acc.mux_voltage_sum[internal_index / 2][voltage_phase], mux_count);
       frame.clamps[output_port].power_raw_by_phase[voltage_phase] =
-          scale_spi_power_(acc.raw_power_sum[source_index][voltage_phase], SPI_POWER_SCALE_MULTIPLIER, mux_count);
+          scale_spi_power_(centered_power, SPI_POWER_SCALE_MULTIPLIER, mux_sample_count_squared);
     }
   }
 
@@ -1873,6 +1936,7 @@ void EmporiaVueComponent::process_spi_receiver_() {
       this->spi_processing_overruns_ != this->spi_rx_logged_processing_overruns_ ||
       this->spi_rx_dma_errors_ != this->spi_rx_logged_dma_errors_ ||
       this->spi_rx_samd_overruns_ != this->spi_rx_logged_samd_overruns_ ||
+      this->spi_rx_adc_overruns_ != this->spi_rx_logged_adc_overruns_ ||
       this->spi_rx_frame_gaps_ != this->spi_rx_logged_frame_gaps_ ||
       this->spi_rx_recoveries_ != this->spi_rx_logged_recoveries_ ||
       this->spi_rx_last_flags_ != this->spi_rx_logged_flags_;
@@ -1886,15 +1950,15 @@ void EmporiaVueComponent::process_spi_receiver_() {
              " runtime_errors=%" PRIu32 " length=%" PRIu32 " header=%" PRIu32 " payload=%" PRIu32
              " crc=%" PRIu32 " period=%" PRIu32 " queue_errors=%" PRIu32
              " processing_overruns=%" PRIu32 " processing_pending=%u dma_errors=%" PRIu32
-             " samd_overruns=%" PRIu32 " seq_gaps=%" PRIu32 " recoveries=%" PRIu32
+             " samd_overruns=%" PRIu32 " adc_overruns=%" PRIu32 " seq_gaps=%" PRIu32 " recoveries=%" PRIu32
              " inflight=%" PRIu16 " flags=0x%04" PRIx32 " sample_counter=%" PRIu32,
              this->spi_rx_sync_errors_ + this->spi_rx_crc_errors_, this->spi_rx_sync_errors_,
              this->spi_rx_crc_errors_, this->spi_rx_transfer_length_errors_, this->spi_rx_header_errors_,
              this->spi_rx_payload_length_errors_, this->spi_rx_crc_mismatch_errors_,
              this->spi_rx_sample_period_errors_, this->spi_rx_queue_errors_, this->spi_processing_overruns_,
              static_cast<unsigned>(processing_pending), this->spi_rx_dma_errors_, this->spi_rx_samd_overruns_,
-             this->spi_rx_frame_gaps_, this->spi_rx_recoveries_, this->spi_rx_inflight_, this->spi_rx_last_flags_,
-             this->spi_rx_last_sample_counter_);
+             this->spi_rx_adc_overruns_, this->spi_rx_frame_gaps_, this->spi_rx_recoveries_, this->spi_rx_inflight_,
+             this->spi_rx_last_flags_, this->spi_rx_last_sample_counter_);
     this->spi_rx_logged_status_valid_ = true;
     this->spi_rx_logged_sync_errors_ = this->spi_rx_sync_errors_;
     this->spi_rx_logged_crc_errors_ = this->spi_rx_crc_errors_;
@@ -1902,6 +1966,7 @@ void EmporiaVueComponent::process_spi_receiver_() {
     this->spi_rx_logged_processing_overruns_ = this->spi_processing_overruns_;
     this->spi_rx_logged_dma_errors_ = this->spi_rx_dma_errors_;
     this->spi_rx_logged_samd_overruns_ = this->spi_rx_samd_overruns_;
+    this->spi_rx_logged_adc_overruns_ = this->spi_rx_adc_overruns_;
     this->spi_rx_logged_frame_gaps_ = this->spi_rx_frame_gaps_;
     this->spi_rx_logged_recoveries_ = this->spi_rx_recoveries_;
     this->spi_rx_logged_flags_ = this->spi_rx_last_flags_;

@@ -128,6 +128,7 @@ CONF_TOKEN = "token"
 CONF_DIAG_FRAME_ERRORS = "diag_frame_errors"
 CONF_DIAG_TRANSFER_ERRORS = "diag_transfer_errors"
 CONF_DIAG_FRAME_OVERRUNS = "diag_frame_overruns"
+CONF_DIAG_ADC_OVERRUNS = "diag_adc_overruns"
 CONF_DIAG_RECOVERIES = "diag_recoveries"
 CONF_DIAG_LAST_FRAME_SAMPLES = "diag_last_frame_samples"
 CONF_DIAG_SAMPLE_RATE = "diag_sample_rate"
@@ -400,6 +401,7 @@ DIAGNOSTIC_ENTITY_NAMES = {
 
 SPI_RUNTIME_DIAGNOSTIC_ENTITY_NAMES = {
     CONF_DIAG_TRANSFER_ERRORS: "ESP SPI Transfer Errors",
+    CONF_DIAG_ADC_OVERRUNS: "SAMD ADC Overruns",
     CONF_DIAG_HEAP_FREE: "ESP Free Heap",
     CONF_DIAG_HEAP_MINIMUM: "ESP Minimum Free Heap",
     CONF_DIAG_LOOP_STACK_FREE: "ESP Loop Minimum Free Stack",
@@ -2801,6 +2803,12 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             accuracy_decimals=0,
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
+        cv.Optional(CONF_DIAG_ADC_OVERRUNS): sensor.sensor_schema(
+            icon="mdi:alert-circle-outline",
+            state_class=STATE_CLASS_MEASUREMENT,
+            accuracy_decimals=0,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
         cv.Optional(CONF_DIAG_RECOVERIES): sensor.sensor_schema(
             icon="mdi:backup-restore",
             state_class=STATE_CLASS_MEASUREMENT,
@@ -3127,6 +3135,9 @@ async def to_code(config):
     if diag_frame_overruns_config := config.get(CONF_DIAG_FRAME_OVERRUNS):
         sens = await sensor.new_sensor(diag_frame_overruns_config)
         cg.add(var.set_diag_frame_overruns_sensor(sens))
+    if diag_adc_overruns_config := config.get(CONF_DIAG_ADC_OVERRUNS):
+        sens = await sensor.new_sensor(diag_adc_overruns_config)
+        cg.add(var.set_diag_adc_overruns_sensor(sens))
     if diag_recoveries_config := config.get(CONF_DIAG_RECOVERIES):
         sens = await sensor.new_sensor(diag_recoveries_config)
         cg.add(var.set_diag_recoveries_sensor(sens))

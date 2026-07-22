@@ -286,6 +286,7 @@ class EmporiaVueComponent : public Component
   void set_diag_frame_errors_sensor(sensor::Sensor *sensor) { this->diag_frame_errors_sensor_ = sensor; }
   void set_diag_transfer_errors_sensor(sensor::Sensor *sensor) { this->diag_transfer_errors_sensor_ = sensor; }
   void set_diag_frame_overruns_sensor(sensor::Sensor *sensor) { this->diag_frame_overruns_sensor_ = sensor; }
+  void set_diag_adc_overruns_sensor(sensor::Sensor *sensor) { this->diag_adc_overruns_sensor_ = sensor; }
   void set_diag_recoveries_sensor(sensor::Sensor *sensor) { this->diag_recoveries_sensor_ = sensor; }
   void set_diag_last_frame_samples_sensor(sensor::Sensor *sensor) { this->diag_last_frame_samples_sensor_ = sensor; }
   void set_diag_sample_rate_sensor(sensor::Sensor *sensor) { this->diag_sample_rate_sensor_ = sensor; }
@@ -623,8 +624,11 @@ class EmporiaVueComponent : public Component
     // Raw voltage products: BLACK*RED, BLACK*BLUE, RED*BLUE.
     int64_t voltage_product_sum[3]{};
     int32_t voltage_sum[3]{};
+    int32_t mux_voltage_sum[8][3]{};
     int64_t current_square_sum[19]{};
-    uint32_t current_peak_abs[19]{};
+    int16_t current_min_raw[19]{};
+    int16_t current_max_raw[19]{};
+    bool current_extrema_valid[19]{};
     int64_t raw_power_sum[19][3]{};
     float current_fund_i[19]{};
     float current_fund_q[19]{};
@@ -902,6 +906,7 @@ class EmporiaVueComponent : public Component
   sensor::Sensor *diag_frame_errors_sensor_{nullptr};
   sensor::Sensor *diag_transfer_errors_sensor_{nullptr};
   sensor::Sensor *diag_frame_overruns_sensor_{nullptr};
+  sensor::Sensor *diag_adc_overruns_sensor_{nullptr};
   sensor::Sensor *diag_recoveries_sensor_{nullptr};
   sensor::Sensor *diag_last_frame_samples_sensor_{nullptr};
   sensor::Sensor *diag_sample_rate_sensor_{nullptr};
@@ -1007,6 +1012,7 @@ class EmporiaVueComponent : public Component
   uint32_t spi_processing_load_window_start_ms_{0};
   uint32_t spi_rx_dma_errors_{0};
   uint32_t spi_rx_samd_overruns_{0};
+  uint32_t spi_rx_adc_overruns_{0};
   uint32_t spi_rx_frame_gaps_{0};
   uint32_t spi_rx_recoveries_{0};
   uint32_t spi_rx_last_sequence_{0};
@@ -1029,6 +1035,7 @@ class EmporiaVueComponent : public Component
   uint32_t spi_rx_logged_processing_overruns_{0};
   uint32_t spi_rx_logged_dma_errors_{0};
   uint32_t spi_rx_logged_samd_overruns_{0};
+  uint32_t spi_rx_logged_adc_overruns_{0};
   uint32_t spi_rx_logged_frame_gaps_{0};
   uint32_t spi_rx_logged_recoveries_{0};
   uint32_t spi_rx_logged_flags_{0};

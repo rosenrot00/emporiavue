@@ -211,6 +211,7 @@ static inline void set_boot_stage(uint32_t stage)
 }
 
 volatile bool dmabool = false;
+volatile bool DiscardNextAdcScan = false;
 volatile uint8_t DMAresultIndex = 0;
 #ifdef EMPORIAVUE_TARGET_VUE3
 #define ADC_CHANNEL_COUNT 5
@@ -266,6 +267,7 @@ const uint32_t outputpinTable [8] = { 0x1000000, 0x1010000, 0x1020000, 0x1030000
 #define SPI_FLAG_OVERRUN               0x0001
 #define SPI_FLAG_DMA_ERROR             0x0002
 #define SPI_FLAG_VOLTAGE_ERROR         0x0004
+#define SPI_FLAG_ADC_OVERRUN           0x8000
 #define SPI_FRAME_CS_PIN_MASK          0x80000000UL  // PA31/SWDIO, active-low SPI frame/CS.
 
 #define DMA_CHANNEL_ADC                0
@@ -276,12 +278,14 @@ const uint32_t outputpinTable [8] = { 0x1000000, 0x1010000, 0x1020000, 0x1030000
 #define DMA_TRIGGER_SERCOM1_TX         0x04
 #define DMA_CHCTRLB_TRIGACT_BEAT       0x800000UL
 #define DMA_CHCTRLB_PRIORITY(level)    (((uint32_t) (level) & 0x3UL) << 5)
-#define DMA_CHCTRLB_PRIORITY_LOW       DMA_CHCTRLB_PRIORITY(0)
-#define DMA_CHCTRLB_PRIORITY_HIGH      DMA_CHCTRLB_PRIORITY(3)
+// On the SAMD09 a lower level number has higher arbitration priority.
+#define DMA_CHCTRLB_PRIORITY_CRITICAL   DMA_CHCTRLB_PRIORITY(0)
+#define DMA_CHCTRLB_PRIORITY_BACKGROUND DMA_CHCTRLB_PRIORITY(3)
 #define DMA_INT_TRANSFER_ERROR         0x01
 #define DMA_INT_TRANSFER_COMPLETE      0x02
 #define DMA_INT_SUSPEND                0x04
 #define DMA_CHANNEL_ENABLE             0x02
+#define ADC_INTFLAG_OVERRUN            0x02
 #define SERCOM_INT_TXC                  0x02
 #define SERCOM_INT_RXC                  0x04
 
@@ -723,6 +727,7 @@ static bool decode_vue3_voltage_packet(void)
 #endif
 
 static void finish_spi_tx(void);
+void adc_config(void);
 
 static void enable_adc_dma(void)
 {
@@ -742,6 +747,39 @@ static void enable_adc_dma(void)
 	}
 }
 
+static void recover_adc_after_overrun(void)
+{
+	// An overrun can make the DMA block lose its position in the ADC pin scan.
+	// Stop the trigger, reset the ADC sequence and discard the first complete
+	// scan after re-enabling because the reference has just been configured.
+	REG_TC1_CTRLA &= (uint16_t) ~2U;
+	do {
+	} while (REG_TC1_STATUS >= 0x80);
+
+	REG_DMAC_CHID = DMA_CHANNEL_ADC;
+	REG_DMAC_CHCTRLA = 0;
+	REG_DMAC_CHINTFLAG = DMA_INT_TRANSFER_ERROR | DMA_INT_TRANSFER_COMPLETE | DMA_INT_SUSPEND;
+	dmabool = false;
+
+	REG_ADC_CTRLA &= (uint8_t) ~2U;
+	do {
+	} while ((REG_ADC_STATUS & STATUS_SYNCBUSY_BIT) != 0);
+	adc_config();
+	REG_ADC_INTFLAG = 0x0F;
+	REG_TC1_INTFLAG = 0x3B;
+
+	SpiBuildScanIndex = 0;
+	DiscardNextAdcScan = true;
+	enable_adc_dma();
+
+	REG_ADC_CTRLA |= 2;
+	do {
+	} while ((REG_ADC_STATUS & STATUS_SYNCBUSY_BIT) != 0);
+	REG_TC1_CTRLA |= 2;
+	do {
+	} while (REG_TC1_STATUS >= 0x80);
+}
+
 static void handle_adc_dma_interrupt(uint8_t flags)
 {
 	dmabool = false;
@@ -752,6 +790,13 @@ static void handle_adc_dma_interrupt(uint8_t flags)
 		enable_adc_dma();
 		return;
 	}
+	if ((REG_ADC_INTFLAG & ADC_INTFLAG_OVERRUN) != 0)
+	{
+		REG_ADC_INTFLAG = ADC_INTFLAG_OVERRUN;
+		SpiPendingFlags |= SPI_FLAG_ADC_OVERRUN;
+		recover_adc_after_overrun();
+		return;
+	}
 
 	const uint8_t lastindex = DMAresultIndex;
 	DMAresultIndex++;
@@ -759,6 +804,12 @@ static void handle_adc_dma_interrupt(uint8_t flags)
 		DMAresultIndex = 0;
 
 	__asm__ __volatile__("dmb sy" ::: "memory");
+	if (DiscardNextAdcScan)
+	{
+		DiscardNextAdcScan = false;
+		enable_adc_dma();
+		return;
+	}
 
 	const uint8_t Muxnr = MuxCounter;
 	MuxCounter++;
@@ -1017,15 +1068,15 @@ void configureDirectMemoryAccessController ()
 					   //valid.
 	DMAdescriptor[DMA_CHANNEL_SPI_TX].BTCTRL = 0x409; // Valid, block interrupt, byte beats, incrementing source.
 	REG_DMAC_WRBADDR  = (uint32_t) &DMAdescriptorwriteback[0];
-	REG_DMAC_PRICTRL0 = 0x81818181; //10000001 10000001 10000001 10000001, Round-robin scheduling scheme for channels with level 3 priority.
+	REG_DMAC_PRICTRL0 = 0x81818181; // Enable round-robin scheduling within every priority level.
 	REG_DMAC_CHID = DMA_CHANNEL_ADC;
 	REG_DMAC_CHCTRLB = DMA_CHCTRLB_TRIGACT_BEAT | (DMA_TRIGGER_ADC_RESRDY << 8) |
-		DMA_CHCTRLB_PRIORITY_HIGH;
+		DMA_CHCTRLB_PRIORITY_CRITICAL;
 					//Software Command: no action
 					//Trigger action: BEAT. One trigger required for each beat transfer
 					//Channel resume operation
 					//Trigger source = ADC Result Ready Trigger
-					//Channel priority level 3, above the SPI transmitter
+					//Channel priority level 0, above the SPI transmitter
 					//Channel event generation is disabled.
 					//Channel event action will not be executed on any incoming event.
 					//Event Input Action = NO action
@@ -1033,7 +1084,7 @@ void configureDirectMemoryAccessController ()
 
 	REG_DMAC_CHID = DMA_CHANNEL_SPI_TX;
 	REG_DMAC_CHCTRLB = DMA_CHCTRLB_TRIGACT_BEAT | (DMA_TRIGGER_SERCOM1_TX << 8) |
-		DMA_CHCTRLB_PRIORITY_LOW;
+		DMA_CHCTRLB_PRIORITY_BACKGROUND;
 	REG_DMAC_CHINTENSET = DMA_INT_TRANSFER_ERROR | DMA_INT_TRANSFER_COMPLETE | DMA_INT_SUSPEND;
 	REG_DMAC_CTRL = 0xF02; //00001111 00000010 = Transfer requests for all Priority levels are handled. No CRC. DMA enable.
 }
