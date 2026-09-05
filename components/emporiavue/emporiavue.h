@@ -23,6 +23,7 @@
 #include <freertos/task.h>
 #endif
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -54,6 +55,39 @@ class MeteringCalibrationNumber;
 class MeteringCurrentGainNumber;
 class MeteringCurrentPhaseNumber;
 class MeteringLineSelect;
+
+enum class MeteringEnergyMethod : uint8_t { TRAPEZOID, LEFT, RIGHT };
+
+// Use ESPHome-compatible daily reset/Wh persistence without depending on the
+// private implementation of its final TotalDailyEnergy component.
+class MeteringDailyEnergy : public sensor::Sensor, public Component {
+ public:
+  void setup() override;
+  void dump_config() override;
+  void set_parent(sensor::Sensor *parent) { this->parent_ = parent; }
+  void set_time(time::RealTimeClock *time) { this->time_ = time; }
+  void set_restore(bool restore) { this->restore_ = restore; }
+  void set_method(MeteringEnergyMethod method) { this->method_ = method; }
+  void set_energy_scale(float scale) { this->energy_scale_ = scale; }
+  void set_max_sample_gap(uint32_t timeout_ms) { this->max_sample_gap_ms_ = timeout_ms; }
+  void publish_state_and_save(float state);
+
+ protected:
+  void process_metering_state_(float state);
+  void schedule_midnight_reset_();
+  sensor::Sensor *parent_{nullptr};
+  time::RealTimeClock *time_{nullptr};
+  ESPPreferenceObject pref_{};
+  float total_energy_{0.0f};
+  float energy_scale_{0.001f};
+  float last_power_state_{0.0f};
+  uint32_t last_update_{0};
+  uint32_t max_sample_gap_ms_{2000};
+  uint16_t last_day_of_year_{0};
+  MeteringEnergyMethod method_{MeteringEnergyMethod::LEFT};
+  bool restore_{true};
+  bool sample_initialized_{false};
+};
 
 class MeteringPowerFilters {
  public:
@@ -196,6 +230,7 @@ class MeteringPeakTracker {
   bool enabled() const { return this->current_peak_sensor_ != nullptr || this->current_crest_factor_sensor_ != nullptr; }
   void loop(uint32_t now_ms);
   void add_sample(float current_peak, float current_crest_factor, uint32_t now_ms);
+  void invalidate_window(uint32_t now_ms);
 
  protected:
   void finish_window_(uint32_t now_ms);
@@ -255,7 +290,12 @@ class EmporiaVueComponent : public Component
   void set_diagnostics_interval(uint32_t diagnostics_interval_ms) {
     this->diagnostics_interval_ms_ = diagnostics_interval_ms;
   }
-  void set_metering_interval(uint32_t metering_interval_ms) { this->metering_interval_ms_ = metering_interval_ms; }
+  void set_metering_interval(uint32_t metering_interval_ms) {
+    this->metering_interval_ms_ = metering_interval_ms;
+    this->metering_timeout_ms_ = static_cast<uint32_t>(
+        std::min<uint64_t>(INT32_MAX, std::max<uint64_t>(2000, uint64_t{metering_interval_ms} * 3)));
+  }
+  uint32_t get_metering_timeout() const { return this->metering_timeout_ms_; }
   void set_minimum_apparent_power(float value) { this->minimum_apparent_power_ = value; }
   void set_minimum_fundamental_current(float value) { this->minimum_fundamental_current_ = value; }
   void set_line_detection_update_interval(uint32_t update_interval_ms) {
@@ -799,6 +839,8 @@ class EmporiaVueComponent : public Component
   void log_i2c_metering_status_();
   void reset_i2c_metering_status_();
   void submit_metering_frame_(const MeteringFrame &frame);
+  void check_metering_timeout_(uint32_t now_ms);
+  void invalidate_metering_(uint32_t now_ms);
   void publish_metering_frame_(const MeteringFrame &frame);
   void refresh_metering_();
   void start_metering_();
@@ -931,6 +973,10 @@ class EmporiaVueComponent : public Component
   bool diagnostics_started_{false};
   bool firmware_mode_mismatch_log_started_{false};
   uint32_t metering_interval_ms_{0};
+  uint32_t metering_timeout_ms_{2000};
+  uint32_t last_metering_frame_ms_{0};
+  uint32_t last_unavailable_publish_ms_{0};
+  bool metering_data_stale_{true};
   bool metering_started_{false};
   uint32_t last_demand_day_check_ms_{0};
   uint32_t last_peak_check_ms_{0};
@@ -1350,6 +1396,7 @@ class MeteringCTClampConfig {
   }
   bool has_peak_analysis() const { return this->peak_tracker_.enabled(); }
   void loop_peak(uint32_t now_ms) { this->peak_tracker_.loop(now_ms); }
+  void invalidate_peak(uint32_t now_ms) { this->peak_tracker_.invalidate_window(now_ms); }
   void add_peak_sample(float current_peak, float current_crest_factor, uint32_t now_ms) {
     this->peak_tracker_.add_sample(current_peak, current_crest_factor, now_ms);
   }

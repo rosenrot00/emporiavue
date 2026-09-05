@@ -66,7 +66,6 @@ AUTO_LOAD = [
     "sensor",
     "text_sensor",
     "time",
-    "total_daily_energy",
 ]
 
 emporiavue_ns = cg.esphome_ns.namespace("emporiavue")
@@ -99,16 +98,13 @@ MeteringCurrentPhaseNumber = emporiavue_ns.class_(
     "MeteringCurrentPhaseNumber", number.Number
 )
 MeteringLineSelect = emporiavue_ns.class_("MeteringLineSelect", select.Select)
-total_daily_energy_ns = cg.esphome_ns.namespace("total_daily_energy")
-TotalDailyEnergyMethod = total_daily_energy_ns.enum("TotalDailyEnergyMethod")
-TOTAL_DAILY_ENERGY_METHODS = {
-    "trapezoid": TotalDailyEnergyMethod.TOTAL_DAILY_ENERGY_METHOD_TRAPEZOID,
-    "left": TotalDailyEnergyMethod.TOTAL_DAILY_ENERGY_METHOD_LEFT,
-    "right": TotalDailyEnergyMethod.TOTAL_DAILY_ENERGY_METHOD_RIGHT,
+MeteringEnergyMethod = emporiavue_ns.enum("MeteringEnergyMethod", is_class=True)
+ENERGY_METHODS = {
+    "trapezoid": MeteringEnergyMethod.TRAPEZOID,
+    "left": MeteringEnergyMethod.LEFT,
+    "right": MeteringEnergyMethod.RIGHT,
 }
-TotalDailyEnergy = total_daily_energy_ns.class_(
-    "TotalDailyEnergy", sensor.Sensor, cg.Component
-)
+MeteringDailyEnergy = emporiavue_ns.class_("MeteringDailyEnergy", sensor.Sensor, cg.Component)
 
 CONF_SWCLK_PIN = "swclk_pin"
 CONF_SWDIO_PIN = "swdio_pin"
@@ -1963,8 +1959,10 @@ FILTER_DEFAULTS_SCHEMA = cv.Schema(
 )
 
 
+ENERGY_UNIT_SCALES = {"Wh": 1.0, "kWh": 0.001, "MWh": 0.000001}
+
 ENERGY_SENSOR_SCHEMA = sensor.sensor_schema(
-    TotalDailyEnergy,
+    MeteringDailyEnergy,
     unit_of_measurement="kWh",
     device_class=DEVICE_CLASS_ENERGY,
     state_class=STATE_CLASS_TOTAL_INCREASING,
@@ -1973,7 +1971,7 @@ ENERGY_SENSOR_SCHEMA = sensor.sensor_schema(
     {
         cv.GenerateID(CONF_TIME_ID): cv.use_id(time.RealTimeClock),
         cv.Optional(CONF_RESTORE, default=True): cv.boolean,
-        cv.Optional(CONF_METHOD, default="left"): cv.enum(TOTAL_DAILY_ENERGY_METHODS, lower=True),
+        cv.Optional(CONF_METHOD, default="left"): cv.enum(ENERGY_METHODS, lower=True),
     }
 ).extend(cv.COMPONENT_SCHEMA)
 
@@ -1985,6 +1983,20 @@ def _validate_energy_sensor(value):
         return None
     elif not isinstance(value, dict):
         raise cv.Invalid("energy must be true, false, empty, or a mapping")
+    value = dict(value)
+    unit = cv.one_of(*ENERGY_UNIT_SCALES)(value.get(CONF_UNIT_OF_MEASUREMENT, "kWh"))
+    scale = ENERGY_UNIT_SCALES[unit]
+    filters = list(value.get(CONF_FILTERS, []))
+    # Older examples required a user-supplied Wh -> kWh conversion. Absorb
+    # that exact legacy filter once, so existing nodes do not get scaled twice.
+    if scale != 1.0:
+        for index, filter_config in enumerate(filters):
+            if isinstance(filter_config, dict) and filter_config.get(CONF_MULTIPLY) == scale:
+                filters.pop(index)
+                break
+    # Resolve legacy filters after global/local defaults. The actual conversion
+    # is performed by MeteringDailyEnergy, independently of these display filters.
+    value[CONF_FILTERS] = filters
     return ENERGY_SENSOR_SCHEMA(value)
 
 
@@ -2943,7 +2955,7 @@ def _power_sensor_config_without_output_keys(config):
     return config
 
 
-async def _new_total_daily_energy_sensor(config, parent_sensor):
+async def _new_energy_sensor(config, parent_sensor, timeout_ms):
     energy_sensor = await sensor.new_sensor(config)
     await cg.register_component(energy_sensor, config)
     cg.add(energy_sensor.set_parent(parent_sensor))
@@ -2951,10 +2963,12 @@ async def _new_total_daily_energy_sensor(config, parent_sensor):
     cg.add(energy_sensor.set_time(time_))
     cg.add(energy_sensor.set_restore(config[CONF_RESTORE]))
     cg.add(energy_sensor.set_method(config[CONF_METHOD]))
+    cg.add(energy_sensor.set_energy_scale(ENERGY_UNIT_SCALES[config[CONF_UNIT_OF_MEASUREMENT]]))
+    cg.add(energy_sensor.set_max_sample_gap(timeout_ms))
     return energy_sensor
 
 
-async def _add_power_outputs(var, power_configs):
+async def _add_power_outputs(var, power_configs, timeout_ms):
     for power_config in power_configs or []:
         raw_sensor = await sensor.new_sensor(power_config[CONF_RAW_POWER])
         visible_sensor = await sensor.new_sensor(_power_sensor_config_without_output_keys(power_config))
@@ -2966,7 +2980,7 @@ async def _add_power_outputs(var, power_configs):
             )
         )
         if energy_config := power_config.get(CONF_ENERGY):
-            await _new_total_daily_energy_sensor(energy_config, raw_sensor)
+            await _new_energy_sensor(energy_config, raw_sensor, timeout_ms)
 
 
 async def _add_fundamental_analysis_sensors(var, config):
@@ -3226,7 +3240,7 @@ async def to_code(config):
         )
         await _add_internal_power_filters(ct_clamp_var, main_config.get(CONF_FILTERS))
         await _add_current_calibration(ct_clamp_var, main_config, f"mains.{phase_key}")
-        await _add_power_outputs(ct_clamp_var, main_config.get(CONF_POWER))
+        await _add_power_outputs(ct_clamp_var, main_config.get(CONF_POWER), var.get_metering_timeout())
         if current_config := main_config.get(CONF_CURRENT):
             sens = await sensor.new_sensor(current_config)
             cg.add(ct_clamp_var.set_current_sensor(sens))
@@ -3259,7 +3273,7 @@ async def to_code(config):
             ct_clamp_var, circuit_config, f"circuits.{circuit_key}"
         )
 
-        await _add_power_outputs(ct_clamp_var, circuit_config.get(CONF_POWER))
+        await _add_power_outputs(ct_clamp_var, circuit_config.get(CONF_POWER), var.get_metering_timeout())
         if current_config := circuit_config.get(CONF_CURRENT):
             sens = await sensor.new_sensor(current_config)
             cg.add(ct_clamp_var.set_current_sensor(sens))
@@ -3401,7 +3415,7 @@ async def to_code(config):
             ct_clamp_var, ct_config, f"legacy_ct_clamps.{ct_config[CONF_INPUT]}"
         )
 
-        await _add_power_outputs(ct_clamp_var, ct_config.get(CONF_POWER))
+        await _add_power_outputs(ct_clamp_var, ct_config.get(CONF_POWER), var.get_metering_timeout())
         if current_config := ct_config.get(CONF_CURRENT):
             sens = await sensor.new_sensor(current_config)
             cg.add(ct_clamp_var.set_current_sensor(sens))
@@ -3436,7 +3450,7 @@ async def to_code(config):
             else:
                 cg.add(group_var.add_group_term(group_vars_by_key[source_key], sign))
         await _add_internal_power_filters(group_var, group_config.get(CONF_FILTERS))
-        await _add_power_outputs(group_var, group_config.get(CONF_POWER))
+        await _add_power_outputs(group_var, group_config.get(CONF_POWER), var.get_metering_timeout())
         await _add_demand_sensors(
             group_var, group_config, config[CONF_DEMAND_INTERVAL], include_current=False
         )

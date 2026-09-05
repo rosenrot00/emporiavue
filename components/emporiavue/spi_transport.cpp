@@ -49,6 +49,10 @@ static constexpr uint8_t SPI_ADC_OFFSET_SMOOTHING_SHIFT = 4;
 static constexpr int32_t SPI_ADC_OFFSET_MAX_STEP = 96;
 static constexpr uint16_t SPI_MIN_METERING_SAMPLES = 512;
 static constexpr uint16_t SPI_MAX_METERING_SAMPLES = SPI_VUE2_MAIN_SAMPLE_COUNT;
+// Allow rounding to whole cycles plus one boundary cycle (valid periods <=700
+// scans). Losing reference crossings must never leave an accumulator unbounded.
+static constexpr uint32_t SPI_MAX_WINDOW_SAMPLES = SPI_MAX_METERING_SAMPLES + 2U * 700U;
+static_assert(SPI_MAX_WINDOW_SAMPLES <= UINT16_MAX, "Squared sample count must fit uint32_t");
 static constexpr float SPI_TWO_PI = 6.28318530717958647692f;
 static constexpr float SPI_FUNDAMENTAL_RMS_COMPONENT_SCALE = 14.142135623730950488f;
 static constexpr float SPI_MIN_VOLTAGE_FUNDAMENTAL_AMPLITUDE = 16.0f;
@@ -933,8 +937,8 @@ uint32_t EmporiaVueComponent::spi_metering_target_samples_() const {
   const uint32_t interval_ms = this->metering_interval_ms_ == 0 ? SPI_REFERENCE_WINDOW_MS : this->metering_interval_ms_;
   const uint32_t reference_samples =
       this->hardware_id_ == 3 ? SPI_VUE3_MAIN_SAMPLE_COUNT : SPI_VUE2_MAIN_SAMPLE_COUNT;
-  uint32_t samples =
-      (reference_samples * interval_ms + (SPI_REFERENCE_WINDOW_MS / 2)) / SPI_REFERENCE_WINDOW_MS;
+  uint64_t samples =
+      (uint64_t{reference_samples} * interval_ms + (SPI_REFERENCE_WINDOW_MS / 2)) / SPI_REFERENCE_WINDOW_MS;
   if (samples < SPI_MIN_METERING_SAMPLES) {
     samples = SPI_MIN_METERING_SAMPLES;
   }
@@ -1301,6 +1305,18 @@ void EmporiaVueComponent::decode_spi_raw_frame_(const uint8_t *frame, uint32_t s
 
     this->process_spi_raw_scan_(current_index);
     auto &acc = this->spi_metering_accumulator_;
+    if (acc.sample_count >= SPI_MAX_WINDOW_SAMPLES) {
+      const uint32_t now = millis();
+      if ((now - this->spi_invalid_window_last_log_ms_) >= 5000U) {
+        ESP_LOGD(TAG, "SAMD09 SPI metering window rejected: reference cycle timeout, samples=%" PRIu32,
+                 acc.sample_count);
+        this->spi_invalid_window_last_log_ms_ = now;
+      }
+      // Drop the rest of this raw frame and reacquire alignment/crossings on
+      // the next frame. Never publish a partially synchronized measurement.
+      this->reset_spi_metering_state_();
+      return;
+    }
     if (this->spi_metering_window_synced_ && acc.line1_period_count != 0) {
       const float period_samples = acc.cycle_count[0] == 0
                                        ? 0.0f

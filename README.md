@@ -7,6 +7,7 @@ or use the ESPHome SPI path when you specifically want synchronized raw-waveform
 
 | Version | Changes |
 |---|---|
+| 2026.09.1 | **Breaking change:** `energy:` now converts to kWh automatically. Remove `multiply: 0.001` from local energy filters and `filter_defaults.energy`; it is no longer needed. See [Energy](#energy). Existing exact conversion filters are recognized to prevent double scaling. |
 | 2026.07.10 | Separated direction-aware line diagnostics from automatic line assignment and added import/export auto modes. |
 | 2026.07.9 | Added native ESPHome subdevices, validated Vue 3 SPI on real hardware, and added optional SPI voltage THD. |
 | 2026.07.8 | Added persistent automatic circuit line assignment with an optional Home Assistant line selector. |
@@ -499,7 +500,6 @@ emporiavue:
     current_thd: [*analysis_average]
     voltage_thd: [*analysis_average]
     energy:
-      - multiply: 0.001
       - *slow_update
 
   mains:
@@ -655,7 +655,7 @@ cir1:
   energy:
     # state_class: total  # Uncomment for explicit signed/net energy.
     filters:
-      - multiply: 0.001
+      - throttle: 5s  # Optional; energy is already converted to kWh.
 ```
 
 Simple daily energy defaults to `state_class: total_increasing`. Explicit signed/net energy can use `state_class: total`.
@@ -663,6 +663,20 @@ Simple daily energy defaults to `state_class: total_increasing`. Explicit signed
 output: `both` is signed/net, `positive` keeps positive power, and `negative` exposes negative power as a positive value.
 An `energy:` directly under the circuit uses `both`. Use separate positive/import and negative/export energy rather than
 signed net energy in the Home Assistant Energy Dashboard.
+
+**Breaking change in 2026.09.1:** Energy is converted to `kWh` automatically, before any display filters.
+`unit_of_measurement: Wh` or `MWh` also works.
+Remove the old `multiply: 0.001` conversion from your energy filters; existing configurations with that exact filter
+are handled without applying the conversion twice. Other filters still apply normally. Stored daily totals remain in
+the same internal unit and are not reset by this change.
+All examples, including the no-neutral setup, use `energy:` directly on their circuits; no separate energy helper is
+needed.
+
+If no valid metering frame arrives for 2 seconds (or three `metering_interval`s, whichever is longer), instantaneous
+measurements become unknown; display filters may delay this. Daily energy and daily maxima are retained, but missing
+time is not filled with the last known power. On recovery, energy resumes from a new baseline and demand starts a fresh
+window. This applies to both I2C and SPI. An SPI window that loses its reference-voltage cycles is discarded and
+resynchronized instead of accumulating indefinitely.
 
 ### Demand
 

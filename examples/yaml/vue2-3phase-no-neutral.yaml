@@ -111,12 +111,18 @@ emporiavue:
       power:
         name: "AC L1-L2 Power"
         filters: [*pos, *throttle_avg]
+      energy:
+        name: "Today’s AC L1-L2 Energy"
+        filters: [*throttle_time]
 
     cir2:
       line: 3
       power:
         name: "AC L2-L3 Power"
         filters: [*pos, *throttle_avg]
+      energy:
+        name: "Today’s AC L2-L3 Energy"
+        filters: [*throttle_time]
 
     cir3:
       line: [1, 3]
@@ -126,43 +132,6 @@ emporiavue:
       power:
         name: "AC L1-L3 Power"
         filters: [*pos, *throttle_avg]
-
-sensor:
-  - platform: total_daily_energy
-    name: "Today’s AC L1-L2 Energy"
-    power_id: cir1
-    unit_of_measurement: "kWh"
-    device_class: energy
-    state_class: total_increasing
-    restore: true
-    method: left
-    accuracy_decimals: 2
-    filters:
-      - multiply: 0.001
-      - *throttle_time
-
-  - platform: total_daily_energy
-    name: "Today’s AC L2-L3 Energy"
-    power_id: cir2
-    unit_of_measurement: "kWh"
-    device_class: energy
-    state_class: total_increasing
-    restore: true
-    method: left
-    accuracy_decimals: 2
-    filters:
-      - multiply: 0.001
-      - *throttle_time
-
-  - platform: total_daily_energy
-    name: "Today’s AC L1-L3 Energy"
-    power_id: cir3
-    unit_of_measurement: "kWh"
-    device_class: energy
-    state_class: total_increasing
-    restore: true
-    method: left
-    accuracy_decimals: 2
-    filters:
-      - multiply: 0.001
-      - *throttle_time
+      energy:
+        name: "Today’s AC L1-L3 Energy"
+        filters: [*throttle_time]

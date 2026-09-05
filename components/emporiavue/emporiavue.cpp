@@ -120,6 +120,7 @@ void EmporiaVueComponent::publish_restart_reason_() {
 
 void EmporiaVueComponent::loop() {
   const uint32_t now = millis();
+  this->check_metering_timeout_(now);
   if ((now - this->last_peak_check_ms_) >= 50) {
     this->last_peak_check_ms_ = now;
     for (auto *ct_clamp : this->metering_ct_clamps_) {

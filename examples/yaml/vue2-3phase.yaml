@@ -95,7 +95,6 @@ emporiavue:
     power_apparent: *throttle_avg
     power_factor: *throttle_avg
     energy:
-      - multiply: 0.001
       - *throttle_time
 
   line_detection:
