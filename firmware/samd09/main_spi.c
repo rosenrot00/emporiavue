@@ -288,6 +288,8 @@ const uint32_t outputpinTable [8] = { 0x1000000, 0x1010000, 0x1020000, 0x1030000
 #define ADC_INTFLAG_OVERRUN            0x02
 #define SERCOM_INT_TXC                  0x02
 #define SERCOM_INT_RXC                  0x04
+#define SERCOM_INT_ERROR                0x80
+#define USART_STATUS_RX_ERRORS          0x0007 // PERR, FERR, BUFOVF (write-one-to-clear).
 
 struct __attribute__((__packed__)) SpiFrameHeader
 {
@@ -335,6 +337,7 @@ volatile bool SpiTxAwaitingComplete = false;
 #ifdef EMPORIAVUE_TARGET_VUE3
 volatile uint8_t VoltagePacketBuild[6];
 volatile uint8_t VoltagePacketBuildLength = 0;
+volatile bool VoltagePacketError = false;
 int16_t DecodedVoltage[3];
 #endif
 
@@ -439,22 +442,23 @@ static void finalize_spi_frame(void)
 	frame->header.length = SPI_PAYLOAD_SIZE;
 	frame->header.sequence = SpiFrameSequence++;
 #ifdef EMPORIAVUE_TARGET_VUE3
-	// Protocol v2 carries the measured scan period in flag bits 3..15.
+	// Protocol v2 carries the measured scan period in flag bits 3..14.
 	frame->header.flags = (uint16_t) (SpiPendingFlags | (SPI_SAMPLE_PERIOD_TICKS << 3));
 #else
 	frame->header.flags = SpiPendingFlags;
 #endif
 	frame->crc32 = 0;
-	SpiPendingFlags = 0;
-
 	if (SpiReadyCount >= SPI_READY_QUEUE_CAPACITY)
 	{
 		SpiFrameOverruns++;
+		// The dropped frame cannot report its errors. Keep them pending until
+		// a later frame is actually queued for transmission.
 		SpiPendingFlags |= SPI_FLAG_OVERRUN;
 		SpiBuildScanIndex = 0;
 		return;
 	}
 
+	SpiPendingFlags = 0;
 	SpiBuildScanIndex = 0;
 	const uint8_t ready_tail = (uint8_t) ((SpiReadyHead + SpiReadyCount) % SPI_READY_QUEUE_CAPACITY);
 	SpiReadyFrameIndex[ready_tail] = SpiBuildFrameIndex;
@@ -679,6 +683,23 @@ void irq_handler_reset(void)
 #ifdef EMPORIAVUE_TARGET_VUE3
 void irq_handler_sercom0(void)
 {
+	// Read STATUS before DATA: USART errors describe the next unread byte.
+	// IBON is enabled, so an overflow requires draining the receive FIFO.
+	const uint16_t errors = REG_SERCOM0_STATUS & USART_STATUS_RX_ERRORS;
+	if (errors != 0 || (REG_SERCOM0_INTFLAG & SERCOM_INT_ERROR) != 0)
+	{
+		while ((REG_SERCOM0_INTFLAG & SERCOM_INT_RXC) != 0)
+			(void) REG_SERCOM0_DATA;
+		REG_SERCOM0_STATUS = USART_STATUS_RX_ERRORS;
+		REG_SERCOM0_INTFLAG = SERCOM_INT_ERROR;
+		VoltagePacketBuildLength = 0;
+		// The higher-priority UART ISR must not modify SpiPendingFlags:
+		// the ADC handler consumes this latch and reports VOLTAGE_ERROR.
+		VoltagePacketError = true;
+		return;
+	}
+	if ((REG_SERCOM0_INTFLAG & SERCOM_INT_RXC) == 0)
+		return;
 	const uint8_t value = (uint8_t) REG_SERCOM0_DATA;
 
 	// The Vue 3 voltage controller emits fixed six-byte telegrams. The DMA
@@ -693,31 +714,37 @@ void irq_handler_sercom0(void)
 
 static bool decode_vue3_voltage_packet(void)
 {
+	uint8_t packet[6];
+	// Take only a short snapshot with interrupts masked. Otherwise a UART
+	// error could reset and overwrite the buffer while it is being decoded.
+	const uint32_t primask = spi_enter_critical();
+	const bool valid = VoltagePacketBuildLength == 6 && !VoltagePacketError;
+	if (valid)
+	{
+		for (uint8_t index = 0; index < 6; index++)
+			packet[index] = VoltagePacketBuild[index];
+	}
+	VoltagePacketBuildLength = 0;
+	VoltagePacketError = false;
+	spi_exit_critical(primask);
+	if (!valid)
+		return false;
+
 	uint8_t phases_seen = 0;
 	int16_t decoded[3] = {0, 0, 0};
-	if (VoltagePacketBuildLength != 6)
-	{
-		VoltagePacketBuildLength = 0;
-		return false;
-	}
-
 	for (uint8_t pair = 0; pair < 3; pair++)
 	{
-		const uint8_t first = VoltagePacketBuild[pair * 2];
-		const uint8_t second = VoltagePacketBuild[pair * 2 + 1];
+		const uint8_t first = packet[pair * 2];
+		const uint8_t second = packet[pair * 2 + 1];
 		const uint8_t phase = second >> 6;
 		if (phase >= 3 || (phases_seen & (1U << phase)) != 0)
-		{
-			VoltagePacketBuildLength = 0;
 			return false;
-		}
 		int16_t value = (int16_t) ((((uint16_t) first & 0x3FU) << 6) | (second & 0x3FU));
 		if ((value & 0x0800) != 0)
 			value = (int16_t) (value | 0xF000);
 		decoded[phase] = value;
 		phases_seen |= (uint8_t) (1U << phase);
 	}
-	VoltagePacketBuildLength = 0;
 	if (phases_seen != 0x07)
 		return false;
 	for (uint8_t phase = 0; phase < 3; phase++)
@@ -747,9 +774,9 @@ static void enable_adc_dma(void)
 	}
 }
 
-static void recover_adc_after_overrun(void)
+static void recover_adc_scan(void)
 {
-	// An overrun can make the DMA block lose its position in the ADC pin scan.
+	// Overruns and partial/failed DMA blocks can lose the ADC pin-scan position.
 	// Stop the trigger, reset the ADC sequence and discard the first complete
 	// scan after re-enabling because the reference has just been configured.
 	REG_TC1_CTRLA &= (uint16_t) ~2U;
@@ -783,18 +810,18 @@ static void recover_adc_after_overrun(void)
 static void handle_adc_dma_interrupt(uint8_t flags)
 {
 	dmabool = false;
-	if ((flags & DMA_INT_TRANSFER_ERROR) != 0 || (flags & DMA_INT_TRANSFER_COMPLETE) == 0)
-	{
-		// Never promote a partial or stale ADC scan into the metering stream.
+	const bool dma_error = (flags & (DMA_INT_TRANSFER_ERROR | DMA_INT_SUSPEND)) != 0 ||
+		(flags & DMA_INT_TRANSFER_COMPLETE) == 0;
+	const bool adc_overrun = (REG_ADC_INTFLAG & ADC_INTFLAG_OVERRUN) != 0;
+	if (dma_error)
 		SpiPendingFlags |= SPI_FLAG_DMA_ERROR;
-		enable_adc_dma();
-		return;
-	}
-	if ((REG_ADC_INTFLAG & ADC_INTFLAG_OVERRUN) != 0)
-	{
-		REG_ADC_INTFLAG = ADC_INTFLAG_OVERRUN;
+	if (adc_overrun)
 		SpiPendingFlags |= SPI_FLAG_ADC_OVERRUN;
-		recover_adc_after_overrun();
+	if (dma_error || adc_overrun)
+	{
+		// Rearming DMA alone could label the next ADC pin as channel zero.
+		// Reset the complete scan before publishing any more sample blocks.
+		recover_adc_scan();
 		return;
 	}
 
@@ -1034,7 +1061,7 @@ void ConfigSerCom0VoltageReceiver(void)
 	REG_SERCOM0_CTRLA |= 2; // ENABLE
 	do {
 	} while (REG_SERCOM0_SYNCBUSY != 0);
-	REG_SERCOM0_INTENSET = 4; // RXC
+	REG_SERCOM0_INTENSET = SERCOM_INT_RXC | SERCOM_INT_ERROR;
 }
 #endif
 
