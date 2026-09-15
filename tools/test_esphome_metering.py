@@ -51,6 +51,7 @@ PRELUDE = r"""
 #include <string>
 #include <functional>
 #define ESP_LOGD(...) ((void)0)
+#define ESP_LOGI(...) ((void)0)
 #define ESP_LOGW(...) ((void)0)
 #define ESP_LOGV(...) ((void)0)
 uint32_t simulated_ms = 0;
@@ -153,6 +154,69 @@ int main() {
 """
     compile_run(PRELUDE + mocks + constants + helpers + "\nclass EmporiaVueComponent {public:\n" +
                 structs + fields + extra + "\n".join(declarations) + "\n};\n" + "\n".join(bodies) + tests)
+
+
+def test_spi_error_classification():
+    body = function(SPI, "EmporiaVueComponent::process_spi_frame_")
+    structs = HEADER[HEADER.index("  struct SpiQueuedFrame {"):HEADER.index("  struct SpiFundamentalSample {")]
+    structs = structs.replace("#endif", "")
+    # Use actual member declarations so type/name changes fail this test too.
+    members = sorted(set(re.findall(r"this->(\w+_)(?!\w|\()", body)))
+    fields = []
+    for name in members:
+        match = re.search(r"^  [^\n]*\b" + name + r"\b[^\n]*;", HEADER, re.M)
+        assert match, name
+        fields.append(match.group())
+    constants = "\n".join(re.findall(r"^static constexpr[^\n]*;", SPI, re.M))
+    size = re.search(r"^static constexpr uint16_t SPI_RAW_FRAME_SIZE[^\n]*;", HEADER, re.M).group()
+    mocks = r"""
+using portMUX_TYPE = int;
+#define portMUX_INITIALIZER_UNLOCKED 0
+#define portENTER_CRITICAL(...) ((void)0)
+#define portEXIT_CRITICAL(...) ((void)0)
+"""
+    methods = r"""
+  SpiFrameValidationResult next;
+  unsigned decoded{0}, resets{0};
+  SpiFrameValidationResult validate_spi_frame_(const uint8_t*, uint16_t) {return next;}
+  void decode_spi_raw_frame_(const uint8_t*, uint32_t, uint32_t, uint32_t) {++decoded;}
+  void reset_spi_metering_state_() {++resets;}
+  void process_spi_frame_(const SpiQueuedFrame&);
+"""
+    tests = r"""
+int main() {
+  using Error = EmporiaVueComponent::SpiFrameValidationError;
+  EmporiaVueComponent::SpiQueuedFrame frame;
+  for (uint32_t flags : {0U,1U,2U,4U,6U,0x8000U,0x8007U}) {
+    EmporiaVueComponent c;
+    c.next.flags=flags; c.next.sample_period_ticks=816;
+    c.process_spi_frame_(frame);
+    const bool invalid = (flags & 0x8006) != 0;
+    assert(c.decoded == !invalid && c.resets == invalid);
+    assert(c.spi_rx_voltage_errors_ == bool(flags & 4));
+    assert(c.spi_rx_dma_errors_ == bool(flags & 2));
+    assert(c.spi_rx_adc_overruns_ == bool(flags & 0x8000));
+    assert(c.spi_rx_samd_overruns_ == bool(flags & 1));
+    assert(c.spi_rx_crc_errors_ == 0 && c.spi_rx_sync_errors_ == 0);
+    // No stale-frame grace period: genuine voltage faults still reset metering.
+    c.next.flags=0; c.next.sequence=1; c.process_spi_frame_(frame);
+    assert(c.decoded == 1U + !invalid && c.spi_rx_invalid_streak_ == 0);
+  }
+  for (auto error : {Error::TRANSFER_LENGTH,Error::HEADER,Error::PAYLOAD_LENGTH,
+                     Error::CRC_MISMATCH,Error::SAMPLE_PERIOD}) {
+    EmporiaVueComponent c;
+    c.next.flags=0x8007; c.next.error=error;
+    c.process_spi_frame_(frame);
+    // Never interpret corrupt frame flags as real SAMD acquisition faults.
+    assert(c.spi_rx_voltage_errors_ == 0 && c.spi_rx_dma_errors_ == 0);
+    assert(c.spi_rx_adc_overruns_ == 0 && c.spi_rx_samd_overruns_ == 0);
+    assert(c.spi_rx_sync_errors_ == 1 && c.decoded == 0);
+  }
+  std::puts("PASS SPI: separate voltage/DMA errors, strict rejection and valid recovery");
+}
+"""
+    compile_run(PRELUDE + mocks + size + constants + "\nclass EmporiaVueComponent {public:\n" +
+                structs + "\n".join(fields) + methods + "};\n" + body + tests)
 
 
 def test_energy_gaps():
@@ -383,6 +447,7 @@ int main() {
 
 if __name__ == "__main__":
     test_spi_windows()
+    test_spi_error_classification()
     test_energy_gaps()
     test_energy_filters()
     test_metering_timeout()

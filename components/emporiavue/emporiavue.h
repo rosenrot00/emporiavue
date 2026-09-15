@@ -1057,6 +1057,7 @@ class EmporiaVueComponent : public Component
   uint32_t spi_diag_last_processing_busy_us_{0};
   uint32_t spi_processing_load_window_start_ms_{0};
   uint32_t spi_rx_dma_errors_{0};
+  uint32_t spi_rx_voltage_errors_{0};
   uint32_t spi_rx_samd_overruns_{0};
   uint32_t spi_rx_adc_overruns_{0};
   uint32_t spi_rx_frame_gaps_{0};
@@ -1080,6 +1081,7 @@ class EmporiaVueComponent : public Component
   uint32_t spi_rx_logged_queue_errors_{0};
   uint32_t spi_rx_logged_processing_overruns_{0};
   uint32_t spi_rx_logged_dma_errors_{0};
+  uint32_t spi_rx_logged_voltage_errors_{0};
   uint32_t spi_rx_logged_samd_overruns_{0};
   uint32_t spi_rx_logged_adc_overruns_{0};
   uint32_t spi_rx_logged_frame_gaps_{0};

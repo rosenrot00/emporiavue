@@ -149,6 +149,9 @@ void reset_uart() {
     uart_fifo.clear();
     REG_SERCOM0_STATUS.value = REG_SERCOM0_INTFLAG.value = 0;
     VoltagePacketBuildLength = 0;
+    VoltagePacketBuildStartScan = 0;
+    VoltagePacketReadyValid = false;
+    VoltagePacketReadyUses = VUE3_VOLTAGE_VALID_SCAN_USES;
     VoltagePacketError = false;
     after_snapshot = nullptr;
     primask = 0;
@@ -189,15 +192,31 @@ void test_uart_errors() {
     assert(VoltagePacketBuildLength == 0);
     feed_byte(0xc0);
     assert(!decode_vue3_voltage_packet()); // Partial telegram.
+    assert(VoltagePacketBuildLength == 1); // ADC must not destroy it.
+    reset_uart();
     feed_packet();
-    VoltagePacketBuild[3] &= 0x3f; // Duplicate phase 0.
+    VoltagePacketReady[3] &= 0x3f; // Defensive snapshot validation: duplicate phase 0.
     assert(!decode_vue3_voltage_packet());
     feed_packet();
-    VoltagePacketBuild[3] |= 0xc0; // Invalid phase 3.
+    VoltagePacketReady[3] |= 0xc0; // Invalid phase 3.
     assert(!decode_vue3_voltage_packet());
     feed_packet(-2048, 2047, -1);
     assert(decode_vue3_voltage_packet());
     assert(DecodedVoltage[0] == -2048 && DecodedVoltage[1] == 2047 && DecodedVoltage[2] == -1);
+
+    // Invalid complete telegrams must not replace the mailbox or hide errors
+    // even when a valid telegram follows before the next ADC scan.
+    for (uint8_t bad_phase : {uint8_t(0), uint8_t(3)}) {
+        reset_uart();
+        feed_packet();
+        const uint8_t malformed[] = {0xc0, 1, 0xc0, uint8_t(bad_phase << 6), 0xc0, 0x80};
+        for (uint8_t byte : malformed) feed_byte(byte);
+        assert(VoltagePacketError && !VoltagePacketReadyValid);
+        feed_packet();
+        assert(!decode_vue3_voltage_packet());
+        feed_packet();
+        assert(decode_vue3_voltage_packet());
+    }
 }
 void inject_next_packet() { feed_packet(10, 20, 30); }
 void inject_uart_error() {
@@ -223,6 +242,112 @@ void test_uart_snapshot() {
     assert(decode_vue3_voltage_packet());
     assert(primask == 1); // Restore prior mask rather than enabling IRQs blindly.
     primask = 0;
+}
+
+void test_uart_scan_boundaries() {
+    const uint8_t next_packet[] = {0xc0, 10, 0xc0, 0x40 | 20, 0xc0, 0x80 | 30};
+    for (unsigned split = 1; split < 6; ++split) {
+        reset_stream(); reset_uart();
+        feed_packet();
+        assert(decode_vue3_voltage_packet());
+        for (unsigned i=0; i<split; ++i) feed_byte(next_packet[i]);
+        handle_adc_dma_interrupt(DMA_INT_TRANSFER_COMPLETE);
+        assert(VoltagePacketBuildLength == split);
+        assert(!(SpiPendingFlags & SPI_FLAG_VOLTAGE_ERROR));
+        assert(DecodedVoltage[0] == 123); // One held scan, never partial new data.
+        for (unsigned i=split; i<6; ++i) feed_byte(next_packet[i]);
+        handle_adc_dma_interrupt(DMA_INT_TRANSFER_COMPLETE);
+        assert(!(SpiPendingFlags & SPI_FLAG_VOLTAGE_ERROR));
+        assert(DecodedVoltage[0] == 10 && DecodedVoltage[1] == 20 && DecodedVoltage[2] == 30);
+
+        // The first ever telegram may also straddle an ADC boundary.
+        reset_stream(); reset_uart();
+        for (unsigned i=0; i<split; ++i) feed_byte(next_packet[i]);
+        assert(!decode_vue3_voltage_packet());
+        assert(VoltagePacketBuildLength == split);
+        ++SpiSampleCounter;
+        for (unsigned i=split; i<6; ++i) feed_byte(next_packet[i]);
+        assert(decode_vue3_voltage_packet());
+        assert(DecodedVoltage[2] == 30);
+    }
+
+    reset_stream(); reset_uart();
+    feed_packet(1,2,3);
+    feed_packet(10,20,30); // Faster UART: the newest COMPLETE telegram wins.
+    assert(decode_vue3_voltage_packet());
+    assert(DecodedVoltage[0] == 10 && DecodedVoltage[2] == 30);
+    assert(decode_vue3_voltage_packet()); // Exactly one reuse is allowed.
+    for (unsigned i=0; i<300; ++i) {
+        assert(!decode_vue3_voltage_packet()); // Age saturates, never wraps valid.
+        assert(VoltagePacketReadyUses == VUE3_VOLTAGE_VALID_SCAN_USES);
+    }
+    feed_packet(100,200,300);
+    assert(decode_vue3_voltage_packet());
+    assert(DecodedVoltage[0] == 100);
+
+    // Old partial telegrams must not be combined with bytes after an outage.
+    reset_stream(); reset_uart();
+    feed_packet();
+    feed_byte(0xc0);
+    SpiSampleCounter += VUE3_VOLTAGE_PACKET_MAX_SCAN_SPAN;
+    feed_byte(10);
+    assert(VoltagePacketBuildLength == 0 && VoltagePacketError && !VoltagePacketReadyValid);
+    assert(!decode_vue3_voltage_packet());
+    feed_packet();
+    assert(decode_vue3_voltage_packet());
+
+    // A normal straddle across the 32-bit scan-counter wrap is still valid.
+    reset_stream(); reset_uart();
+    SpiSampleCounter = UINT32_MAX;
+    feed_byte(next_packet[0]); feed_byte(next_packet[1]);
+    ++SpiSampleCounter;
+    for (unsigned i=2; i<6; ++i) feed_byte(next_packet[i]);
+    assert(decode_vue3_voltage_packet());
+    assert(DecodedVoltage[0] == 10 && DecodedVoltage[2] == 30);
+}
+
+void test_uart_clock_slip() {
+    // Discrete event simulation, using the actual UART and ADC ISR functions.
+    // Sweep independent clocks +/-0.5%, arbitrary phase, 1.75 Mbaud telegrams.
+    // Every frame after initial acquisition must stay valid without weakening
+    // the ESP-side VOLTAGE_ERROR guard. This is not a hardware timing benchmark.
+    const uint64_t adc_ns = uint64_t(SPI_SAMPLE_PERIOD_TICKS) * 1000 / 16;
+    const uint64_t byte_ns = 5714;
+    const uint8_t packet[] = {0xc1, 36, 0xc3, 0x40 | 8, 0xc4, 0x80 | 44};
+    for (int ppm : {-5000, -1800, 0, 1800, 5000}) {
+        const uint64_t packet_ns = adc_ns * (1000000 + ppm) / 1000000;
+        for (unsigned phase=0; phase<16; ++phase) {
+            reset_stream(); reset_uart();
+            uint64_t packet_start = adc_ns * phase / 16;
+            uint64_t next_byte = packet_start;
+            unsigned byte = 0, frames = 0;
+            for (unsigned scan=0; scan<20000; ++scan) {
+                const uint64_t adc_time = uint64_t(scan + 1) * adc_ns;
+                while (next_byte <= adc_time) {
+                    feed_byte(packet[byte++]);
+                    if (byte == 6) {
+                        byte = 0;
+                        packet_start += packet_ns;
+                    }
+                    next_byte = packet_start + byte * byte_ns;
+                }
+                handle_adc_dma_interrupt(DMA_INT_TRANSFER_COMPLETE);
+                while (SpiReadyCount != 0) {
+                    const auto &frame = SpiFrames[SpiReadyFrameIndex[SpiReadyHead]];
+                    if (frames++ != 0) {
+                        assert((frame.header.flags & SPI_FLAG_VOLTAGE_ERROR) == 0);
+                        for (const auto &sample : frame.scans) {
+                            assert(sample.value[0] == 100 && sample.value[2] == 200 && sample.value[4] == 300);
+                        }
+                    }
+                    SpiReadyHead = (SpiReadyHead + 1) % SPI_READY_QUEUE_CAPACITY;
+                    --SpiReadyCount;
+                }
+            }
+            assert(frames > 350);
+        }
+    }
+    std::puts("UART scan boundaries, bounded sample age and 80 asynchronous clock/phase scenarios passed");
 }
 #endif
 
@@ -261,6 +386,11 @@ void test_adc_recovery() {
             handle_adc_dma_interrupt(DMA_INT_TRANSFER_COMPLETE);
             assert(!DiscardNextAdcScan && MuxCounter == 0 && DMAresultIndex == 1);
             assert(SpiBuildScanIndex == 0 && SpiSampleCounter == 100);
+#ifdef EMPORIAVUE_TARGET_VUE3
+            assert(!VoltagePacketReadyValid && VoltagePacketBuildLength == 0);
+            assert(!decode_vue3_voltage_packet()); // Pre-reset voltage is not fresh.
+            feed_packet();
+#endif
             for (uint8_t channel = 0; channel < ADC_CHANNEL_COUNT; ++channel)
                 DMAresults[1][channel] = 1000 + channel;
             handle_adc_dma_interrupt(DMA_INT_TRANSFER_COMPLETE);
@@ -285,6 +415,8 @@ int main() {
 #ifdef EMPORIAVUE_TARGET_VUE3
     test_uart_errors();
     test_uart_snapshot();
+    test_uart_scan_boundaries();
+    test_uart_clock_slip();
 #endif
     std::puts("ADC recovery, queue retention and applicable UART fault tests passed");
 }

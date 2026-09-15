@@ -997,6 +997,10 @@ SPI metering frames during the diagnostics interval; a rising `ESP SPI Processin
 had to be dropped because the processing queue was full. `ESP SPI Transfer Errors` separately counts receive-queue and
 DMA failures; it does not include processing overruns.
 
+The SPI status log reports Vue 3 voltage-receiver failures separately as `voltage_errors`; these are not DMA failures.
+They mean the SAMD09 detected a malformed voltage telegram, a UART error, or voltage data that stayed stale beyond
+the permitted single-scan reuse. The affected SPI frame is still rejected.
+
 ### Saving values and measurement gaps
 
 Keep `preferences: flash_write_interval: never` in your node YAML. It prevents periodic background preference writes,
@@ -1192,6 +1196,12 @@ used for all voltage inputs and all 19 CT channels.
 
 The configured integer current delays compensate the ADC/multiplexer pipeline before the sample enters the common cycle
 analysis. They do not claim to correct the individual phase error of every physical CT.
+
+On Vue 3, the separate voltage controller sends UART telegrams independently of the SAMD09 current scans. UART
+reassembly preserves partial telegrams across scan boundaries and supplies the latest complete, validated set of three
+voltages. One additional current scan may reuse that set if no new telegram has completed; a longer gap is invalid.
+This bounds normal clock-slip handling to one scan (nominally 51 µs), without relaxing the SPI frame checks or changing
+the current sample rate. It does not phase-lock the two controllers or eliminate their sampling-time uncertainty.
 
 #### Fundamental phasors
 

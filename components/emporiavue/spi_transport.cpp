@@ -347,6 +347,7 @@ void EmporiaVueComponent::setup_spi_receiver_(bool reset_statistics) {
     this->spi_diag_last_processing_busy_us_ = 0;
     this->spi_processing_load_window_start_ms_ = millis();
     this->spi_rx_dma_errors_ = 0;
+    this->spi_rx_voltage_errors_ = 0;
     this->spi_rx_samd_overruns_ = 0;
     this->spi_rx_adc_overruns_ = 0;
     this->spi_rx_frame_gaps_ = 0;
@@ -375,6 +376,7 @@ void EmporiaVueComponent::setup_spi_receiver_(bool reset_statistics) {
   this->spi_rx_logged_queue_errors_ = this->spi_rx_queue_errors_;
   this->spi_rx_logged_processing_overruns_ = this->spi_processing_overruns_;
   this->spi_rx_logged_dma_errors_ = this->spi_rx_dma_errors_;
+  this->spi_rx_logged_voltage_errors_ = this->spi_rx_voltage_errors_;
   this->spi_rx_logged_samd_overruns_ = this->spi_rx_samd_overruns_;
   this->spi_rx_logged_adc_overruns_ = this->spi_rx_adc_overruns_;
   this->spi_rx_logged_frame_gaps_ = this->spi_rx_frame_gaps_;
@@ -659,8 +661,11 @@ void EmporiaVueComponent::process_spi_frame_(const SpiQueuedFrame &frame) {
     this->decode_spi_raw_frame_(frame.data, sequence, flags, sample_counter);
   } else {
     if (samd_sample_error) {
-      if ((flags & (SPI_FRAME_FLAG_DMA_ERROR | SPI_FRAME_FLAG_VOLTAGE_ERROR)) != 0) {
+      if ((flags & SPI_FRAME_FLAG_DMA_ERROR) != 0) {
         this->spi_rx_dma_errors_++;
+      }
+      if ((flags & SPI_FRAME_FLAG_VOLTAGE_ERROR) != 0) {
+        this->spi_rx_voltage_errors_++;
       }
       this->spi_rx_last_flags_ = flags;
       this->reset_spi_metering_state_();
@@ -1951,6 +1956,7 @@ void EmporiaVueComponent::process_spi_receiver_() {
       this->spi_rx_queue_errors_ != this->spi_rx_logged_queue_errors_ ||
       this->spi_processing_overruns_ != this->spi_rx_logged_processing_overruns_ ||
       this->spi_rx_dma_errors_ != this->spi_rx_logged_dma_errors_ ||
+      this->spi_rx_voltage_errors_ != this->spi_rx_logged_voltage_errors_ ||
       this->spi_rx_samd_overruns_ != this->spi_rx_logged_samd_overruns_ ||
       this->spi_rx_adc_overruns_ != this->spi_rx_logged_adc_overruns_ ||
       this->spi_rx_frame_gaps_ != this->spi_rx_logged_frame_gaps_ ||
@@ -1966,13 +1972,15 @@ void EmporiaVueComponent::process_spi_receiver_() {
              " runtime_errors=%" PRIu32 " length=%" PRIu32 " header=%" PRIu32 " payload=%" PRIu32
              " crc=%" PRIu32 " period=%" PRIu32 " queue_errors=%" PRIu32
              " processing_overruns=%" PRIu32 " processing_pending=%u dma_errors=%" PRIu32
+             " voltage_errors=%" PRIu32
              " samd_overruns=%" PRIu32 " adc_overruns=%" PRIu32 " seq_gaps=%" PRIu32 " recoveries=%" PRIu32
              " inflight=%" PRIu16 " flags=0x%04" PRIx32 " sample_counter=%" PRIu32,
              this->spi_rx_sync_errors_ + this->spi_rx_crc_errors_, this->spi_rx_sync_errors_,
              this->spi_rx_crc_errors_, this->spi_rx_transfer_length_errors_, this->spi_rx_header_errors_,
              this->spi_rx_payload_length_errors_, this->spi_rx_crc_mismatch_errors_,
              this->spi_rx_sample_period_errors_, this->spi_rx_queue_errors_, this->spi_processing_overruns_,
-             static_cast<unsigned>(processing_pending), this->spi_rx_dma_errors_, this->spi_rx_samd_overruns_,
+             static_cast<unsigned>(processing_pending), this->spi_rx_dma_errors_, this->spi_rx_voltage_errors_,
+             this->spi_rx_samd_overruns_,
              this->spi_rx_adc_overruns_, this->spi_rx_frame_gaps_, this->spi_rx_recoveries_, this->spi_rx_inflight_,
              this->spi_rx_last_flags_, this->spi_rx_last_sample_counter_);
     this->spi_rx_logged_status_valid_ = true;
@@ -1981,6 +1989,7 @@ void EmporiaVueComponent::process_spi_receiver_() {
     this->spi_rx_logged_queue_errors_ = this->spi_rx_queue_errors_;
     this->spi_rx_logged_processing_overruns_ = this->spi_processing_overruns_;
     this->spi_rx_logged_dma_errors_ = this->spi_rx_dma_errors_;
+    this->spi_rx_logged_voltage_errors_ = this->spi_rx_voltage_errors_;
     this->spi_rx_logged_samd_overruns_ = this->spi_rx_samd_overruns_;
     this->spi_rx_logged_adc_overruns_ = this->spi_rx_adc_overruns_;
     this->spi_rx_logged_frame_gaps_ = this->spi_rx_frame_gaps_;
