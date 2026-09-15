@@ -37,6 +37,17 @@ def compile_run(program):
         subprocess.run([binary], check=True)
 
 
+def component_fields(*bodies):
+    """Keep host fixtures in sync with the production component's member types."""
+    members = sorted(set(re.findall(r"this->(\w+_)(?!\w|\()", "\n".join(bodies))))
+    fields = []
+    for name in members:
+        match = re.search(r"^  [^\n]*\b" + name + r"\b[^\n]*;", HEADER, re.M)
+        assert match, name
+        fields.append(match.group())
+    return "\n".join(fields)
+
+
 PRELUDE = r"""
 #include <algorithm>
 #include <array>
@@ -160,13 +171,7 @@ def test_spi_error_classification():
     body = function(SPI, "EmporiaVueComponent::process_spi_frame_")
     structs = HEADER[HEADER.index("  struct SpiQueuedFrame {"):HEADER.index("  struct SpiFundamentalSample {")]
     structs = structs.replace("#endif", "")
-    # Use actual member declarations so type/name changes fail this test too.
-    members = sorted(set(re.findall(r"this->(\w+_)(?!\w|\()", body)))
-    fields = []
-    for name in members:
-        match = re.search(r"^  [^\n]*\b" + name + r"\b[^\n]*;", HEADER, re.M)
-        assert match, name
-        fields.append(match.group())
+    fields = component_fields(body)
     constants = "\n".join(re.findall(r"^static constexpr[^\n]*;", SPI, re.M))
     size = re.search(r"^static constexpr uint16_t SPI_RAW_FRAME_SIZE[^\n]*;", HEADER, re.M).group()
     mocks = r"""
@@ -193,6 +198,7 @@ int main() {
     c.process_spi_frame_(frame);
     const bool invalid = (flags & 0x8006) != 0;
     assert(c.decoded == !invalid && c.resets == invalid);
+    assert(c.spi_rx_valid_frames_ == !invalid);
     assert(c.spi_rx_voltage_errors_ == bool(flags & 4));
     assert(c.spi_rx_dma_errors_ == bool(flags & 2));
     assert(c.spi_rx_adc_overruns_ == bool(flags & 0x8000));
@@ -201,6 +207,7 @@ int main() {
     // No stale-frame grace period: genuine voltage faults still reset metering.
     c.next.flags=0; c.next.sequence=1; c.process_spi_frame_(frame);
     assert(c.decoded == 1U + !invalid && c.spi_rx_invalid_streak_ == 0);
+    assert(c.spi_rx_valid_frames_ == 1U + !invalid);
   }
   for (auto error : {Error::TRANSFER_LENGTH,Error::HEADER,Error::PAYLOAD_LENGTH,
                      Error::CRC_MISMATCH,Error::SAMPLE_PERIOD}) {
@@ -211,12 +218,104 @@ int main() {
     assert(c.spi_rx_voltage_errors_ == 0 && c.spi_rx_dma_errors_ == 0);
     assert(c.spi_rx_adc_overruns_ == 0 && c.spi_rx_samd_overruns_ == 0);
     assert(c.spi_rx_sync_errors_ == 1 && c.decoded == 0);
+    assert(c.spi_rx_valid_frames_ == 0);
   }
   std::puts("PASS SPI: separate voltage/DMA errors, strict rejection and valid recovery");
 }
 """
     compile_run(PRELUDE + mocks + size + constants + "\nclass EmporiaVueComponent {public:\n" +
-                structs + "\n".join(fields) + methods + "};\n" + body + tests)
+                structs + fields + methods + "};\n" + body + tests)
+
+
+def test_spi_status_logging():
+    status = function(SPI, "EmporiaVueComponent::log_spi_receiver_status_")
+    handoff = function(SPI, "EmporiaVueComponent::handoff_spi_transaction_")
+    restart = function(SPI, "EmporiaVueComponent::restart_spi_receiver_")
+    assert restart.index("this->log_spi_receiver_status_(true)") < restart.index("this->stop_spi_receiver_()")
+    # Neither diagnostic total may be erased by soft recovery or a SAMD reset.
+    assert "spi_rx_received_frames_ =" not in restart and "spi_rx_valid_frames_ =" not in restart
+    fields = component_fields(status, handoff)
+    frame = HEADER[HEADER.index("  struct SpiQueuedFrame {"):HEADER.index("  enum class SpiFrameValidationError")]
+    frame = frame.replace("#endif", "")
+    constants = "\n".join(re.findall(
+        r"^[ \t]*static constexpr[^\n]*(?:SPI_RAW_FRAME_SIZE|METERING_STATUS_LOG_INTERVAL_MS)[^\n]*;", HEADER, re.M))
+    mocks = r"""
+#include <cstdarg>
+#define USE_ESP32
+std::vector<std::string> messages;
+void log_capture(const char *format, ...) __attribute__((format(printf,1,2)));
+void log_capture(const char *format, ...) {
+  char text[1024]; va_list args; va_start(args,format);
+  const int length=vsnprintf(text,sizeof(text),format,args); va_end(args);
+  assert(length>=0 && length<int(sizeof(text))); messages.emplace_back(text);
+}
+#undef ESP_LOGD
+#define ESP_LOGD(tag, ...) log_capture(__VA_ARGS__)
+struct Queue {void *item{nullptr}; bool accepts{true}; unsigned pending{0};};
+using QueueHandle_t = Queue*;
+using UBaseType_t = unsigned;
+const int pdTRUE=1;
+unsigned uxQueueMessagesWaiting(QueueHandle_t q) {return q->pending;}
+int xQueueReceive(QueueHandle_t q, void *out, unsigned) {
+  if (!q->item) return 0;
+  *static_cast<void**>(out)=q->item; q->item=nullptr; return pdTRUE;
+}
+int xQueueSend(QueueHandle_t q, const void *in, unsigned) {
+  if (!q->accepts) return 0;
+  q->item=*static_cast<void* const*>(in); return pdTRUE;
+}
+struct spi_slave_transaction_t {void *user; size_t trans_len; const void *rx_buffer;};
+"""
+    methods = r"""
+  unsigned requeued{0};
+  bool queue_spi_receive_(uint8_t index) {assert(index==0); ++requeued; return true;}
+  void handoff_spi_transaction_(spi_slave_transaction_t*);
+  void log_spi_receiver_status_(bool force=false);
+"""
+    tests = r"""
+int main() {
+  EmporiaVueComponent c;
+  Queue free, ready;
+  c.spi_processing_free_queue_=&free; c.spi_processing_ready_queue_=&ready;
+  EmporiaVueComponent::SpiQueuedFrame output;
+  uint8_t bytes[SPI_RAW_FRAME_SIZE]{};
+  spi_slave_transaction_t transaction{nullptr,0,bytes};
+  c.handoff_spi_transaction_(nullptr); assert(c.spi_rx_received_frames_==0);
+  free.item=&output; c.handoff_spi_transaction_(&transaction);
+  assert(c.spi_rx_received_frames_==1 && output.trans_len_bits==0);
+  transaction.trans_len=8192;
+  c.handoff_spi_transaction_(&transaction); // Queue exhausted, still a received transfer.
+  assert(c.spi_rx_received_frames_==2 && c.spi_processing_overruns_==1);
+  free.item=&output; ready.accepts=false; c.handoff_spi_transaction_(&transaction);
+  assert(c.spi_rx_received_frames_==3 && c.spi_processing_overruns_==2 && c.requeued==3);
+  c.spi_rx_valid_frames_=7;
+  c.spi_rx_received_frames_=10;
+  c.spi_rx_last_log_ms_=1000; simulated_ms=3000;
+  c.log_spi_receiver_status_(); assert(messages.empty());
+  c.log_spi_receiver_status_(true); assert(messages.size()==1);
+  assert(messages.back().find("received_frames=10 valid_frames=7")!=std::string::npos);
+  assert(messages.back().find("processing_overruns=2")!=std::string::npos);
+  // Repeated two-second recovery, with no counter changes, still emits a snapshot.
+  for (unsigned i=0;i<6;++i) {
+    simulated_ms+=2000; c.spi_rx_last_log_ms_=simulated_ms-2000;
+    c.log_spi_receiver_status_(true); assert(messages.size()==i+2);
+  }
+  // Healthy progress is quiet. Ordinary error logging remains throttled.
+  simulated_ms+=10000; ++c.spi_rx_received_frames_; ++c.spi_rx_valid_frames_;
+  c.log_spi_receiver_status_(); assert(messages.size()==7);
+  ++c.spi_rx_voltage_errors_; c.log_spi_receiver_status_(); assert(messages.size()==8);
+  simulated_ms+=1; ++c.spi_rx_voltage_errors_;
+  c.log_spi_receiver_status_(); assert(messages.size()==8);
+  simulated_ms+=10000; c.log_spi_receiver_status_(); assert(messages.size()==9);
+  assert(messages.back().find("received_frames=11 valid_frames=8")!=std::string::npos);
+  assert(messages.back().find("voltage_errors=2")!=std::string::npos);
+  c.spi_processing_ready_queue_=nullptr; c.log_spi_receiver_status_(true);
+  assert(messages.back().find("processing_pending=0")!=std::string::npos);
+  std::puts("PASS SPI status: RX/drop counters, forced recovery snapshots, unchanged/healthy throttling");
+}
+"""
+    compile_run(PRELUDE + mocks + constants + "\nclass EmporiaVueComponent {public:\n" +
+                frame + fields + methods + "};\n" + status + handoff + tests)
 
 
 def test_energy_gaps():
@@ -448,6 +547,7 @@ int main() {
 if __name__ == "__main__":
     test_spi_windows()
     test_spi_error_classification()
+    test_spi_status_logging()
     test_energy_gaps()
     test_energy_filters()
     test_metering_timeout()

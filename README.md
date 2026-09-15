@@ -1000,6 +1000,10 @@ DMA failures; it does not include processing overruns.
 The SPI status log reports Vue 3 voltage-receiver failures separately as `voltage_errors`; these are not DMA failures.
 They mean the SAMD09 detected a malformed voltage telegram, a UART error, or voltage data that stayed stale beyond
 the permitted single-scan reuse. The affected SPI frame is still rejected.
+With DEBUG logging enabled, the status line also appears immediately before every SPI recovery, even within the normal
+10-second logging interval. `received_frames` counts completed SPI transfers (including invalid or processing-dropped
+transfers); `valid_frames` counts frames accepted for metering. Both totals survive automatic recovery, including
+recovery-triggered SAMD resets.
 
 ### Saving values and measurement gaps
 

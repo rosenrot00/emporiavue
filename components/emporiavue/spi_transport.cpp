@@ -333,6 +333,8 @@ void EmporiaVueComponent::setup_spi_receiver_(bool reset_statistics) {
   this->spi_rx_force_stop_ = false;
   this->spi_metering_task_stop_ = false;
   if (reset_statistics) {
+    this->spi_rx_received_frames_ = 0;
+    this->spi_rx_valid_frames_ = 0;
     this->spi_rx_frames_ = 0;
     this->spi_rx_sync_errors_ = 0;
     this->spi_rx_crc_errors_ = 0;
@@ -511,6 +513,10 @@ void EmporiaVueComponent::restart_spi_receiver_() {
   }
   this->spi_rx_last_recovery_attempts_ = this->spi_rx_recoveries_since_valid_;
 
+  // A two-second recovery loop must not suppress the ten-second status log.
+  // Capture progress and failures before stop/reset clears stream-local state.
+  this->log_spi_receiver_status_(true);
+
   const uint32_t now = millis();
   const bool reset_samd =
       this->reset_pin_ != nullptr &&
@@ -589,6 +595,9 @@ void EmporiaVueComponent::handoff_spi_transaction_(spi_slave_transaction_t *tran
   if (transaction == nullptr) {
     return;
   }
+  // Count every completed transfer, including zero-length transfers and frames
+  // dropped by the processing queue. This distinguishes no RX from rejected RX.
+  this->spi_rx_received_frames_ = this->spi_rx_received_frames_ + 1;
   const auto index = static_cast<uint8_t>(reinterpret_cast<uintptr_t>(transaction->user));
   if (this->spi_rx_inflight_ > 0) {
     this->spi_rx_inflight_ = static_cast<uint16_t>(this->spi_rx_inflight_ - 1);
@@ -643,6 +652,7 @@ void EmporiaVueComponent::process_spi_frame_(const SpiQueuedFrame &frame) {
       }
     }
     this->spi_rx_frames_++;
+    this->spi_rx_valid_frames_++;
     if (this->spi_rx_waiting_for_valid_after_recovery_) {
       ESP_LOGI(TAG,
                "SAMD09 SPI receiver recovered after resync, next valid seq=%" PRIu32
@@ -1904,6 +1914,60 @@ void EmporiaVueComponent::publish_queued_spi_metering_() {
 #endif
 }
 
+void EmporiaVueComponent::log_spi_receiver_status_(bool force) {
+#ifdef USE_ESP32
+  const uint32_t now = millis();
+  const bool status_changed =
+      !this->spi_rx_logged_status_valid_ || this->spi_rx_sync_errors_ != this->spi_rx_logged_sync_errors_ ||
+      this->spi_rx_crc_errors_ != this->spi_rx_logged_crc_errors_ ||
+      this->spi_rx_queue_errors_ != this->spi_rx_logged_queue_errors_ ||
+      this->spi_processing_overruns_ != this->spi_rx_logged_processing_overruns_ ||
+      this->spi_rx_dma_errors_ != this->spi_rx_logged_dma_errors_ ||
+      this->spi_rx_voltage_errors_ != this->spi_rx_logged_voltage_errors_ ||
+      this->spi_rx_samd_overruns_ != this->spi_rx_logged_samd_overruns_ ||
+      this->spi_rx_adc_overruns_ != this->spi_rx_logged_adc_overruns_ ||
+      this->spi_rx_frame_gaps_ != this->spi_rx_logged_frame_gaps_ ||
+      this->spi_rx_recoveries_ != this->spi_rx_logged_recoveries_ ||
+      this->spi_rx_last_flags_ != this->spi_rx_logged_flags_;
+  if (force || (status_changed && now - this->spi_rx_last_log_ms_ >= METERING_STATUS_LOG_INTERVAL_MS)) {
+    this->spi_rx_last_log_ms_ = now;
+    const UBaseType_t processing_pending = this->spi_processing_ready_queue_ == nullptr
+                                               ? 0
+                                               : uxQueueMessagesWaiting(this->spi_processing_ready_queue_);
+    ESP_LOGD(TAG,
+             "SAMD09 SPI rx status: received_frames=%" PRIu32 " valid_frames=%" PRIu32
+             " frame_errors=%" PRIu32 " startup_errors=%" PRIu32
+             " runtime_errors=%" PRIu32 " length=%" PRIu32 " header=%" PRIu32 " payload=%" PRIu32
+             " crc=%" PRIu32 " period=%" PRIu32 " queue_errors=%" PRIu32
+             " processing_overruns=%" PRIu32 " processing_pending=%u dma_errors=%" PRIu32
+             " voltage_errors=%" PRIu32
+             " samd_overruns=%" PRIu32 " adc_overruns=%" PRIu32 " seq_gaps=%" PRIu32 " recoveries=%" PRIu32
+             " inflight=%" PRIu16 " flags=0x%04" PRIx32 " sample_counter=%" PRIu32,
+             this->spi_rx_received_frames_, this->spi_rx_valid_frames_,
+             this->spi_rx_sync_errors_ + this->spi_rx_crc_errors_, this->spi_rx_sync_errors_,
+             this->spi_rx_crc_errors_, this->spi_rx_transfer_length_errors_, this->spi_rx_header_errors_,
+             this->spi_rx_payload_length_errors_, this->spi_rx_crc_mismatch_errors_,
+             this->spi_rx_sample_period_errors_, this->spi_rx_queue_errors_, this->spi_processing_overruns_,
+             static_cast<unsigned>(processing_pending), this->spi_rx_dma_errors_, this->spi_rx_voltage_errors_,
+             this->spi_rx_samd_overruns_,
+             this->spi_rx_adc_overruns_, this->spi_rx_frame_gaps_, this->spi_rx_recoveries_, this->spi_rx_inflight_,
+             this->spi_rx_last_flags_, this->spi_rx_last_sample_counter_);
+    this->spi_rx_logged_status_valid_ = true;
+    this->spi_rx_logged_sync_errors_ = this->spi_rx_sync_errors_;
+    this->spi_rx_logged_crc_errors_ = this->spi_rx_crc_errors_;
+    this->spi_rx_logged_queue_errors_ = this->spi_rx_queue_errors_;
+    this->spi_rx_logged_processing_overruns_ = this->spi_processing_overruns_;
+    this->spi_rx_logged_dma_errors_ = this->spi_rx_dma_errors_;
+    this->spi_rx_logged_voltage_errors_ = this->spi_rx_voltage_errors_;
+    this->spi_rx_logged_samd_overruns_ = this->spi_rx_samd_overruns_;
+    this->spi_rx_logged_adc_overruns_ = this->spi_rx_adc_overruns_;
+    this->spi_rx_logged_frame_gaps_ = this->spi_rx_frame_gaps_;
+    this->spi_rx_logged_recoveries_ = this->spi_rx_recoveries_;
+    this->spi_rx_logged_flags_ = this->spi_rx_last_flags_;
+  }
+#endif
+}
+
 void EmporiaVueComponent::process_spi_receiver_() {
   if (!this->spi_receiver_started_ || this->runtime_mode_ != RuntimeMode::SPI) {
     return;
@@ -1950,52 +2014,7 @@ void EmporiaVueComponent::process_spi_receiver_() {
     }
   }
 
-  const bool status_changed =
-      !this->spi_rx_logged_status_valid_ || this->spi_rx_sync_errors_ != this->spi_rx_logged_sync_errors_ ||
-      this->spi_rx_crc_errors_ != this->spi_rx_logged_crc_errors_ ||
-      this->spi_rx_queue_errors_ != this->spi_rx_logged_queue_errors_ ||
-      this->spi_processing_overruns_ != this->spi_rx_logged_processing_overruns_ ||
-      this->spi_rx_dma_errors_ != this->spi_rx_logged_dma_errors_ ||
-      this->spi_rx_voltage_errors_ != this->spi_rx_logged_voltage_errors_ ||
-      this->spi_rx_samd_overruns_ != this->spi_rx_logged_samd_overruns_ ||
-      this->spi_rx_adc_overruns_ != this->spi_rx_logged_adc_overruns_ ||
-      this->spi_rx_frame_gaps_ != this->spi_rx_logged_frame_gaps_ ||
-      this->spi_rx_recoveries_ != this->spi_rx_logged_recoveries_ ||
-      this->spi_rx_last_flags_ != this->spi_rx_logged_flags_;
-  if (status_changed && now - this->spi_rx_last_log_ms_ >= METERING_STATUS_LOG_INTERVAL_MS) {
-    this->spi_rx_last_log_ms_ = now;
-    const UBaseType_t processing_pending = this->spi_processing_ready_queue_ == nullptr
-                                               ? 0
-                                               : uxQueueMessagesWaiting(this->spi_processing_ready_queue_);
-    ESP_LOGD(TAG,
-             "SAMD09 SPI rx status: frame_errors=%" PRIu32 " startup_errors=%" PRIu32
-             " runtime_errors=%" PRIu32 " length=%" PRIu32 " header=%" PRIu32 " payload=%" PRIu32
-             " crc=%" PRIu32 " period=%" PRIu32 " queue_errors=%" PRIu32
-             " processing_overruns=%" PRIu32 " processing_pending=%u dma_errors=%" PRIu32
-             " voltage_errors=%" PRIu32
-             " samd_overruns=%" PRIu32 " adc_overruns=%" PRIu32 " seq_gaps=%" PRIu32 " recoveries=%" PRIu32
-             " inflight=%" PRIu16 " flags=0x%04" PRIx32 " sample_counter=%" PRIu32,
-             this->spi_rx_sync_errors_ + this->spi_rx_crc_errors_, this->spi_rx_sync_errors_,
-             this->spi_rx_crc_errors_, this->spi_rx_transfer_length_errors_, this->spi_rx_header_errors_,
-             this->spi_rx_payload_length_errors_, this->spi_rx_crc_mismatch_errors_,
-             this->spi_rx_sample_period_errors_, this->spi_rx_queue_errors_, this->spi_processing_overruns_,
-             static_cast<unsigned>(processing_pending), this->spi_rx_dma_errors_, this->spi_rx_voltage_errors_,
-             this->spi_rx_samd_overruns_,
-             this->spi_rx_adc_overruns_, this->spi_rx_frame_gaps_, this->spi_rx_recoveries_, this->spi_rx_inflight_,
-             this->spi_rx_last_flags_, this->spi_rx_last_sample_counter_);
-    this->spi_rx_logged_status_valid_ = true;
-    this->spi_rx_logged_sync_errors_ = this->spi_rx_sync_errors_;
-    this->spi_rx_logged_crc_errors_ = this->spi_rx_crc_errors_;
-    this->spi_rx_logged_queue_errors_ = this->spi_rx_queue_errors_;
-    this->spi_rx_logged_processing_overruns_ = this->spi_processing_overruns_;
-    this->spi_rx_logged_dma_errors_ = this->spi_rx_dma_errors_;
-    this->spi_rx_logged_voltage_errors_ = this->spi_rx_voltage_errors_;
-    this->spi_rx_logged_samd_overruns_ = this->spi_rx_samd_overruns_;
-    this->spi_rx_logged_adc_overruns_ = this->spi_rx_adc_overruns_;
-    this->spi_rx_logged_frame_gaps_ = this->spi_rx_frame_gaps_;
-    this->spi_rx_logged_recoveries_ = this->spi_rx_recoveries_;
-    this->spi_rx_logged_flags_ = this->spi_rx_last_flags_;
-  }
+  this->log_spi_receiver_status_();
   if (this->diagnostics_interval_ms_ != 0 &&
       now - this->spi_last_diagnostics_publish_ms_ >= this->diagnostics_interval_ms_) {
     this->spi_last_diagnostics_publish_ms_ = now;

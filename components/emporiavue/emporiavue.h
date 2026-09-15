@@ -849,6 +849,7 @@ class EmporiaVueComponent : public Component
   bool stop_spi_receiver_();
   void restart_spi_receiver_();
   void process_spi_receiver_();
+  void log_spi_receiver_status_(bool force = false);
 #ifdef USE_ESP32
   void handoff_spi_transaction_(spi_slave_transaction_t *transaction);
   void process_spi_frame_(const SpiQueuedFrame &frame);
@@ -1043,6 +1044,10 @@ class EmporiaVueComponent : public Component
   SpiCrossingPosition spi_pending_cross_sample_[3]{};
   uint8_t spi_cycle_state_[3]{};
   volatile uint16_t spi_rx_inflight_{0};
+  // Diagnostic totals survive receiver recovery and SAMD resets.
+  volatile uint32_t spi_rx_received_frames_{0};
+  uint32_t spi_rx_valid_frames_{0};
+  // Stream-local count used for sequence tracking and startup errors.
   uint32_t spi_rx_frames_{0};
   uint32_t spi_rx_sync_errors_{0};
   uint32_t spi_rx_crc_errors_{0};
