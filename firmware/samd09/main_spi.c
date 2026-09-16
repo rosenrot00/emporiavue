@@ -338,9 +338,6 @@ volatile bool SpiTxAwaitingComplete = false;
 volatile uint8_t VoltagePacketBuild[6];
 volatile uint8_t VoltagePacketBuildLength = 0;
 volatile bool VoltagePacketError = false;
-// Once acquired, keep the last validated voltage snapshot until a newer valid
-// UART telegram replaces it.
-bool VoltageValuesValid = false;
 int16_t DecodedVoltage[3];
 #endif
 
@@ -730,9 +727,8 @@ static bool decode_vue3_voltage_packet(void)
 	VoltagePacketBuildLength = 0;
 	VoltagePacketError = false;
 	spi_exit_critical(primask);
-
 	if (!valid)
-		return VoltageValuesValid;
+		return false;
 
 	uint8_t phases_seen = 0;
 	int16_t decoded[3] = {0, 0, 0};
@@ -742,7 +738,7 @@ static bool decode_vue3_voltage_packet(void)
 		const uint8_t second = packet[pair * 2 + 1];
 		const uint8_t phase = second >> 6;
 		if (phase >= 3 || (phases_seen & (1U << phase)) != 0)
-			return VoltageValuesValid;
+			return false;
 		int16_t value = (int16_t) ((((uint16_t) first & 0x3FU) << 6) | (second & 0x3FU));
 		if ((value & 0x0800) != 0)
 			value = (int16_t) (value | 0xF000);
@@ -750,10 +746,9 @@ static bool decode_vue3_voltage_packet(void)
 		phases_seen |= (uint8_t) (1U << phase);
 	}
 	if (phases_seen != 0x07)
-		return VoltageValuesValid;
+		return false;
 	for (uint8_t phase = 0; phase < 3; phase++)
 		DecodedVoltage[phase] = decoded[phase];
-	VoltageValuesValid = true;
 	return true;
 }
 #endif
@@ -853,8 +848,12 @@ static void handle_adc_dma_interrupt(uint8_t flags)
 	enable_adc_dma();
 
 #ifdef EMPORIAVUE_TARGET_VUE3
-	if (!decode_vue3_voltage_packet())
-		SpiPendingFlags |= SPI_FLAG_VOLTAGE_ERROR;
+	// The voltage controller and the SAMD scan clock are independent, so a
+	// telegram that straddles a scan boundary is dropped by the reassembly above.
+	// Stock firmware simply keeps the previous voltages for that one scan; do the
+	// same instead of flagging the whole 56-scan SPI frame. Keeping this a plain
+	// call adds no static RAM (see the headroom note in the README).
+	(void) decode_vue3_voltage_packet();
 #endif
 	capture_spi_scan(lastindex, Muxnr);
 

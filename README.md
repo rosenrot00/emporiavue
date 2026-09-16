@@ -1201,6 +1201,13 @@ used for all voltage inputs and all 19 CT channels.
 The configured integer current delays compensate the ADC/multiplexer pipeline before the sample enters the common cycle
 analysis. They do not claim to correct the individual phase error of every physical CT.
 
+❗ **SAMD09 RAM headroom.** The SAMD09D14A has 4 KB of RAM and the SPI firmware already uses about 3,272 bytes
+of it, mostly the three 1 KB `SpiFrames` buffers, leaving roughly 820 bytes of stack. That is enough for the
+current build and very little more: adding as few as 16 bytes of `.bss` to a known-good image makes the firmware
+stop driving the SPI bus entirely (no transfers at all, `sample_counter` stays 0, and the ESP32 resets the SAMD
+every two seconds). Check `arm-none-eabi-size` output when changing the Vue 3 firmware, and free RAM first if a
+change needs new statics.
+
 On Vue 3, the separate voltage controller sends UART telegrams independently of the SAMD09 current scans. Following
 the stock firmware's timing-efficient design, the UART interrupt only fills a six-byte mailbox; each ADC current scan
 then consumes and validates a completed set of three voltages. Partial telegrams remain intact across scan boundaries.
