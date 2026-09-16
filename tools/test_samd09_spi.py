@@ -148,8 +148,12 @@ void feed_packet(int16_t a = 123, int16_t b = -456, int16_t c = 789) {
 void reset_uart() {
     uart_fifo.clear();
     REG_SERCOM0_STATUS.value = REG_SERCOM0_INTFLAG.value = 0;
+    VoltagePacketBuildOffset = 0;
     VoltagePacketBuildLength = 0;
-    VoltagePacketBuildStartScan = 0;
+    VoltagePacketBuildAge = 0;
+    VoltagePacketPublishedOffset = 0;
+    VoltagePacketPublishedGeneration = 0;
+    VoltagePacketConsumedGeneration = 0;
     VoltagePacketReadyValid = false;
     VoltagePacketReadyUses = VUE3_VOLTAGE_VALID_SCAN_USES;
     VoltagePacketError = false;
@@ -195,25 +199,23 @@ void test_uart_errors() {
     assert(VoltagePacketBuildLength == 1); // ADC must not destroy it.
     reset_uart();
     feed_packet();
-    VoltagePacketReady[3] &= 0x3f; // Defensive snapshot validation: duplicate phase 0.
+    VoltagePacketRx[VoltagePacketPublishedOffset + 3] &= 0x3f; // Duplicate phase 0.
     assert(!decode_vue3_voltage_packet());
     feed_packet();
-    VoltagePacketReady[3] |= 0xc0; // Invalid phase 3.
+    VoltagePacketRx[VoltagePacketPublishedOffset + 3] |= 0xc0; // Invalid phase 3.
     assert(!decode_vue3_voltage_packet());
     feed_packet(-2048, 2047, -1);
     assert(decode_vue3_voltage_packet());
     assert(DecodedVoltage[0] == -2048 && DecodedVoltage[1] == 2047 && DecodedVoltage[2] == -1);
 
-    // Invalid complete telegrams must not replace the mailbox or hide errors
-    // even when a valid telegram follows before the next ADC scan.
+    // Invalid completed telegrams are rejected by the ADC-side consumer. A
+    // later valid telegram is then accepted normally.
     for (uint8_t bad_phase : {uint8_t(0), uint8_t(3)}) {
         reset_uart();
-        feed_packet();
         const uint8_t malformed[] = {0xc0, 1, 0xc0, uint8_t(bad_phase << 6), 0xc0, 0x80};
         for (uint8_t byte : malformed) feed_byte(byte);
-        assert(VoltagePacketError && !VoltagePacketReadyValid);
-        feed_packet();
         assert(!decode_vue3_voltage_packet());
+        assert(!VoltagePacketReadyValid);
         feed_packet();
         assert(decode_vue3_voltage_packet());
     }
@@ -286,21 +288,19 @@ void test_uart_scan_boundaries() {
     assert(DecodedVoltage[0] == 100);
 
     // Old partial telegrams must not be combined with bytes after an outage.
+    // Ageing is deliberately performed by the ADC-side consumer, not UART ISR.
     reset_stream(); reset_uart();
-    feed_packet();
     feed_byte(0xc0);
-    SpiSampleCounter += VUE3_VOLTAGE_PACKET_MAX_SCAN_SPAN;
-    feed_byte(10);
-    assert(VoltagePacketBuildLength == 0 && VoltagePacketError && !VoltagePacketReadyValid);
-    assert(!decode_vue3_voltage_packet());
+    for (unsigned scan=0; scan<=VUE3_VOLTAGE_PACKET_MAX_SCAN_SPAN; ++scan)
+        assert(!decode_vue3_voltage_packet());
+    assert(VoltagePacketBuildLength == 0 && !VoltagePacketReadyValid);
     feed_packet();
     assert(decode_vue3_voltage_packet());
 
-    // A normal straddle across the 32-bit scan-counter wrap is still valid.
+    // A normal telegram straddle remains valid without coupling UART parsing
+    // to the global SPI sample counter.
     reset_stream(); reset_uart();
-    SpiSampleCounter = UINT32_MAX;
     feed_byte(next_packet[0]); feed_byte(next_packet[1]);
-    ++SpiSampleCounter;
     for (unsigned i=2; i<6; ++i) feed_byte(next_packet[i]);
     assert(decode_vue3_voltage_packet());
     assert(DecodedVoltage[0] == 10 && DecodedVoltage[2] == 30);
@@ -388,6 +388,7 @@ void test_adc_recovery() {
             assert(SpiBuildScanIndex == 0 && SpiSampleCounter == 100);
 #ifdef EMPORIAVUE_TARGET_VUE3
             assert(!VoltagePacketReadyValid && VoltagePacketBuildLength == 0);
+            assert(VoltagePacketConsumedGeneration == VoltagePacketPublishedGeneration);
             assert(!decode_vue3_voltage_packet()); // Pre-reset voltage is not fresh.
             feed_packet();
 #endif
