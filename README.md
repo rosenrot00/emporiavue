@@ -1201,10 +1201,10 @@ used for all voltage inputs and all 19 CT channels.
 The configured integer current delays compensate the ADC/multiplexer pipeline before the sample enters the common cycle
 analysis. They do not claim to correct the individual phase error of every physical CT.
 
-On Vue 3, the separate voltage controller sends UART telegrams independently of the SAMD09 current scans. The UART
-interrupt only assembles complete six-byte telegrams in a double buffer; each ADC current scan then consumes and
-validates the newest completed set of three voltages. Partial telegrams remain intact across scan boundaries. One
-additional current scan may reuse the last validated set if no new telegram has completed; a longer gap is invalid.
+On Vue 3, the separate voltage controller sends UART telegrams independently of the SAMD09 current scans. Following
+the stock firmware's timing-efficient design, the UART interrupt only fills a six-byte mailbox; each ADC current scan
+then consumes and validates a completed set of three voltages. Partial telegrams remain intact across scan boundaries.
+One additional current scan may reuse the last validated set if no new telegram has completed; a longer gap is invalid.
 This bounds normal clock-slip handling to one scan (nominally 51 µs), without relaxing the SPI frame checks or changing
 the current sample rate. It does not phase-lock the two controllers or eliminate their sampling-time uncertainty.
 

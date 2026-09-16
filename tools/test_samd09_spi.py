@@ -148,12 +148,8 @@ void feed_packet(int16_t a = 123, int16_t b = -456, int16_t c = 789) {
 void reset_uart() {
     uart_fifo.clear();
     REG_SERCOM0_STATUS.value = REG_SERCOM0_INTFLAG.value = 0;
-    VoltagePacketBuildOffset = 0;
     VoltagePacketBuildLength = 0;
     VoltagePacketBuildAge = 0;
-    VoltagePacketPublishedOffset = 0;
-    VoltagePacketPublishedGeneration = 0;
-    VoltagePacketConsumedGeneration = 0;
     VoltagePacketReadyValid = false;
     VoltagePacketReadyUses = VUE3_VOLTAGE_VALID_SCAN_USES;
     VoltagePacketError = false;
@@ -199,10 +195,10 @@ void test_uart_errors() {
     assert(VoltagePacketBuildLength == 1); // ADC must not destroy it.
     reset_uart();
     feed_packet();
-    VoltagePacketRx[VoltagePacketPublishedOffset + 3] &= 0x3f; // Duplicate phase 0.
+    VoltagePacketBuild[3] &= 0x3f; // Duplicate phase 0.
     assert(!decode_vue3_voltage_packet());
     feed_packet();
-    VoltagePacketRx[VoltagePacketPublishedOffset + 3] |= 0xc0; // Invalid phase 3.
+    VoltagePacketBuild[3] |= 0xc0; // Invalid phase 3.
     assert(!decode_vue3_voltage_packet());
     feed_packet(-2048, 2047, -1);
     assert(decode_vue3_voltage_packet());
@@ -275,7 +271,10 @@ void test_uart_scan_boundaries() {
 
     reset_stream(); reset_uart();
     feed_packet(1,2,3);
-    feed_packet(10,20,30); // Faster UART: the newest COMPLETE telegram wins.
+    feed_packet(10,20,30); // A complete mailbox remains immutable until consumed.
+    assert(decode_vue3_voltage_packet());
+    assert(DecodedVoltage[0] == 1 && DecodedVoltage[2] == 3);
+    feed_packet(10,20,30);
     assert(decode_vue3_voltage_packet());
     assert(DecodedVoltage[0] == 10 && DecodedVoltage[2] == 30);
     assert(decode_vue3_voltage_packet()); // Exactly one reuse is allowed.
@@ -388,7 +387,6 @@ void test_adc_recovery() {
             assert(SpiBuildScanIndex == 0 && SpiSampleCounter == 100);
 #ifdef EMPORIAVUE_TARGET_VUE3
             assert(!VoltagePacketReadyValid && VoltagePacketBuildLength == 0);
-            assert(VoltagePacketConsumedGeneration == VoltagePacketPublishedGeneration);
             assert(!decode_vue3_voltage_packet()); // Pre-reset voltage is not fresh.
             feed_packet();
 #endif
