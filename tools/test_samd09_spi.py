@@ -149,9 +149,7 @@ void reset_uart() {
     uart_fifo.clear();
     REG_SERCOM0_STATUS.value = REG_SERCOM0_INTFLAG.value = 0;
     VoltagePacketBuildLength = 0;
-    VoltagePacketBuildAge = 0;
-    VoltagePacketReadyValid = false;
-    VoltagePacketReadyUses = VUE3_VOLTAGE_VALID_SCAN_USES;
+    VoltageValuesValid = false;
     VoltagePacketError = false;
     after_snapshot = nullptr;
     primask = 0;
@@ -173,11 +171,12 @@ void test_uart_errors() {
         assert(uart_fifo.empty() && REG_SERCOM0_STATUS.value == 0);
         assert(REG_SERCOM0_INTFLAG.value == 0 && VoltagePacketError);
         assert(VoltagePacketBuildLength == 0 && SpiPendingFlags == 0);
-        // Even a well-formed telegram cannot hide an error since the last scan.
+        // An error discards the concurrent telegram but keeps the last known-good
+        // voltage snapshot active.
         feed_packet(10, 20, 30);
         handle_adc_dma_interrupt(DMA_INT_TRANSFER_COMPLETE);
-        assert(SpiPendingFlags & SPI_FLAG_VOLTAGE_ERROR);
-        assert(DecodedVoltage[0] == 123); // Never replace with corrupted/stale data.
+        assert(!(SpiPendingFlags & SPI_FLAG_VOLTAGE_ERROR));
+        assert(DecodedVoltage[0] == 123);
         feed_packet(10, 20, 30);
         assert(decode_vue3_voltage_packet());
         assert(DecodedVoltage[0] == 10 && DecodedVoltage[1] == 20 && DecodedVoltage[2] == 30);
@@ -192,7 +191,7 @@ void test_uart_errors() {
     assert(VoltagePacketBuildLength == 0);
     feed_byte(0xc0);
     assert(!decode_vue3_voltage_packet()); // Partial telegram.
-    assert(VoltagePacketBuildLength == 1); // ADC must not destroy it.
+    assert(VoltagePacketBuildLength == 0); // Match v1.0: release every ADC scan.
     reset_uart();
     feed_packet();
     VoltagePacketBuild[3] &= 0x3f; // Duplicate phase 0.
@@ -211,7 +210,7 @@ void test_uart_errors() {
         const uint8_t malformed[] = {0xc0, 1, 0xc0, uint8_t(bad_phase << 6), 0xc0, 0x80};
         for (uint8_t byte : malformed) feed_byte(byte);
         assert(!decode_vue3_voltage_packet());
-        assert(!VoltagePacketReadyValid);
+        assert(!VoltageValuesValid);
         feed_packet();
         assert(decode_vue3_voltage_packet());
     }
@@ -234,7 +233,8 @@ void test_uart_snapshot() {
     after_snapshot = inject_uart_error;
     assert(decode_vue3_voltage_packet()); // Local snapshot stays intact.
     feed_packet();
-    assert(!decode_vue3_voltage_packet()); // New error is not accidentally cleared.
+    assert(decode_vue3_voltage_packet()); // New error keeps the valid snapshot.
+    assert(DecodedVoltage[0] == 123 && DecodedVoltage[1] == -456);
     feed_packet();
     primask = 1;
     assert(decode_vue3_voltage_packet());
@@ -250,21 +250,19 @@ void test_uart_scan_boundaries() {
         assert(decode_vue3_voltage_packet());
         for (unsigned i=0; i<split; ++i) feed_byte(next_packet[i]);
         handle_adc_dma_interrupt(DMA_INT_TRANSFER_COMPLETE);
-        assert(VoltagePacketBuildLength == split);
+        assert(VoltagePacketBuildLength == 0);
         assert(!(SpiPendingFlags & SPI_FLAG_VOLTAGE_ERROR));
-        assert(DecodedVoltage[0] == 123); // One held scan, never partial new data.
-        for (unsigned i=split; i<6; ++i) feed_byte(next_packet[i]);
-        handle_adc_dma_interrupt(DMA_INT_TRANSFER_COMPLETE);
-        assert(!(SpiPendingFlags & SPI_FLAG_VOLTAGE_ERROR));
+        assert(DecodedVoltage[0] == 123); // Partial data never replaces the snapshot.
+        feed_packet(10,20,30);
+        assert(decode_vue3_voltage_packet());
         assert(DecodedVoltage[0] == 10 && DecodedVoltage[1] == 20 && DecodedVoltage[2] == 30);
 
-        // The first ever telegram may also straddle an ADC boundary.
+        // Before initial acquisition, a partial telegram remains invalid.
         reset_stream(); reset_uart();
         for (unsigned i=0; i<split; ++i) feed_byte(next_packet[i]);
         assert(!decode_vue3_voltage_packet());
-        assert(VoltagePacketBuildLength == split);
-        ++SpiSampleCounter;
-        for (unsigned i=split; i<6; ++i) feed_byte(next_packet[i]);
+        assert(VoltagePacketBuildLength == 0);
+        feed_packet(10,20,30);
         assert(decode_vue3_voltage_packet());
         assert(DecodedVoltage[2] == 30);
     }
@@ -277,30 +275,25 @@ void test_uart_scan_boundaries() {
     feed_packet(10,20,30);
     assert(decode_vue3_voltage_packet());
     assert(DecodedVoltage[0] == 10 && DecodedVoltage[2] == 30);
-    assert(decode_vue3_voltage_packet()); // Exactly one reuse is allowed.
+    assert(decode_vue3_voltage_packet());
     for (unsigned i=0; i<300; ++i) {
-        assert(!decode_vue3_voltage_packet()); // Age saturates, never wraps valid.
-        assert(VoltagePacketReadyUses == VUE3_VOLTAGE_VALID_SCAN_USES);
+        assert(decode_vue3_voltage_packet()); // Last known-good remains active.
+        assert(DecodedVoltage[0] == 10 && DecodedVoltage[2] == 30);
     }
     feed_packet(100,200,300);
     assert(decode_vue3_voltage_packet());
     assert(DecodedVoltage[0] == 100);
 
-    // Old partial telegrams must not be combined with bytes after an outage.
-    // Ageing is deliberately performed by the ADC-side consumer, not UART ISR.
+    // Old partial telegrams are released at the next ADC boundary and never
+    // replace or invalidate an established snapshot.
     reset_stream(); reset_uart();
-    feed_byte(0xc0);
-    for (unsigned scan=0; scan<=VUE3_VOLTAGE_PACKET_MAX_SCAN_SPAN; ++scan)
-        assert(!decode_vue3_voltage_packet());
-    assert(VoltagePacketBuildLength == 0 && !VoltagePacketReadyValid);
-    feed_packet();
+    feed_packet(1,2,3);
     assert(decode_vue3_voltage_packet());
-
-    // A normal telegram straddle remains valid without coupling UART parsing
-    // to the global SPI sample counter.
-    reset_stream(); reset_uart();
-    feed_byte(next_packet[0]); feed_byte(next_packet[1]);
-    for (unsigned i=2; i<6; ++i) feed_byte(next_packet[i]);
+    feed_byte(0xc0);
+    assert(decode_vue3_voltage_packet());
+    assert(VoltagePacketBuildLength == 0 && VoltageValuesValid);
+    assert(DecodedVoltage[0] == 1 && DecodedVoltage[2] == 3);
+    feed_packet(10,20,30);
     assert(decode_vue3_voltage_packet());
     assert(DecodedVoltage[0] == 10 && DecodedVoltage[2] == 30);
 }
@@ -320,6 +313,7 @@ void test_uart_clock_slip() {
             uint64_t packet_start = adc_ns * phase / 16;
             uint64_t next_byte = packet_start;
             unsigned byte = 0, frames = 0;
+            bool acquired = false;
             for (unsigned scan=0; scan<20000; ++scan) {
                 const uint64_t adc_time = uint64_t(scan + 1) * adc_ns;
                 while (next_byte <= adc_time) {
@@ -333,7 +327,10 @@ void test_uart_clock_slip() {
                 handle_adc_dma_interrupt(DMA_INT_TRANSFER_COMPLETE);
                 while (SpiReadyCount != 0) {
                     const auto &frame = SpiFrames[SpiReadyFrameIndex[SpiReadyHead]];
-                    if (frames++ != 0) {
+                    ++frames;
+                    if ((frame.header.flags & SPI_FLAG_VOLTAGE_ERROR) == 0)
+                        acquired = true;
+                    if (acquired) {
                         assert((frame.header.flags & SPI_FLAG_VOLTAGE_ERROR) == 0);
                         for (const auto &sample : frame.scans) {
                             assert(sample.value[0] == 100 && sample.value[2] == 200 && sample.value[4] == 300);
@@ -344,9 +341,14 @@ void test_uart_clock_slip() {
                 }
             }
             assert(frames > 350);
+            // With independent clocks a drifting phase must eventually provide
+            // one complete telegram. Exact simulated lock can permanently hit
+            // a boundary; actual hardware has independent oscillators.
+            if (ppm != 0)
+                assert(acquired);
         }
     }
-    std::puts("UART scan boundaries, bounded sample age and 80 asynchronous clock/phase scenarios passed");
+    std::puts("UART scan boundaries, last-known-good retention and 80 asynchronous clock/phase scenarios passed");
 }
 #endif
 
@@ -358,6 +360,7 @@ void test_adc_recovery() {
 #ifdef EMPORIAVUE_TARGET_VUE3
             reset_uart();
             feed_packet();
+            assert(decode_vue3_voltage_packet());
 #endif
             SpiBuildScanIndex = 17;
             SpiSampleCounter = 100;
@@ -386,8 +389,8 @@ void test_adc_recovery() {
             assert(!DiscardNextAdcScan && MuxCounter == 0 && DMAresultIndex == 1);
             assert(SpiBuildScanIndex == 0 && SpiSampleCounter == 100);
 #ifdef EMPORIAVUE_TARGET_VUE3
-            assert(!VoltagePacketReadyValid && VoltagePacketBuildLength == 0);
-            assert(!decode_vue3_voltage_packet()); // Pre-reset voltage is not fresh.
+            assert(VoltageValuesValid && VoltagePacketBuildLength == 0);
+            assert(decode_vue3_voltage_packet()); // Last known-good survives ADC recovery.
             feed_packet();
 #endif
             for (uint8_t channel = 0; channel < ADC_CHANNEL_COUNT; ++channel)

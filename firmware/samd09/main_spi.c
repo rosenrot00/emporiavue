@@ -335,19 +335,12 @@ volatile bool SpiTxActive = false;
 volatile bool SpiTxAwaitingComplete = false;
 
 #ifdef EMPORIAVUE_TARGET_VUE3
-// UART and ADC run on independent clocks. Match the proven stock architecture:
-// the high-rate UART ISR only fills one six-byte mailbox and leaves a complete
-// telegram untouched until the ADC handler consumes it. Unlike stock firmware,
-// preserve partial telegrams across scan boundaries and allow one bounded reuse
-// of the last validated voltages when the two clocks slip past each other.
-#define VUE3_VOLTAGE_VALID_SCAN_USES 2
-#define VUE3_VOLTAGE_PACKET_MAX_SCAN_SPAN 2
 volatile uint8_t VoltagePacketBuild[6];
 volatile uint8_t VoltagePacketBuildLength = 0;
-volatile uint8_t VoltagePacketBuildAge = 0;
 volatile bool VoltagePacketError = false;
-uint8_t VoltagePacketReadyUses = VUE3_VOLTAGE_VALID_SCAN_USES;
-bool VoltagePacketReadyValid = false;
+// Once acquired, keep the last validated voltage snapshot until a newer valid
+// UART telegram replaces it.
+bool VoltageValuesValid = false;
 int16_t DecodedVoltage[3];
 #endif
 
@@ -712,15 +705,12 @@ void irq_handler_sercom0(void)
 		return;
 	const uint8_t value = (uint8_t) REG_SERCOM0_DATA;
 
-	// A complete mailbox is owned by the ADC handler. Ignore later bytes until
-	// it has taken the snapshot, exactly as the original Vue 3 firmware does.
+	// The Vue 3 voltage controller emits fixed six-byte telegrams. The DMA
+	// completion handler consumes and resets this buffer, as in stock firmware.
 	if (VoltagePacketBuildLength > 5)
 		return;
-	if (VoltagePacketBuildLength == 0)
-	{
-		if ((value & 0xC0U) != 0xC0U)
-			return;
-	}
+	if (VoltagePacketBuildLength == 0 && (value & 0xC0U) != 0xC0U)
+		return;
 
 	VoltagePacketBuild[VoltagePacketBuildLength++] = value;
 }
@@ -728,90 +718,42 @@ void irq_handler_sercom0(void)
 static bool decode_vue3_voltage_packet(void)
 {
 	uint8_t packet[6];
-	bool have_complete_packet = false;
-	bool receive_error;
-
-	// Snapshot and release only a complete mailbox. A partial telegram remains
-	// owned by the UART producer across a bounded number of ADC scan boundaries.
+	// Take only a short snapshot with interrupts masked. Otherwise a UART
+	// error could reset and overwrite the buffer while it is being decoded.
 	const uint32_t primask = spi_enter_critical();
-	receive_error = VoltagePacketError;
-	VoltagePacketError = false;
-	if (receive_error)
-	{
-		VoltagePacketBuildLength = 0;
-		VoltagePacketBuildAge = 0;
-	}
-	else if (VoltagePacketBuildLength == 6)
+	const bool valid = VoltagePacketBuildLength == 6 && !VoltagePacketError;
+	if (valid)
 	{
 		for (uint8_t index = 0; index < 6; index++)
 			packet[index] = VoltagePacketBuild[index];
-		have_complete_packet = true;
-		VoltagePacketBuildLength = 0;
-		VoltagePacketBuildAge = 0;
 	}
-	else if (VoltagePacketBuildLength != 0)
-	{
-		if (VoltagePacketBuildAge >= VUE3_VOLTAGE_PACKET_MAX_SCAN_SPAN)
-		{
-			VoltagePacketBuildLength = 0;
-			VoltagePacketBuildAge = 0;
-			receive_error = true;
-		}
-		else
-			VoltagePacketBuildAge++;
-	}
-	else
-		VoltagePacketBuildAge = 0;
+	VoltagePacketBuildLength = 0;
+	VoltagePacketError = false;
 	spi_exit_critical(primask);
 
-	// A receive error invalidates both cached and concurrently completed data;
-	// require a subsequent clean telegram before publishing voltage again.
-	if (receive_error)
-	{
-		VoltagePacketReadyValid = false;
-		VoltagePacketReadyUses = VUE3_VOLTAGE_VALID_SCAN_USES;
-		return false;
-	}
+	if (!valid)
+		return VoltageValuesValid;
 
-	if (!have_complete_packet)
-	{
-		if (VoltagePacketReadyValid && VoltagePacketReadyUses < VUE3_VOLTAGE_VALID_SCAN_USES)
-		{
-			VoltagePacketReadyUses++;
-			return true;
-		}
-		VoltagePacketReadyValid = false;
-		return false;
-	}
-
-	// Exactly one each of phase IDs 0, 1 and 2 produces mask 0b111. This single
-	// check rejects duplicates and ID 3 before the branch-free decode loop.
-	const uint8_t phase_0 = packet[1] >> 6;
-	const uint8_t phase_1 = packet[3] >> 6;
-	const uint8_t phase_2 = packet[5] >> 6;
-	const uint8_t phase_mask = (uint8_t) ((1U << phase_0) | (1U << phase_1) | (1U << phase_2));
-	if (phase_mask != 0x07)
-	{
-		VoltagePacketReadyValid = false;
-		VoltagePacketReadyUses = VUE3_VOLTAGE_VALID_SCAN_USES;
-		return false;
-	}
-
+	uint8_t phases_seen = 0;
 	int16_t decoded[3] = {0, 0, 0};
 	for (uint8_t pair = 0; pair < 3; pair++)
 	{
 		const uint8_t first = packet[pair * 2];
 		const uint8_t second = packet[pair * 2 + 1];
 		const uint8_t phase = second >> 6;
+		if (phase >= 3 || (phases_seen & (1U << phase)) != 0)
+			return VoltageValuesValid;
 		int16_t value = (int16_t) ((((uint16_t) first & 0x3FU) << 6) | (second & 0x3FU));
 		if ((value & 0x0800) != 0)
 			value = (int16_t) (value | 0xF000);
 		decoded[phase] = value;
+		phases_seen |= (uint8_t) (1U << phase);
 	}
+	if (phases_seen != 0x07)
+		return VoltageValuesValid;
 	for (uint8_t phase = 0; phase < 3; phase++)
 		DecodedVoltage[phase] = decoded[phase];
-	VoltagePacketReadyValid = true;
-	VoltagePacketReadyUses = 1;
+	VoltageValuesValid = true;
 	return true;
 }
 #endif
@@ -860,17 +802,6 @@ static void recover_adc_scan(void)
 
 	SpiBuildScanIndex = 0;
 	DiscardNextAdcScan = true;
-#ifdef EMPORIAVUE_TARGET_VUE3
-	// The scan counter stopped during recovery, so cached ages no longer
-	// represent elapsed time. Resume only with a newly completed telegram.
-	const uint32_t primask = spi_enter_critical();
-	VoltagePacketBuildLength = 0;
-	VoltagePacketBuildAge = 0;
-	VoltagePacketError = false;
-	VoltagePacketReadyValid = false;
-	VoltagePacketReadyUses = VUE3_VOLTAGE_VALID_SCAN_USES;
-	spi_exit_critical(primask);
-#endif
 	enable_adc_dma();
 
 	REG_ADC_CTRLA |= 2;
