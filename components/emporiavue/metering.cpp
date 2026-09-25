@@ -946,7 +946,6 @@ void EmporiaVueComponent::update_line_detection_(const MeteringFrame &frame, Met
       max_delta_score = std::max(max_delta_score, std::fabs(delta_scores[index]));
     }
     const float current_change = average_current - reference_current;
-    const float minimum_current_change = std::max(0.01f, std::max(reference_current, average_current) * 0.05f);
 
     // Keep a bounded reference so a slow ramp can accumulate above power_min.
     // A rolling ten-second reference would erase every sub-threshold step.
@@ -971,9 +970,6 @@ void EmporiaVueComponent::update_line_detection_(const MeteringFrame &frame, Met
       return 0;
     }
     const bool transition_expired = (now - detection.get_transition_start_ms()) >= 120000U;
-    // RMS magnitude can confirm a change, but its direction must never choose
-    // the line: reactive power and distortion can change it independently.
-    const bool current_changed = std::fabs(current_change) >= minimum_current_change;
     const float configured_direction = export_direction ? -1.0f : 1.0f;
     // A measured split-phase pair is the exception: the other reference is
     // the same waveform with opposite polarity, not an independent alternative.
@@ -1019,17 +1015,10 @@ void EmporiaVueComponent::update_line_detection_(const MeteringFrame &frame, Met
       state = str_sprintf("ambiguous L%u/L%u", static_cast<unsigned>(std::min(before_line, after_line)),
                           static_cast<unsigned>(std::max(before_line, after_line)));
     } else if (endpoint_line != 0) {
-      // Distortion can mask a genuine load change in total RMS current.
-      // Without RMS confirmation, require BOTH a strongly aligned endpoint
-      // and an aligned correlation change on the SAME line. A phase rotation
-      // at constant current is not sufficient evidence on its own.
-      auto oriented_delta = delta_scores;
-      const float direction = delta_scores[endpoint_line - 1] * configured_direction >= 0.0f ? 1.0f : -1.0f;
-      for (auto &score : oriented_delta) {
-        score *= direction;
-      }
-      const bool change_confirmed = current_changed || aligned_endpoint(oriented_delta) == endpoint_line;
-      detected_line = change_confirmed && std::fabs(delta_scores[endpoint_line - 1]) >= power_min ? endpoint_line : 0;
+      // The endpoint identifies the line; the delta only establishes that a
+      // sufficiently large change occurred on it. Reactive-to-active transitions
+      // need neither a change in total RMS nor an aligned delta phasor.
+      detected_line = std::fabs(delta_scores[endpoint_line - 1]) >= power_min ? endpoint_line : 0;
     }
 
     uint8_t stable_line = 0;

@@ -134,7 +134,27 @@ int main() {
     assert(reactive_standby.ct.selected==0);
     Fixture rotated(exported); rotated.window(direction*230,0,1,line);
     rotated.hold(0,direction*230,1,14,line);
-    assert(rotated.ct.selected==0);
+    // The earlier active endpoint already provides an unambiguous line;
+    // unchanged RMS must not veto a subsequent change to reactive operation.
+    assert(rotated.ct.selected==line);
+    for(auto transport : {MeteringTransport::I2C,MeteringTransport::SPI}) {
+      Fixture observed(exported); observed.frame.transport=transport;
+      observed.window(direction*19,-direction*112,170.f/230.f,line);
+      observed.window(direction*100,direction*5,164.f/230.f,line);
+      assert(observed.ct.selected==0);
+      observed.window(direction*100,direction*5,164.f/230.f,line);
+      assert(observed.ct.selected==0 && observed.ct.sensor.state=="L"+std::to_string(line)+" weak");
+      observed.window(direction*100,direction*5,164.f/230.f,line);
+      assert(observed.ct.selected==line && observed.ct.assignments==1);
+      observed.hold(direction*100,direction*5,164.f/230.f,7,line);
+      observed.hold(direction*19,-direction*112,170.f/230.f,14,line);
+      assert(observed.ct.selected==line && observed.ct.assignments==1);
+      assert(observed.ct.sensor.state=="L"+std::to_string(line));
+      Fixture equal_rms(exported); equal_rms.frame.transport=transport;
+      equal_rms.window(direction*19,-direction*112,0.75f,line);
+      equal_rms.hold(direction*100,direction*5,0.75f,4,line);
+      assert(equal_rms.ct.selected==line);
+    }
   }
   Fixture idle; idle.hold(0,0,0,20); assert(idle.ct.selected==0);
   Fixture unchanged; unchanged.hold(230,0,1,20); assert(unchanged.ct.selected==0);
@@ -146,7 +166,7 @@ int main() {
   for(int p=20;p<=100;p+=20) ramp.window(p,0,p/230.f);
   ramp.hold(100,0,100.f/230.f); assert(ramp.ct.selected==1);
   Fixture rotation; rotation.window(230,0,1);
-  rotation.hold(0,230,1,6); assert(rotation.ct.selected==0);
+  rotation.hold(0,230,1,6); assert(rotation.ct.selected==1);
   Fixture boundary; boundary.window(0,0,0);
   boundary.hold(115,199.186f,1,6); assert(boundary.ct.selected==0);
   Fixture contradictory; contradictory.window(230,0,1,1);
