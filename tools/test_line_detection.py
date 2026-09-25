@@ -88,8 +88,8 @@ struct Fixture {
 """
     tests = r"""
 int main() {
-  // Regression coverage for the pre-September-25 detector, not the reverted
-  // endpoint-alignment heuristic. The original limitations are unchanged.
+  // Keep the original scoring and transition behavior; only the reported
+  // result is retained after confirmation until another line is confirmed.
   for (auto transport : {MeteringTransport::I2C,MeteringTransport::SPI})
   for (bool exported : {false,true}) for (uint8_t line : {1,2,3}) {
     const float direction=exported ? -1.f : 1.f;
@@ -119,6 +119,32 @@ int main() {
     for(auto &phase : diagnostic.frame.phases) phase.voltage_fundamental_valid=false;
     diagnostic.window(0,0,0,line); diagnostic.hold(direction*230,0,1,4,line);
     assert(diagnostic.ct.selected==0 && diagnostic.ct.sensor.state=="L"+std::to_string(line));
+
+    // An ambiguous new change must not erase a previously confirmed line.
+    diagnostic.hold(direction*380,direction*210,2,6,line);
+    assert(diagnostic.ct.sensor.state=="L"+std::to_string(line));
+    assert(diagnostic.ct.diagnostic.get_confirmed_line()==line);
+    assert(!diagnostic.ct.diagnostic.is_transition_active());
+    // A constant-RMS change can also be inconclusive ("ambiguous change").
+    diagnostic.hold(direction*480,direction*210,2,6,line);
+    assert(diagnostic.ct.sensor.state=="L"+std::to_string(line));
+
+    Fixture replacement(exported); replacement.frame.transport=transport;
+    replacement.window(0,0,0,line); replacement.hold(direction*230,0,1,4,line);
+    replacement.hold(0,0,0,4,line);
+    const uint8_t other_line=line%3+1;
+    replacement.window(direction*300,0,1.5f,other_line);
+    assert(replacement.ct.sensor.state=="L"+std::to_string(line));
+    replacement.window(direction*300,0,1.5f,other_line);
+    assert(replacement.ct.sensor.state=="L"+std::to_string(line));
+    replacement.window(direction*300,0,1.5f,other_line);
+    assert(replacement.ct.sensor.state=="L"+std::to_string(other_line));
+    // The diagnostic never overwrites an already completed auto assignment.
+    assert(replacement.ct.selected==line && replacement.ct.assignments==1);
+    replacement.ct.diagnostic.reset_all();
+    replacement.window(direction*300,0,1.5f,other_line);
+    assert(replacement.ct.diagnostic.get_confirmed_line()==0);
+    assert(replacement.ct.sensor.state=="waiting for change");
   }
   Fixture idle; idle.hold(0,0,0,20); assert(idle.ct.selected==0);
   Fixture unchanged; unchanged.hold(230,0,1,20);
@@ -138,7 +164,7 @@ int main() {
     split.hold(exported ? -50.f : 50.f,0,0.25f,4,line);
     assert(split.ct.selected==line);
   }
-  std::puts("PASS restored line detection: import/export, I2C/SPI, all lines, positive runner-up ratio, PF=.8, start/stop, diagnostic-only, original transition behavior");
+  std::puts("PASS line detection: original scoring, import/export, I2C/SPI, all lines, retained confirmation, three-window replacement, reset and independent auto assignment");
 }
 """
     compile_run(PRELUDE + state + frames + mocks + body + tests)

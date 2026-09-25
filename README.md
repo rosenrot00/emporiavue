@@ -608,8 +608,10 @@ has occurred. `ambiguous change` means the current changed but not in a way that
 `ambiguous L2/L3` means the direction or phase displacement is still too close to a decision boundary. `L3 weak` is a
 preliminary result. A stable result needs three consecutive update windows, so with the defaults the new state should
 remain steady for about 30 seconds. If the result is `L3`, set that circuit to `line: 3` (`L1` means `line: 1`, and so
-on). The result remains visible while the detector quietly re-arms at the new operating point. An unresolved transition
-is reported once and also becomes the new reference, rather than being evaluated repeatedly. The detector intentionally
+on). Once confirmed, the last detected line remains visible through later weak or ambiguous transitions. A different
+line replaces it only after three consecutive confirming windows. This is the last confirmed result, not a live
+confidence indication; it resets when detection is restarted. Until the first confirmation, unresolved transitions
+are reported once. Each completed attempt becomes the new reference, rather than being evaluated repeatedly. The detector intentionally
 waits for the next real change instead of guessing. After assigning the line, you can remove `line_detection:` if you no
 longer want the visible diagnostic; automatic assignment is controlled only by `line`.
 

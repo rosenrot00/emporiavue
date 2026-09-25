@@ -877,8 +877,16 @@ void EmporiaVueComponent::update_line_detection_(const MeteringFrame &frame, Met
     const float average_current = detection.get_current_sum() / divisor;
 
     auto publish_detection_state = [&](const std::string &state) {
-      if (sensor != nullptr && (!sensor->has_state() || sensor->state != state)) {
-        sensor->publish_state(state);
+      if (sensor == nullptr) {
+        return;
+      }
+      // Report the last confirmed result, not the latest inconclusive attempt.
+      // Transition evaluation and verbose diagnostics continue independently.
+      const uint8_t confirmed_line = detection.get_confirmed_line();
+      const std::string reported_state =
+          confirmed_line != 0 ? str_sprintf("L%u", static_cast<unsigned>(confirmed_line)) : state;
+      if (!sensor->has_state() || sensor->state != reported_state) {
+        sensor->publish_state(reported_state);
       }
     };
 
@@ -1004,6 +1012,7 @@ void EmporiaVueComponent::update_line_detection_(const MeteringFrame &frame, Met
       state = str_sprintf("L%u weak", static_cast<unsigned>(detected_line));
       if (candidate_windows >= 3) {
         stable_line = detected_line;
+        detection.set_confirmed_line(stable_line);
         state = str_sprintf("L%u", static_cast<unsigned>(detected_line));
         publish_detection_state(state);
         detection.set_reference(average_scores, average_current);

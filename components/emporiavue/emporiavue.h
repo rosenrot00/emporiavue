@@ -1264,6 +1264,7 @@ class MeteringLineDetectionState {
     this->reset_reference();
     this->reset_transition();
     this->window_start_ms_ = 0;
+    this->confirmed_line_ = 0;
   }
   void add_score(uint8_t line, float score) {
     if (line >= 1 && line <= 3) {
@@ -1317,6 +1318,8 @@ class MeteringLineDetectionState {
   }
   void set_window_start_ms(uint32_t value) { this->window_start_ms_ = value; }
   uint32_t get_window_start_ms() const { return this->window_start_ms_; }
+  void set_confirmed_line(uint8_t line) { this->confirmed_line_ = line; }
+  uint8_t get_confirmed_line() const { return this->confirmed_line_; }
 
  protected:
   std::array<float, 3> scores_{0.0f, 0.0f, 0.0f};
@@ -1331,6 +1334,7 @@ class MeteringLineDetectionState {
   uint8_t transition_windows_{0};
   uint8_t candidate_line_{0};
   uint8_t candidate_windows_{0};
+  uint8_t confirmed_line_{0};
 };
 
 class MeteringCTClampConfig {
