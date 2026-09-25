@@ -1027,6 +1027,7 @@ class EmporiaVueComponent : public Component
   uint8_t spi_main_current_delay_{2};
   uint8_t spi_mux_current_delay_{4};
   uint32_t spi_current_fundamental_mask_{0};
+  uint32_t spi_current_peak_mask_{0};
   uint8_t spi_voltage_thd_mask_{0};
   uint8_t spi_power_voltage_mask_[19]{};
   bool spi_waveform_analysis_required_{false};
@@ -1255,7 +1256,6 @@ class MeteringLineDetectionState {
   void reset_transition() {
     this->reset_stability();
     this->transition_active_ = false;
-    this->transition_current_confirmed_ = false;
     this->transition_windows_ = 0;
   }
   void reset_all() {
@@ -1263,6 +1263,7 @@ class MeteringLineDetectionState {
     this->reset_reference();
     this->reset_transition();
     this->window_start_ms_ = 0;
+    this->previous_valid_ = false;
   }
   void add_score(uint8_t line, float score) {
     if (line >= 1 && line <= 3) {
@@ -1277,22 +1278,35 @@ class MeteringLineDetectionState {
   bool has_reference() const { return this->reference_valid_; }
   const std::array<float, 3> &get_reference_scores() const { return this->reference_scores_; }
   float get_reference_current() const { return this->reference_current_; }
-  void set_reference(const std::array<float, 3> &scores, float current) {
+  void set_reference(const std::array<float, 3> &scores, float current, uint32_t now_ms) {
     this->reference_scores_ = scores;
     this->reference_current_ = current;
     this->reference_valid_ = true;
+    this->reference_start_ms_ = now_ms;
   }
-  void start_transition() {
+  uint32_t get_reference_start_ms() const { return this->reference_start_ms_; }
+  bool observe_operating_point(const std::array<float, 3> &scores, float current, float power_min) {
+    bool settled = this->previous_valid_;
+    for (uint8_t index = 0; index < 3; index++) {
+      const float tolerance = std::max(power_min * 0.25f, std::fabs(scores[index]) * 0.05f);
+      settled &= std::fabs(scores[index] - this->previous_scores_[index]) <= tolerance;
+    }
+    settled &= std::fabs(current - this->previous_current_) <= std::max(0.01f, current * 0.05f);
+    this->previous_scores_ = scores;
+    this->previous_current_ = current;
+    this->previous_valid_ = true;
+    return settled;
+  }
+  void start_transition(uint32_t now_ms) {
     if (!this->transition_active_) {
       this->reset_stability();
       this->transition_active_ = true;
-      this->transition_current_confirmed_ = false;
       this->transition_windows_ = 0;
+      this->transition_start_ms_ = now_ms;
     }
   }
+  uint32_t get_transition_start_ms() const { return this->transition_start_ms_; }
   bool is_transition_active() const { return this->transition_active_; }
-  void confirm_transition_current() { this->transition_current_confirmed_ = true; }
-  bool is_transition_current_confirmed() const { return this->transition_current_confirmed_; }
   uint8_t increment_transition_windows() {
     if (this->transition_windows_ < UINT8_MAX) {
       this->transition_windows_++;
@@ -1320,13 +1334,17 @@ class MeteringLineDetectionState {
  protected:
   std::array<float, 3> scores_{0.0f, 0.0f, 0.0f};
   std::array<float, 3> reference_scores_{0.0f, 0.0f, 0.0f};
+  std::array<float, 3> previous_scores_{0.0f, 0.0f, 0.0f};
+  float previous_current_{0.0f};
+  uint32_t reference_start_ms_{0};
+  uint32_t transition_start_ms_{0};
+  bool previous_valid_{false};
   float current_sum_{0.0f};
   float reference_current_{0.0f};
   uint32_t samples_{0};
   uint32_t window_start_ms_{0};
   bool reference_valid_{false};
   bool transition_active_{false};
-  bool transition_current_confirmed_{false};
   uint8_t transition_windows_{0};
   uint8_t candidate_line_{0};
   uint8_t candidate_windows_{0};
@@ -1365,7 +1383,13 @@ class MeteringCTClampConfig {
     }
   }
   float get_current_gain() const { return this->current_gain_; }
-  void set_current_phase_correction(float degrees) { this->current_phase_correction_degrees_ = degrees; }
+  void set_current_phase_correction(float degrees) {
+    if (std::fabs(this->current_phase_correction_degrees_ - degrees) > 0.000001f) {
+      this->current_phase_correction_degrees_ = degrees;
+      this->line_detection_state_.reset_all();
+      this->auto_line_detection_state_.reset_all();
+    }
+  }
   float get_current_phase_correction() const { return this->current_phase_correction_degrees_; }
   void set_current_gain_number(MeteringCurrentGainNumber *number) { this->current_gain_number_ = number; }
   MeteringCurrentGainNumber *get_current_gain_number() const { return this->current_gain_number_; }

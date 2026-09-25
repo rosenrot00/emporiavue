@@ -817,6 +817,26 @@ void EmporiaVueComponent::update_line_detection_(const MeteringFrame &frame, Met
 
   const float correction_factor = port < 3 ? 5.5f : 22.0f;
   std::array<float, 3> sample_scores{0.0f, 0.0f, 0.0f};
+  const float current_scalar = port < 3 ? (775.0f / 42624.0f) : (775.0f / 170496.0f);
+  const bool phase_correction_required =
+      frame.transport == MeteringTransport::SPI && ct_clamp->get_current_phase_correction() != 0.0f;
+  float current_adjustment_i = 0.0f;
+  float current_adjustment_q = 0.0f;
+  if (phase_correction_required) {
+    if (!frame.clamps[port].current_fundamental_valid) {
+      ct_clamp->get_line_detection_state().reset_all();
+      ct_clamp->get_auto_line_detection_state().reset_all();
+      return;
+    }
+    const float angle = ct_clamp->get_current_phase_correction() * 3.14159265358979323846f / 180.0f;
+    const float cosine = std::cos(angle);
+    const float sine = std::sin(angle);
+    const float scalar = current_scalar * ct_clamp->get_current_gain();
+    const float i = frame.clamps[port].current_fundamental_i_raw * scalar;
+    const float q = frame.clamps[port].current_fundamental_q_raw * scalar;
+    current_adjustment_i = i * (cosine - 1.0f) - q * sine;
+    current_adjustment_q = i * sine + q * (cosine - 1.0f);
+  }
   uint8_t valid_line_mask = 0;
   uint8_t valid_candidates = 0;
   for (const auto &candidate : candidates) {
@@ -830,14 +850,28 @@ void EmporiaVueComponent::update_line_detection_(const MeteringFrame &frame, Met
     const int32_t raw_power = frame.clamps[port].power_raw_by_phase[input];
     sample_scores[candidate.line - 1] = raw_power * candidate.phase->get_calibration() /
                                         correction_factor * ct_clamp->get_current_gain();
+    if (phase_correction_required) {
+      const auto &voltage = frame.phases[input];
+      if (!voltage.voltage_fundamental_valid) {
+        ct_clamp->get_line_detection_state().reset_all();
+        ct_clamp->get_auto_line_detection_state().reset_all();
+        return;
+      }
+      // Match normal power calibration while retaining measured harmonic power.
+      // This also works before an automatic circuit has an assigned phase.
+      sample_scores[candidate.line - 1] += candidate.phase->get_calibration() *
+          (voltage.voltage_fundamental_i_raw * current_adjustment_i +
+           voltage.voltage_fundamental_q_raw * current_adjustment_q);
+    }
     valid_line_mask |= static_cast<uint8_t>(1U << (candidate.line - 1));
     valid_candidates++;
   }
-  if (valid_candidates < 2) {
+  if (valid_candidates < 2 || valid_candidates != candidates.size()) {
+    ct_clamp->get_line_detection_state().reset_all();
+    ct_clamp->get_auto_line_detection_state().reset_all();
     return;
   }
 
-  const float current_scalar = port < 3 ? (775.0f / 42624.0f) : (775.0f / 170496.0f);
   const float sample_current = frame.clamps[port].current_raw * current_scalar * ct_clamp->get_current_gain();
   const uint32_t now = millis();
 
@@ -875,6 +909,7 @@ void EmporiaVueComponent::update_line_detection_(const MeteringFrame &frame, Met
       }
     }
     const float average_current = detection.get_current_sum() / divisor;
+    const bool settled = detection.observe_operating_point(average_scores, average_current, power_min);
 
     auto publish_detection_state = [&](const std::string &state) {
       if (sensor != nullptr && (!sensor->has_state() || sensor->state != state)) {
@@ -884,7 +919,7 @@ void EmporiaVueComponent::update_line_detection_(const MeteringFrame &frame, Met
 
     std::string state;
     if (!detection.has_reference()) {
-      detection.set_reference(average_scores, average_current);
+      detection.set_reference(average_scores, average_current, now);
       detection.reset_transition();
       state = "waiting for change";
       publish_detection_state(state);
@@ -914,39 +949,40 @@ void EmporiaVueComponent::update_line_detection_(const MeteringFrame &frame, Met
     const float current_change = average_current - reference_current;
     const float minimum_current_change = std::max(0.01f, std::max(reference_current, average_current) * 0.05f);
 
-    // A detector is armed against the most recent stable operating point. Once
-    // a change starts, retain that reference until the event either produces a
-    // stable line or expires as ambiguous. This prevents a single old startup
-    // reference from being evaluated forever while still allowing both rising
-    // and falling load transitions.
+    // Keep a bounded reference so a slow ramp can accumulate above power_min.
+    // A rolling ten-second reference would erase every sub-threshold step.
+    const bool reference_expired = (now - detection.get_reference_start_ms()) >= 120000U;
     if (!detection.is_transition_active()) {
       if (max_delta_score < power_min) {
-        detection.set_reference(average_scores, average_current);
+        if (reference_expired) {
+          detection.set_reference(average_scores, average_current, now);
+        }
         detection.reset_window();
         detection.set_window_start_ms(now);
         return 0;
       }
-      detection.start_transition();
+      detection.start_transition(now);
     } else if (max_delta_score < power_min * 0.75f) {
       // The transition returned close to its reference before it was stable.
       // Re-arm quietly at the current operating point.
-      detection.set_reference(average_scores, average_current);
+      detection.set_reference(average_scores, average_current, now);
       detection.reset_transition();
       detection.reset_window();
       detection.set_window_start_ms(now);
       return 0;
     }
     const uint8_t transition_windows = detection.increment_transition_windows();
-    if (std::fabs(current_change) >= minimum_current_change) {
-      detection.confirm_transition_current();
-    }
+    const bool transition_expired = (now - detection.get_transition_start_ms()) >= 120000U;
+    // Current confirmation must still hold in each accepted window. A single
+    // earlier fluctuation is not evidence for the rest of an event.
+    const bool current_changed = std::fabs(current_change) >= minimum_current_change;
 
     uint8_t detected_line = 0;
     uint8_t best_line = 0;
     uint8_t second_line = 0;
     float best_score = -std::numeric_limits<float>::infinity();
     float second_score = -std::numeric_limits<float>::infinity();
-    if (!detection.is_transition_current_confirmed()) {
+    if (!current_changed) {
       // A rotating current phasor can create a large correlation delta without
       // a real load transition. It cannot safely identify a physical line.
       state = "ambiguous change";
@@ -980,6 +1016,40 @@ void EmporiaVueComponent::update_line_detection_(const MeteringFrame &frame, Met
       if (best_line != 0 && best_score >= power_min && confident) {
         detected_line = best_line;
       }
+
+      // A strongly aligned endpoint is useful when reactive standby current
+      // makes RMS fall while active consumption rises (or vice versa). Require
+      // dominance over BOTH signed and opposite-polarity alternatives here.
+      // Ordinary moderate-PF transitions keep the signed-delta criterion above.
+      auto aligned_endpoint = [&](const std::array<float, 3> &values) -> uint8_t {
+        uint8_t line = 0;
+        float best = 0.0f;
+        float other = 0.0f;
+        for (uint8_t candidate = 1; candidate <= 3; candidate++) {
+          if ((valid_line_mask & (1U << (candidate - 1))) == 0) {
+            continue;
+          }
+          const float score = values[candidate - 1] * configured_direction;
+          if (score > best) {
+            other = std::max(other, best);
+            best = score;
+            line = candidate;
+          } else {
+            other = std::max(other, std::fabs(score));
+          }
+        }
+        return best >= power_min && best > other * this->line_detection_confidence_ratio_ ? line : 0;
+      };
+      const uint8_t before_line = aligned_endpoint(reference_scores);
+      const uint8_t after_line = aligned_endpoint(average_scores);
+      const uint8_t endpoint_line = after_line != 0 ? after_line : before_line;
+      if (before_line != 0 && after_line != 0 && before_line != after_line) {
+        detected_line = 0;
+      } else if (endpoint_line != 0) {
+        // Endpoint agreement avoids using RMS magnitude as a proxy for the
+        // direction of active power. Still require a real power and RMS change.
+        detected_line = std::fabs(delta_scores[endpoint_line - 1]) >= power_min ? endpoint_line : 0;
+      }
       if (detected_line == 0) {
         const uint8_t first_line = std::min(best_line, second_line);
         const uint8_t last_line = std::max(best_line, second_line);
@@ -989,14 +1059,17 @@ void EmporiaVueComponent::update_line_detection_(const MeteringFrame &frame, Met
     }
 
     uint8_t stable_line = 0;
-    if (detected_line == 0) {
+    if (detected_line == 0 || !settled) {
       detection.reset_stability();
       // Do not expose every small ranking or current-threshold fluctuation.
       // After a bounded observation period, publish one canonical result and
       // use the new stable operating point as the next reference.
-      if (transition_windows >= 5) {
+      if ((settled && transition_windows >= 5) || transition_expired) {
+        if (!settled) {
+          state = "ambiguous change";
+        }
         publish_detection_state(state);
-        detection.set_reference(average_scores, average_current);
+        detection.set_reference(average_scores, average_current, now);
         detection.reset_transition();
       }
     } else {
@@ -1006,15 +1079,15 @@ void EmporiaVueComponent::update_line_detection_(const MeteringFrame &frame, Met
         stable_line = detected_line;
         state = str_sprintf("L%u", static_cast<unsigned>(detected_line));
         publish_detection_state(state);
-        detection.set_reference(average_scores, average_current);
+        detection.set_reference(average_scores, average_current, now);
         detection.reset_transition();
-      } else if (transition_windows >= 5) {
+      } else if (transition_expired) {
         const uint8_t first_line = std::min(best_line, second_line);
         const uint8_t last_line = std::max(best_line, second_line);
         state = str_sprintf("ambiguous L%u/L%u", static_cast<unsigned>(first_line),
                            static_cast<unsigned>(last_line));
         publish_detection_state(state);
-        detection.set_reference(average_scores, average_current);
+        detection.set_reference(average_scores, average_current, now);
         detection.reset_transition();
       } else if (candidate_windows >= 2) {
         publish_detection_state(state);
@@ -1153,14 +1226,18 @@ void EmporiaVueComponent::publish_metering_frame_(const MeteringFrame &frame) {
     if (ct_clamp->has_peak_analysis() && frame.transport == MeteringTransport::SPI && measurement.has_current &&
         frame.clamps[port].current_peak_valid) {
       const float current_scalar = port < 3 ? (775.0f / 42624.0f) : (775.0f / 170496.0f);
-      float current_peak = frame.clamps[port].current_peak_raw * current_scalar * ct_clamp->get_current_gain();
+      const float current_peak =
+          frame.clamps[port].current_peak_raw * current_scalar * ct_clamp->get_current_gain();
       float current_crest_factor = unavailable;
-      if (measurement.current >= this->minimum_fundamental_current_ && measurement.current > 0.0f) {
+      float valid_current_peak = unavailable;
+      // A sampled peak cannot be below RMS. Treat that physically
+      // inconsistent result, and noise-only current, as unavailable.
+      if (measurement.current >= this->minimum_fundamental_current_ && measurement.current > 0.0f &&
+          current_peak >= measurement.current) {
+        valid_current_peak = current_peak;
         current_crest_factor = current_peak / measurement.current;
-      } else {
-        current_peak = 0.0f;
       }
-      ct_clamp->add_peak_sample(current_peak, current_crest_factor, demand_now_ms);
+      ct_clamp->add_peak_sample(valid_current_peak, current_crest_factor, demand_now_ms);
     } else if (ct_clamp->has_peak_analysis()) {
       ct_clamp->invalidate_peak(demand_now_ms);
     }

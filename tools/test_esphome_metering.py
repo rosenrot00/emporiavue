@@ -120,8 +120,10 @@ int main() {
     MeteringPhaseConfig phases[3]{{0},{1},{2}};
     for (auto &p: phases) c.metering_phases_.push_back(&p);
     for (auto &mask : c.spi_power_voltage_mask_) mask = 7;
+    c.spi_current_peak_mask_=7;
     const float rate = 16000000.f/(hw == 2 ? 632.f : 816.f);
     uint32_t counter = 0, sequence = 0;
+    bool narrow_pulses = false;
     auto feed = [&](float seconds, bool drop_reference) {
       for (unsigned f = 0; f < static_cast<unsigned>(seconds*rate/56); ++f) {
         uint8_t frame[1024]{};
@@ -131,6 +133,8 @@ int main() {
             double angle = (counter+s)*2.*3.141592653589793*50/rate-p*2.*3.141592653589793/3.;
             int16_t v = drop_reference && p==0 ? 0 : std::lround(1000.*std::sin(angle));
             int16_t i = std::lround(-200.*std::sin(angle));
+            if (narrow_pulses && (counter+s)%1000==0) i=2000;
+            if (narrow_pulses && (counter+s)%1000==500) i=-2000;
             data[p*4]=v&255; data[p*4+1]=(v>>8)&255;
             data[p*4+2]=i&255; data[p*4+3]=(i>>8)&255;
           }
@@ -143,11 +147,13 @@ int main() {
         counter+=56;
       }
     };
-    feed(1.6,false);
+    feed(2.8,false);
     assert(!c.output.empty());
     if (interval == UINT32_MAX) assert(c.spi_metering_target_samples_() == SPI_MAX_METERING_SAMPLES);
     const auto normal = c.output.back().phases[1].voltage_raw;
     assert(std::abs(int(normal)-7070)<5);
+    assert(c.output.back().clamps[1].current_peak_valid);
+    assert(std::abs(int(c.output.back().clamps[1].current_peak_raw)-2000)<10);
     for (int repeat=0;repeat<3;++repeat) {
       auto before = c.output.size();
       feed(4.0,true); // Raw packets continue normally; only reference crossings disappear.
@@ -159,6 +165,11 @@ int main() {
         assert(std::abs(int(c.output[n].phases[1].voltage_raw)-int(normal))<10);
       }
     }
+    narrow_pulses=true;
+    feed(2.8,false);
+    // The complete decoding/metering path must retain isolated samples too.
+    assert(c.output.back().clamps[1].current_peak_valid);
+    assert(c.output.back().clamps[1].current_peak_raw>19000);
     std::printf("PASS Vue %u SPI: bounded windows and clean recovery (interval=%u)\n",hw,interval);
   }
 }
@@ -316,6 +327,112 @@ int main() {
 """
     compile_run(PRELUDE + mocks + constants + "\nclass EmporiaVueComponent {public:\n" +
                 frame + fields + methods + "};\n" + status + handoff + tests)
+
+
+def test_current_peak_preservation():
+    start = SPI.index("static void update_current_extrema")
+    end = SPI.index("void EmporiaVueComponent::publish_spi_diagnostics_", start)
+    helpers = SPI[start:end]
+    accumulator = r"""
+struct Accumulator {
+  int16_t current_min_raw[19]{};
+  int16_t current_max_raw[19]{};
+  bool current_extrema_valid[19]{};
+};
+"""
+    tests = r"""
+int main() {
+  Accumulator acc;
+  for (unsigned sample=0; sample<100; ++sample) {
+    const float angle=sample*2.f*3.14159265358979323846f/100.f;
+    const int16_t value=std::lround(200.f*std::sin(angle));
+    update_current_extrema(acc.current_min_raw,acc.current_max_raw,acc.current_extrema_valid,0,value);
+  }
+  assert(acc.current_extrema_valid[0]);
+  assert(acc.current_max_raw[0]==200);
+  assert(acc.current_min_raw[0]==-200);
+  assert(!acc.current_extrema_valid[1]);
+
+  // One- and two-sample peaks must survive, independent of channel, polarity,
+  // offset and position in the metering window (including its boundaries).
+  for (uint8_t channel : {0,2,3,18}) for (int polarity : {-1,1})
+      for (int width : {1,2,3}) for (int position : {0,41,97}) {
+    Accumulator pulse;
+    for (int sample=0;sample<100;sample++) {
+      const int16_t value=123+(sample>=position && sample<position+width ? polarity*2000 : 0);
+      update_current_extrema(pulse.current_min_raw,pulse.current_max_raw,pulse.current_extrema_valid,channel,value);
+    }
+    assert(pulse.current_extrema_valid[channel]);
+    assert(pulse.current_max_raw[channel]==(polarity>0 ? 2123 : 123));
+    assert(pulse.current_min_raw[channel]==(polarity<0 ? -1877 : 123));
+  }
+  Accumulator limits;
+  for (int16_t value : {INT16_MIN,INT16_MAX})
+    update_current_extrema(limits.current_min_raw,limits.current_max_raw,limits.current_extrema_valid,0,value);
+  assert(limits.current_min_raw[0]==INT16_MIN && limits.current_max_raw[0]==INT16_MAX);
+  limits=Accumulator{};
+  assert(!limits.current_extrema_valid[0]);
+  std::puts("PASS current peak: sine, narrow pulses, polarity, offsets, window edges and ADC limits");
+}
+"""
+    compile_run(PRELUDE + helpers + accumulator + tests)
+
+
+def test_fundamental_analysis_math():
+    body = function(METERING, "EmporiaVueComponent::calculate_ct_fundamental_analysis_")
+    declaration = body[:body.index("{")].replace("EmporiaVueComponent::", "").rstrip() + ";"
+    mocks = r"""
+namespace sensor {struct Sensor {};}
+struct MeteringFrame {MeteringTransport transport{MeteringTransport::SPI};};
+struct MeteringCTMeasurement {
+  bool has_current{false}; float current{0}; bool has_fundamental_analysis{false};
+  float fundamental_current{0}, fundamental_reactive_power{0};
+  float fundamental_power_factor{NAN}, displacement_angle{NAN}, current_thd{NAN};
+};
+struct MeteringCTClampConfig {
+  sensor::Sensor reactive, factor, angle, thd;
+  bool want_reactive{true}, want_factor{true}, want_angle{true}, want_thd{true};
+  sensor::Sensor *get_fundamental_reactive_power_sensor() const {return want_reactive ? const_cast<sensor::Sensor*>(&reactive) : nullptr;}
+  sensor::Sensor *get_fundamental_power_factor_sensor() const {return want_factor ? const_cast<sensor::Sensor*>(&factor) : nullptr;}
+  sensor::Sensor *get_displacement_angle_sensor() const {return want_angle ? const_cast<sensor::Sensor*>(&angle) : nullptr;}
+  sensor::Sensor *get_current_thd_sensor() const {return want_thd ? const_cast<sensor::Sensor*>(&thd) : nullptr;}
+};
+class EmporiaVueComponent {public:
+  float minimum_fundamental_current_{0.02f};
+  float vi{230}, vq{0}, ci{0}, cq{0}; bool phasors_valid{true};
+  bool calculate_ct_fundamental_phasors_(const MeteringFrame&,const MeteringCTClampConfig*,float *out_vi,
+                                         float *out_vq,float *out_ci,float *out_cq,bool) const {
+    if (!phasors_valid) return false;
+    *out_vi=vi; *out_vq=vq; *out_ci=ci; *out_cq=cq; return true;
+  }
+""" + declaration + "\n};\n"
+    tests = r"""
+int main() {
+  EmporiaVueComponent c; MeteringFrame frame; MeteringCTClampConfig ct; MeteringCTMeasurement m;
+  const float angle=30.f*3.14159265358979323846f/180.f;
+  c.ci=2.f*std::cos(angle); c.cq=2.f*std::sin(angle);
+  m.has_current=true; m.current=2.5f;
+  assert(c.calculate_ct_fundamental_analysis_(frame,&ct,&m));
+  assert(std::fabs(m.fundamental_current-2.f)<1e-5f);
+  assert(std::fabs(m.fundamental_reactive_power-230.f)<1e-3f);
+  assert(std::fabs(m.fundamental_power_factor-std::cos(angle))<1e-5f);
+  assert(std::fabs(m.displacement_angle-30.f)<1e-4f);
+  assert(std::fabs(m.current_thd-75.f)<1e-4f);
+
+  c.ci=0.01f; c.cq=0; m=MeteringCTMeasurement{}; m.has_current=true; m.current=1.f;
+  assert(c.calculate_ct_fundamental_analysis_(frame,&ct,&m));
+  assert(m.fundamental_current==0 && m.fundamental_reactive_power==0);
+  assert(std::isnan(m.fundamental_power_factor) && std::isnan(m.displacement_angle) && std::isnan(m.current_thd));
+
+  c.ci=3.f; m=MeteringCTMeasurement{}; m.has_current=true; m.current=2.f;
+  assert(c.calculate_ct_fundamental_analysis_(frame,&ct,&m));
+  assert(std::isnan(m.current_thd));
+  frame.transport=MeteringTransport::I2C;
+  assert(!c.calculate_ct_fundamental_analysis_(frame,&ct,&m));
+  std::puts("PASS fundamental analysis: RMS magnitude, Q1, PF1, displacement, THD and validity");
+}
+"""
+    compile_run(PRELUDE + mocks + body + tests)
 
 
 def test_energy_gaps():
@@ -548,6 +665,8 @@ if __name__ == "__main__":
     test_spi_windows()
     test_spi_error_classification()
     test_spi_status_logging()
+    test_current_peak_preservation()
+    test_fundamental_analysis_math()
     test_energy_gaps()
     test_energy_filters()
     test_metering_timeout()

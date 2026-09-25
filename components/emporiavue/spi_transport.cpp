@@ -118,6 +118,8 @@ static int64_t centered_product_numerator(int64_t product_sum, int32_t first_sum
 
 static void update_current_extrema(int16_t *minimum, int16_t *maximum, bool *valid, uint8_t source_index,
                                    int16_t sample) {
+  // Preserve every sampled peak, including one-sample pulses. Amplitude alone
+  // cannot distinguish an ADC/MUX glitch from a genuine narrow current pulse.
   if (!valid[source_index]) {
     minimum[source_index] = sample;
     maximum[source_index] = sample;
@@ -1004,6 +1006,7 @@ void EmporiaVueComponent::push_spi_fundamental_sample_(const SpiRawScan &scan,
 
 void EmporiaVueComponent::configure_spi_analysis_requirements_() {
   this->spi_current_fundamental_mask_ = 0;
+  this->spi_current_peak_mask_ = 0;
   this->spi_voltage_thd_mask_ = 0;
   std::fill(this->spi_power_voltage_mask_, this->spi_power_voltage_mask_ + 19, 0);
   this->spi_waveform_analysis_required_ = false;
@@ -1067,6 +1070,9 @@ void EmporiaVueComponent::configure_spi_analysis_requirements_() {
     if (ct_clamp->requires_current_fundamental()) {
       this->spi_current_fundamental_mask_ |= 1UL << port;
       this->spi_waveform_analysis_required_ = true;
+    }
+    if (ct_clamp->has_peak_analysis()) {
+      this->spi_current_peak_mask_ |= 1UL << source_index;
     }
   }
 }
@@ -1491,7 +1497,9 @@ void EmporiaVueComponent::process_spi_raw_scan_(uint8_t current_index) {
 
     acc.current_sum[phase] += current_raw;
     acc.current_square_sum[phase] += static_cast<int64_t>(current_raw) * current_raw;
-    update_current_extrema(acc.current_min_raw, acc.current_max_raw, acc.current_extrema_valid, phase, current_raw);
+    if ((this->spi_current_peak_mask_ & (1UL << phase)) != 0) {
+      update_current_extrema(acc.current_min_raw, acc.current_max_raw, acc.current_extrema_valid, phase, current_raw);
+    }
     const uint8_t voltage_mask = this->spi_power_voltage_mask_[phase];
     for (uint8_t voltage_phase = 0; voltage_phase < 3; voltage_phase++) {
       if ((voltage_mask & (1U << voltage_phase)) == 0) {
@@ -1520,8 +1528,10 @@ void EmporiaVueComponent::process_spi_raw_scan_(uint8_t current_index) {
       acc.current_sum[clamp_index] += current_raw;
       acc.mux_sample_count[internal_index]++;
       acc.current_square_sum[clamp_index] += static_cast<int64_t>(current_raw) * current_raw;
-      update_current_extrema(acc.current_min_raw, acc.current_max_raw, acc.current_extrema_valid, clamp_index,
-                             current_raw);
+      if ((this->spi_current_peak_mask_ & (1UL << clamp_index)) != 0) {
+        update_current_extrema(acc.current_min_raw, acc.current_max_raw, acc.current_extrema_valid, clamp_index,
+                               current_raw);
+      }
       const uint8_t voltage_mask = this->spi_power_voltage_mask_[clamp_index];
       for (uint8_t voltage_phase = 0; voltage_phase < 3; voltage_phase++) {
         if ((voltage_mask & (1U << voltage_phase)) == 0) {
