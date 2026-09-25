@@ -1256,6 +1256,8 @@ class MeteringLineDetectionState {
   void reset_transition() {
     this->reset_stability();
     this->transition_active_ = false;
+    this->transition_current_confirmed_ = false;
+    this->transition_windows_ = 0;
   }
   void reset_all() {
     this->reset_window();
@@ -1276,22 +1278,28 @@ class MeteringLineDetectionState {
   bool has_reference() const { return this->reference_valid_; }
   const std::array<float, 3> &get_reference_scores() const { return this->reference_scores_; }
   float get_reference_current() const { return this->reference_current_; }
-  void set_reference(const std::array<float, 3> &scores, float current, uint32_t now_ms) {
+  void set_reference(const std::array<float, 3> &scores, float current) {
     this->reference_scores_ = scores;
     this->reference_current_ = current;
     this->reference_valid_ = true;
-    this->reference_start_ms_ = now_ms;
   }
-  uint32_t get_reference_start_ms() const { return this->reference_start_ms_; }
-  void start_transition(uint32_t now_ms) {
+  void start_transition() {
     if (!this->transition_active_) {
       this->reset_stability();
       this->transition_active_ = true;
-      this->transition_start_ms_ = now_ms;
+      this->transition_current_confirmed_ = false;
+      this->transition_windows_ = 0;
     }
   }
-  uint32_t get_transition_start_ms() const { return this->transition_start_ms_; }
   bool is_transition_active() const { return this->transition_active_; }
+  void confirm_transition_current() { this->transition_current_confirmed_ = true; }
+  bool is_transition_current_confirmed() const { return this->transition_current_confirmed_; }
+  uint8_t increment_transition_windows() {
+    if (this->transition_windows_ < UINT8_MAX) {
+      this->transition_windows_++;
+    }
+    return this->transition_windows_;
+  }
   uint8_t update_candidate(uint8_t line) {
     if (line < 1 || line > 3) {
       this->reset_stability();
@@ -1313,14 +1321,14 @@ class MeteringLineDetectionState {
  protected:
   std::array<float, 3> scores_{0.0f, 0.0f, 0.0f};
   std::array<float, 3> reference_scores_{0.0f, 0.0f, 0.0f};
-  uint32_t reference_start_ms_{0};
-  uint32_t transition_start_ms_{0};
   float current_sum_{0.0f};
   float reference_current_{0.0f};
   uint32_t samples_{0};
   uint32_t window_start_ms_{0};
   bool reference_valid_{false};
   bool transition_active_{false};
+  bool transition_current_confirmed_{false};
+  uint8_t transition_windows_{0};
   uint8_t candidate_line_{0};
   uint8_t candidate_windows_{0};
 };
@@ -1358,13 +1366,7 @@ class MeteringCTClampConfig {
     }
   }
   float get_current_gain() const { return this->current_gain_; }
-  void set_current_phase_correction(float degrees) {
-    if (std::fabs(this->current_phase_correction_degrees_ - degrees) > 0.000001f) {
-      this->current_phase_correction_degrees_ = degrees;
-      this->line_detection_state_.reset_all();
-      this->auto_line_detection_state_.reset_all();
-    }
-  }
+  void set_current_phase_correction(float degrees) { this->current_phase_correction_degrees_ = degrees; }
   float get_current_phase_correction() const { return this->current_phase_correction_degrees_; }
   void set_current_gain_number(MeteringCurrentGainNumber *number) { this->current_gain_number_ = number; }
   MeteringCurrentGainNumber *get_current_gain_number() const { return this->current_gain_number_; }

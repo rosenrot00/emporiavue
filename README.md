@@ -7,7 +7,7 @@ or use the ESPHome SPI path when you specifically want synchronized raw-waveform
 
 | Version | Changes |
 |---|---|
-| 2026.09.2 | Improved line detection for slow load changes and reactive standby transitions, including SPI current phase calibration. Peak and crest factor now report `unknown` below the current threshold or for inconsistent measurements; sampled short peaks remain unfiltered. No YAML changes required. |
+| 2026.09.2 | Peak and crest factor now report `unknown` below the current threshold or for inconsistent measurements; sampled short peaks remain unfiltered. No YAML changes required. |
 | 2026.09.1 | **Breaking change:** `energy:` now converts to kWh automatically. Remove `multiply: 0.001` from local energy filters and `filter_defaults.energy`; it is no longer needed. See [Energy](#energy). Existing exact conversion filters are recognized to prevent double scaling. |
 | 2026.07.10 | Separated direction-aware line diagnostics from automatic line assignment and added import/export auto modes. |
 | 2026.07.9 | Added native ESPHome subdevices, validated Vue 3 SPI on real hardware, and added optional SPI voltage THD. |
@@ -590,23 +590,14 @@ export operation without ever changing the assignment. When both use the same di
 state, so the diagnostic remains active after automatic assignment has finished.
 
 The first complete window becomes the reference state; it may be standby, full load, or anything in between. Detection
-then evaluates the signed change from that reference. While waiting for a change, the reference is retained for up to
-two minutes so small steps in a slow ramp can accumulate. Once a transition begins, its reference is frozen for up to
-another two minutes while it settles. Both load increases and decreases are supported, and `power_min` is the minimum required
-correlation change rather than a minimum absolute circuit load.
+then evaluates the signed change from that reference. Both load increases and decreases are supported, and `power_min`
+is the minimum required correlation change rather than a minimum absolute circuit load.
 
 The expected line must change by at least `power_min` in the configured direction. `confidence_ratio` controls how
 clearly its correlation must exceed the next-best positive candidate and defaults to `1.5`; normally it does not need to
 be configured. This guard band accepts a dominant line even for moderately phase-shifted motor loads, while remaining
-ambiguous near a phase boundary. The independently measured RMS current must still confirm a change in every accepted
-window. When one of the two operating states has a particularly clear voltage-current alignment, it provides an
-additional line reference: this handles a change from reactive standby to active operation even when RMS current falls
-as real power rises. Conflicting clear references are rejected. The new operating state must settle before three
-consecutive windows can confirm the result. SPI detection also applies the configured current phase calibration;
-changing that calibration restarts detection.
-
-This is an installation helper, not a guarantee of physical wiring. Strongly reactive loads and unusual transitions
-can remain indistinguishable from a different line; verify automatic assignments with a known load when possible.
+ambiguous near a phase boundary. The independently measured RMS current must also confirm that an actual load transition
+occurred. A doubtful measurement is never stored.
 
 Possible text states are `waiting for change`, `ambiguous change`, `L2 weak`, `L2`, or `ambiguous L2/L3`. It is
 intentionally unavailable for line-to-line circuits.
@@ -615,8 +606,8 @@ No particular startup state is required, but the circuit must change operating s
 heat pump start or stop and then keep the new state steady. `waiting for change` means no sufficiently large transition
 has occurred. `ambiguous change` means the current changed but not in a way that safely identifies a physical line.
 `ambiguous L2/L3` means the direction or phase displacement is still too close to a decision boundary. `L3 weak` is a
-preliminary result. A stable result needs three consecutive update windows after settling, so with the defaults allow
-about 30–40 seconds at the new steady state. If the result is `L3`, set that circuit to `line: 3` (`L1` means `line: 1`, and so
+preliminary result. A stable result needs three consecutive update windows, so with the defaults the new state should
+remain steady for about 30 seconds. If the result is `L3`, set that circuit to `line: 3` (`L1` means `line: 1`, and so
 on). The result remains visible while the detector quietly re-arms at the new operating point. An unresolved transition
 is reported once and also becomes the new reference, rather than being evaluated repeatedly. The detector intentionally
 waits for the next real change instead of guessing. After assigning the line, you can remove `line_detection:` if you no
