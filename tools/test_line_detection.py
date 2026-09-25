@@ -57,6 +57,7 @@ struct Fixture {
     simulated_ms=100;
     for (int p=0;p<3;p++) {
       ct.candidates.push_back({&phases[p],uint8_t(p+1)});
+      frame.phases[p].phase_angle_degrees=p*120.f;
       const float a=p*2.f*3.14159265358979323846f/3.f;
       frame.phases[p].voltage_fundamental_i_raw=230.f*std::cos(a)/0.022f;
       frame.phases[p].voltage_fundamental_q_raw=230.f*std::sin(a)/0.022f;
@@ -70,7 +71,7 @@ struct Fixture {
   // follow from the same current vector; RMS is independently supplied.
   void window(float p,float q,float current,uint8_t real_line=1) {
     for (int line=0;line<3;line++) {
-      const float a=(line-int(real_line-1))*2.f*3.14159265358979323846f/3.f;
+      const float a=(frame.phases[line].phase_angle_degrees-frame.phases[real_line-1].phase_angle_degrees)*3.14159265358979323846f/180.f;
       frame.clamps[3].power_raw_by_phase[line]=std::lround((p*std::cos(a)+q*std::sin(a))*1000.f);
     }
     frame.clamps[3].current_raw=std::lround(current*170496.f/775.f);
@@ -95,8 +96,25 @@ int main() {
     Fixture falling(exported); falling.window(direction*230,0,1,line);
     falling.hold(0,0,0,4,line); assert(falling.ct.selected==line);
     Fixture moderate(exported); moderate.window(0,0,0,line);
-    moderate.hold(direction*200,direction*150,250.f/230.f,4,line);
-    assert(moderate.ct.selected==line); // PF=.8 remains supported.
+    moderate.hold(direction*200,direction*150,250.f/230.f,14,line);
+    // PF=.8 alone is not a strong enough endpoint under the default guard.
+    assert(moderate.ct.selected==0 && moderate.ct.sensor.state=="ambiguous change");
+    Fixture reactive_change(exported); reactive_change.window(direction*10,-direction*20,0.90f,line);
+    reactive_change.hold(direction*19.3f,-direction*109.7f,0.75f,14,line);
+    assert(reactive_change.ct.selected==0 && reactive_change.ct.sensor.state=="ambiguous change");
+    Fixture reactive_start(exported); reactive_start.window(0,0,0,line);
+    reactive_start.hold(direction*19.3f,-direction*109.7f,0.75f,14,line);
+    assert(reactive_start.ct.selected==0 && reactive_start.ct.sensor.state=="ambiguous change");
+    for (int degrees=-90;degrees<=90;degrees+=5) {
+      const float angle=degrees*3.14159265358979323846f/180.f;
+      for (auto transport : {MeteringTransport::I2C,MeteringTransport::SPI}) {
+        Fixture sweep(exported); sweep.frame.transport=transport;
+        sweep.window(0,0,0,line);
+        sweep.hold(direction*230*std::cos(angle),direction*230*std::sin(angle),1,4,line);
+        assert(sweep.ct.selected==0 || sweep.ct.selected==line);
+        if (degrees>=-10 && degrees<=10) assert(sweep.ct.selected==line);
+      }
+    }
     Fixture reactive(exported); reactive.window(direction*5,-direction*400,400.f/230.f,line);
     reactive.hold(direction*230,0,1,4,line); assert(reactive.ct.selected==line);
     Fixture noisy(exported); noisy.window(0,0,0.50f,line);
@@ -154,6 +172,13 @@ int main() {
   assert(i2c_small.ct.selected==3);
   Fixture two_lines; two_lines.ct.candidates.pop_back();
   two_lines.window(0,0,0,2); two_lines.hold(230,0,1,4,2); assert(two_lines.ct.selected==2);
+  for(bool exported : {false,true}) for(uint8_t line : {1,2}) for(float angle : {178.f,180.f,182.f}) {
+    Fixture split(exported); split.ct.candidates.pop_back();
+    split.frame.phases[1].phase_angle_degrees=angle;
+    split.window(0,0,0,line);
+    split.hold(exported ? -50.f : 50.f,0,0.25f,4,line);
+    assert(split.ct.selected==line);
+  }
   Fixture calibrated; calibrated.ct.correction=-70.f; calibrated.window(0,0,0);
   calibrated.hold(230.f*std::cos(70.f*3.14159265f/180.f),230.f*std::sin(70.f*3.14159265f/180.f),1);
   assert(calibrated.ct.selected==1); // Candidate calibration works without an assigned line.
@@ -170,7 +195,7 @@ int main() {
   wrapped.ct.automatic.set_window_start_ms(simulated_ms);
   wrapped.ct.diagnostic.set_window_start_ms(simulated_ms);
   wrapped.hold(230,0,1); assert(wrapped.ct.selected==1);
-  std::puts("PASS line detection: import/export, I2C/SPI, all lines, PF .8, start/stop, reactive standby, ramps, noisy RMS, small RMS delta, ambiguity, standalone detection");
+  std::puts("PASS line detection: import/export, I2C/SPI, all lines, phase sweep, reactive rejection, start/stop, reactive standby, ramps, noisy RMS, small RMS delta, ambiguity, standalone detection");
 }
 """
     compile_run(PRELUDE + state + frames + mocks + body + tests)
