@@ -99,6 +99,24 @@ int main() {
     assert(moderate.ct.selected==line); // PF=.8 remains supported.
     Fixture reactive(exported); reactive.window(direction*5,-direction*400,400.f/230.f,line);
     reactive.hold(direction*230,0,1,4,line); assert(reactive.ct.selected==line);
+    Fixture noisy(exported); noisy.window(0,0,0.50f,line);
+    for(int i=0;i<4;i++) noisy.window(direction*50,0,i%2 ? 0.65f : 0.60f,line);
+    assert(noisy.ct.selected==line);
+    Fixture small_rms_change(exported); small_rms_change.window(0,0,0.58f,line);
+    small_rms_change.hold(direction*50,0,0.60f,4,line);
+    assert(small_rms_change.ct.selected==line);
+    Fixture small_rms_falling(exported); small_rms_falling.window(direction*50,0,0.60f,line);
+    small_rms_falling.hold(0,0,0.58f,4,line);
+    assert(small_rms_falling.ct.selected==line);
+    Fixture variable_power(exported); variable_power.window(0,0,0,line);
+    for(int p : {50,75,100,125}) variable_power.window(direction*p,0,p/230.f,line);
+    assert(variable_power.ct.selected==line);
+    Fixture reactive_standby(exported);
+    reactive_standby.hold(0,direction*230,1,14,line);
+    assert(reactive_standby.ct.selected==0);
+    Fixture rotated(exported); rotated.window(direction*230,0,1,line);
+    rotated.hold(0,direction*230,1,14,line);
+    assert(rotated.ct.selected==0);
   }
   Fixture idle; idle.hold(0,0,0,20); assert(idle.ct.selected==0);
   Fixture unchanged; unchanged.hold(230,0,1,20); assert(unchanged.ct.selected==0);
@@ -117,8 +135,23 @@ int main() {
   contradictory.hold(460,0,2,6,2); assert(contradictory.ct.selected==0);
   Fixture diagnostic; diagnostic.ct.auto_active=false; diagnostic.window(0,0,0);
   diagnostic.hold(230,0,1); assert(diagnostic.ct.selected==0 && diagnostic.ct.sensor.state=="L1");
+  Fixture standalone; standalone.ct.auto_active=false;
+  standalone.frame.clamps[3].current_fundamental_valid=false;
+  for(auto &phase : standalone.frame.phases) phase.voltage_fundamental_valid=false;
+  standalone.window(0,0,0.58f,3); standalone.hold(50,0,0.60f,4,3);
+  assert(standalone.ct.selected==0 && standalone.ct.sensor.state=="L3");
+  Fixture auto_only; auto_only.ct.diagnostic_enabled=false;
+  auto_only.frame.clamps[3].current_fundamental_valid=false;
+  auto_only.window(0,0,0.58f,3); auto_only.hold(50,0,0.60f,4,3);
+  assert(auto_only.ct.selected==3);
+  Fixture changing_line; changing_line.window(0,0,0);
+  for(int i=0;i<14;i++) changing_line.window(50,0,0.25f,1+i%2);
+  assert(changing_line.ct.selected==0);
   Fixture i2c; i2c.frame.transport=MeteringTransport::I2C; i2c.ct.correction=70;
   i2c.window(0,0,0); i2c.hold(230,0,1); assert(i2c.ct.selected==1);
+  Fixture i2c_small; i2c_small.frame.transport=MeteringTransport::I2C;
+  i2c_small.window(0,0,0.58f,3); i2c_small.hold(50,0,0.60f,4,3);
+  assert(i2c_small.ct.selected==3);
   Fixture two_lines; two_lines.ct.candidates.pop_back();
   two_lines.window(0,0,0,2); two_lines.hold(230,0,1,4,2); assert(two_lines.ct.selected==2);
   Fixture calibrated; calibrated.ct.correction=-70.f; calibrated.window(0,0,0);
@@ -137,7 +170,7 @@ int main() {
   wrapped.ct.automatic.set_window_start_ms(simulated_ms);
   wrapped.ct.diagnostic.set_window_start_ms(simulated_ms);
   wrapped.hold(230,0,1); assert(wrapped.ct.selected==1);
-  std::puts("PASS line detection: import/export, all lines, PF .8, start/stop, reactive standby, ramps, ambiguity, diagnostic-only");
+  std::puts("PASS line detection: import/export, I2C/SPI, all lines, PF .8, start/stop, reactive standby, ramps, noisy RMS, small RMS delta, ambiguity, standalone detection");
 }
 """
     compile_run(PRELUDE + state + frames + mocks + body + tests)

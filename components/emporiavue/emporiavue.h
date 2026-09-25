@@ -1256,14 +1256,12 @@ class MeteringLineDetectionState {
   void reset_transition() {
     this->reset_stability();
     this->transition_active_ = false;
-    this->transition_windows_ = 0;
   }
   void reset_all() {
     this->reset_window();
     this->reset_reference();
     this->reset_transition();
     this->window_start_ms_ = 0;
-    this->previous_valid_ = false;
   }
   void add_score(uint8_t line, float score) {
     if (line >= 1 && line <= 3) {
@@ -1285,34 +1283,15 @@ class MeteringLineDetectionState {
     this->reference_start_ms_ = now_ms;
   }
   uint32_t get_reference_start_ms() const { return this->reference_start_ms_; }
-  bool observe_operating_point(const std::array<float, 3> &scores, float current, float power_min) {
-    bool settled = this->previous_valid_;
-    for (uint8_t index = 0; index < 3; index++) {
-      const float tolerance = std::max(power_min * 0.25f, std::fabs(scores[index]) * 0.05f);
-      settled &= std::fabs(scores[index] - this->previous_scores_[index]) <= tolerance;
-    }
-    settled &= std::fabs(current - this->previous_current_) <= std::max(0.01f, current * 0.05f);
-    this->previous_scores_ = scores;
-    this->previous_current_ = current;
-    this->previous_valid_ = true;
-    return settled;
-  }
   void start_transition(uint32_t now_ms) {
     if (!this->transition_active_) {
       this->reset_stability();
       this->transition_active_ = true;
-      this->transition_windows_ = 0;
       this->transition_start_ms_ = now_ms;
     }
   }
   uint32_t get_transition_start_ms() const { return this->transition_start_ms_; }
   bool is_transition_active() const { return this->transition_active_; }
-  uint8_t increment_transition_windows() {
-    if (this->transition_windows_ < UINT8_MAX) {
-      this->transition_windows_++;
-    }
-    return this->transition_windows_;
-  }
   uint8_t update_candidate(uint8_t line) {
     if (line < 1 || line > 3) {
       this->reset_stability();
@@ -1334,18 +1313,14 @@ class MeteringLineDetectionState {
  protected:
   std::array<float, 3> scores_{0.0f, 0.0f, 0.0f};
   std::array<float, 3> reference_scores_{0.0f, 0.0f, 0.0f};
-  std::array<float, 3> previous_scores_{0.0f, 0.0f, 0.0f};
-  float previous_current_{0.0f};
   uint32_t reference_start_ms_{0};
   uint32_t transition_start_ms_{0};
-  bool previous_valid_{false};
   float current_sum_{0.0f};
   float reference_current_{0.0f};
   uint32_t samples_{0};
   uint32_t window_start_ms_{0};
   bool reference_valid_{false};
   bool transition_active_{false};
-  uint8_t transition_windows_{0};
   uint8_t candidate_line_{0};
   uint8_t candidate_windows_{0};
 };

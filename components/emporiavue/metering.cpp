@@ -909,7 +909,6 @@ void EmporiaVueComponent::update_line_detection_(const MeteringFrame &frame, Met
       }
     }
     const float average_current = detection.get_current_sum() / divisor;
-    const bool settled = detection.observe_operating_point(average_scores, average_current, power_min);
 
     auto publish_detection_state = [&](const std::string &state) {
       if (sensor != nullptr && (!sensor->has_state() || sensor->state != state)) {
@@ -971,11 +970,12 @@ void EmporiaVueComponent::update_line_detection_(const MeteringFrame &frame, Met
       detection.set_window_start_ms(now);
       return 0;
     }
-    const uint8_t transition_windows = detection.increment_transition_windows();
     const bool transition_expired = (now - detection.get_transition_start_ms()) >= 120000U;
-    // Current confirmation must still hold in each accepted window. A single
-    // earlier fluctuation is not evidence for the rest of an event.
+    // RMS direction is evidence for the signed-delta fallback only while the
+    // change is significant. Strong endpoint/delta agreement is checked below
+    // independently, so non-fundamental current cannot veto that evidence.
     const bool current_changed = std::fabs(current_change) >= minimum_current_change;
+    const float configured_direction = export_direction ? -1.0f : 1.0f;
 
     uint8_t detected_line = 0;
     uint8_t best_line = 0;
@@ -988,7 +988,6 @@ void EmporiaVueComponent::update_line_detection_(const MeteringFrame &frame, Met
       state = "ambiguous change";
     } else {
       const float transition_direction = current_change >= 0.0f ? 1.0f : -1.0f;
-      const float configured_direction = export_direction ? -1.0f : 1.0f;
       std::array<float, 3> directed_scores{0.0f, 0.0f, 0.0f};
       for (uint8_t line = 1; line <= 3; line++) {
         if ((valid_line_mask & (1U << (line - 1))) == 0) {
@@ -1016,63 +1015,72 @@ void EmporiaVueComponent::update_line_detection_(const MeteringFrame &frame, Met
       if (best_line != 0 && best_score >= power_min && confident) {
         detected_line = best_line;
       }
+    }
 
-      // A strongly aligned endpoint is useful when reactive standby current
-      // makes RMS fall while active consumption rises (or vice versa). Require
-      // dominance over BOTH signed and opposite-polarity alternatives here.
-      // Ordinary moderate-PF transitions keep the signed-delta criterion above.
-      auto aligned_endpoint = [&](const std::array<float, 3> &values) -> uint8_t {
-        uint8_t line = 0;
-        float best = 0.0f;
-        float other = 0.0f;
-        for (uint8_t candidate = 1; candidate <= 3; candidate++) {
-          if ((valid_line_mask & (1U << (candidate - 1))) == 0) {
-            continue;
-          }
-          const float score = values[candidate - 1] * configured_direction;
-          if (score > best) {
-            other = std::max(other, best);
-            best = score;
-            line = candidate;
-          } else {
-            other = std::max(other, std::fabs(score));
-          }
+    // A strongly aligned endpoint is useful when reactive standby current
+    // makes RMS fall while active consumption rises (or vice versa). Require
+    // dominance over BOTH signed and opposite-polarity alternatives here.
+    // Ordinary moderate-PF transitions keep the signed-delta criterion above.
+    auto aligned_endpoint = [&](const std::array<float, 3> &values) -> uint8_t {
+      uint8_t line = 0;
+      float best = 0.0f;
+      float other = 0.0f;
+      for (uint8_t candidate = 1; candidate <= 3; candidate++) {
+        if ((valid_line_mask & (1U << (candidate - 1))) == 0) {
+          continue;
         }
-        return best >= power_min && best > other * this->line_detection_confidence_ratio_ ? line : 0;
-      };
-      const uint8_t before_line = aligned_endpoint(reference_scores);
-      const uint8_t after_line = aligned_endpoint(average_scores);
-      const uint8_t endpoint_line = after_line != 0 ? after_line : before_line;
-      if (before_line != 0 && after_line != 0 && before_line != after_line) {
-        detected_line = 0;
-      } else if (endpoint_line != 0) {
-        // Endpoint agreement avoids using RMS magnitude as a proxy for the
-        // direction of active power. Still require a real power and RMS change.
-        detected_line = std::fabs(delta_scores[endpoint_line - 1]) >= power_min ? endpoint_line : 0;
+        const float score = values[candidate - 1] * configured_direction;
+        if (score > best) {
+          other = std::max(other, best);
+          best = score;
+          line = candidate;
+        } else {
+          other = std::max(other, std::fabs(score));
+        }
       }
-      if (detected_line == 0) {
-        const uint8_t first_line = std::min(best_line, second_line);
-        const uint8_t last_line = std::max(best_line, second_line);
-        state = str_sprintf("ambiguous L%u/L%u", static_cast<unsigned>(first_line),
-                           static_cast<unsigned>(last_line));
+      return best >= power_min && best > other * this->line_detection_confidence_ratio_ ? line : 0;
+    };
+    const uint8_t before_line = aligned_endpoint(reference_scores);
+    const uint8_t after_line = aligned_endpoint(average_scores);
+    const uint8_t endpoint_line = after_line != 0 ? after_line : before_line;
+    if (before_line != 0 && after_line != 0 && before_line != after_line) {
+      detected_line = 0;
+    } else if (endpoint_line != 0) {
+      // Distortion can mask a genuine load change in total RMS current.
+      // Without RMS confirmation, require BOTH a strongly aligned endpoint
+      // and an aligned correlation change on the SAME line. A phase rotation
+      // at constant current is not sufficient evidence on its own.
+      auto oriented_delta = delta_scores;
+      const float direction = delta_scores[endpoint_line - 1] * configured_direction >= 0.0f ? 1.0f : -1.0f;
+      for (auto &score : oriented_delta) {
+        score *= direction;
       }
+      const bool change_confirmed = current_changed || aligned_endpoint(oriented_delta) == endpoint_line;
+      detected_line = change_confirmed && std::fabs(delta_scores[endpoint_line - 1]) >= power_min ? endpoint_line : 0;
+    }
+    if (detected_line == 0) {
+      const uint8_t first_line = std::min(best_line, second_line);
+      const uint8_t last_line = std::max(best_line, second_line);
+      state = best_line != 0 && second_line != 0
+                  ? str_sprintf("ambiguous L%u/L%u", static_cast<unsigned>(first_line),
+                                static_cast<unsigned>(last_line))
+                  : "ambiguous change";
     }
 
     uint8_t stable_line = 0;
-    if (detected_line == 0 || !settled) {
+    if (detected_line == 0) {
       detection.reset_stability();
       // Do not expose every small ranking or current-threshold fluctuation.
       // After a bounded observation period, publish one canonical result and
-      // use the new stable operating point as the next reference.
-      if ((settled && transition_windows >= 5) || transition_expired) {
-        if (!settled) {
-          state = "ambiguous change";
-        }
+      // use the new operating point as the next reference.
+      if (transition_expired) {
         publish_detection_state(state);
         detection.set_reference(average_scores, average_current, now);
         detection.reset_transition();
       }
     } else {
+      // Confirm a stable line, not constant amplitude. Power ramps and changes
+      // in non-fundamental RMS must not erase an unchanged candidate.
       const uint8_t candidate_windows = detection.update_candidate(detected_line);
       state = str_sprintf("L%u weak", static_cast<unsigned>(detected_line));
       if (candidate_windows >= 3) {
@@ -1084,8 +1092,10 @@ void EmporiaVueComponent::update_line_detection_(const MeteringFrame &frame, Met
       } else if (transition_expired) {
         const uint8_t first_line = std::min(best_line, second_line);
         const uint8_t last_line = std::max(best_line, second_line);
-        state = str_sprintf("ambiguous L%u/L%u", static_cast<unsigned>(first_line),
-                           static_cast<unsigned>(last_line));
+        state = best_line != 0 && second_line != 0
+                    ? str_sprintf("ambiguous L%u/L%u", static_cast<unsigned>(first_line),
+                                  static_cast<unsigned>(last_line))
+                    : "ambiguous change";
         publish_detection_state(state);
         detection.set_reference(average_scores, average_current, now);
         detection.reset_transition();
