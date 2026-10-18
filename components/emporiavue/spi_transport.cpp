@@ -405,6 +405,12 @@ void EmporiaVueComponent::setup_spi_receiver_(bool reset_statistics) {
   if (reset_statistics) {
     this->spi_rx_received_frames_ = 0;
     this->spi_rx_valid_frames_ = 0;
+    // Rate baselines belong to the same counter epoch. Soft recovery keeps
+    // both; a full statistics reset must not look like uint32_t wraparound.
+    this->spi_summary_last_ms_ = 0;
+    this->spi_summary_last_valid_frames_ = 0;
+    this->spi_diag_last_valid_frames_ = 0;
+    this->spi_diag_last_rate_ms_ = 0;
     this->spi_rx_frames_ = 0;
     this->spi_rx_sync_errors_ = 0;
     this->spi_rx_crc_errors_ = 0;
