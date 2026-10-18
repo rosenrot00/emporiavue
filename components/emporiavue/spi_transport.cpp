@@ -128,6 +128,23 @@ void EmporiaVueComponent::publish_spi_diagnostics_() {
   if (this->diag_adc_overruns_sensor_ != nullptr) {
     this->diag_adc_overruns_sensor_->publish_state(static_cast<float>(this->spi_rx_adc_overruns_));
   }
+  if (this->diag_frame_gaps_sensor_ != nullptr) {
+    this->diag_frame_gaps_sensor_->publish_state(static_cast<float>(this->spi_rx_frame_gaps_));
+  }
+  if (this->diag_hard_faults_sensor_ != nullptr) {
+    this->diag_hard_faults_sensor_->publish_state(static_cast<float>(this->spi_rx_hard_faults_));
+  }
+  if (this->diag_valid_frame_rate_sensor_ != nullptr) {
+    const uint32_t rate_now = millis();
+    const uint32_t valid_frames = this->spi_rx_valid_frames_;
+    if (this->spi_diag_last_rate_ms_ != 0 && rate_now != this->spi_diag_last_rate_ms_) {
+      this->diag_valid_frame_rate_sensor_->publish_state(
+          static_cast<float>(valid_frames - this->spi_diag_last_valid_frames_) * 1000.0f /
+          static_cast<float>(rate_now - this->spi_diag_last_rate_ms_));
+    }
+    this->spi_diag_last_valid_frames_ = valid_frames;
+    this->spi_diag_last_rate_ms_ = rate_now;
+  }
   this->publish_spi_voltage_diagnostics_();
   if (this->diag_recoveries_sensor_ != nullptr &&
       (!this->spi_diag_recoveries_published_ ||
@@ -406,6 +423,7 @@ void EmporiaVueComponent::setup_spi_receiver_(bool reset_statistics) {
     this->spi_rx_dma_errors_ = 0;
     this->spi_rx_voltage_errors_ = 0;
     this->spi_rx_samd_overruns_ = 0;
+    this->spi_rx_hard_faults_ = 0;
     this->spi_rx_adc_overruns_ = 0;
     this->spi_rx_frame_gaps_ = 0;
     this->spi_rx_recoveries_ = 0;
@@ -615,6 +633,7 @@ void EmporiaVueComponent::restart_spi_receiver_() {
   this->reset_spi_metering_state_();
 
   if (reset_samd) {
+    this->check_samd_hard_fault_();
     this->reset_pin_->setup();
     this->assert_reset_();
     this->deassert_reset_();
@@ -2035,6 +2054,56 @@ void EmporiaVueComponent::publish_queued_spi_metering_() {
 #endif
 }
 
+// The SAMD09 hard-fault handler records the exception return, MSP and the stacked PC/LR at
+// SAMD_BOOT_DIAG_BASE; startup overwrites only the magic and stage words. Connecting under reset
+// keeps SRAM intact, so the record of a firmware that hard-faulted and stopped streaming can be
+// read just before the recovery reset boots it again.
+void EmporiaVueComponent::check_samd_hard_fault_() {
+  this->prepare_pins_();
+  this->begin_swd_session_();
+  uint32_t idcode = 0;
+  bool ok = this->swd_initialize_(&idcode) && this->power_up_debug_();
+  this->finish_swd_session_();
+  ok = ok && this->verify_mem_ap_() && this->halt_core_();
+  uint32_t diag[7] = {0};
+  for (uint32_t index = 0; ok && index < 7; index++) {
+    ok = this->mem_read32_(SAMD_BOOT_DIAG_BASE + 4 * index, &diag[index]);
+  }
+  if (!ok) {
+    ESP_LOGD(TAG, "SAMD09 boot diagnostics not readable before recovery reset: %s", this->last_error_.c_str());
+  } else if (diag[0] != SAMD_BOOT_DIAG_MAGIC) {
+    ESP_LOGD(TAG, "SAMD09 boot diagnostics absent before recovery reset (magic=%08" PRIX32 ")", diag[0]);
+  } else if (diag[1] == SAMD_BOOT_STAGE_HARDFAULT) {
+    this->spi_rx_hard_faults_++;
+    ESP_LOGW(TAG,
+             "SAMD09 hard fault before recovery reset: pc=0x%08" PRIX32 " lr=0x%08" PRIX32 " exc_return=0x%08" PRIX32
+             " msp=0x%08" PRIX32 " (hard faults=%" PRIu32 ")",
+             diag[5], diag[6], diag[2], diag[3], this->spi_rx_hard_faults_);
+  } else {
+    ESP_LOGD(TAG, "SAMD09 boot stage before recovery reset: %" PRIu32 " (no hard fault)", diag[1]);
+  }
+  if (ok) {
+    (void) this->resume_core_();
+    (void) this->mem_write32_(DHCSR, DHCSR_DBGKEY);  // debug off for the reset that follows
+  }
+  this->release_pins_();
+}
+
+void EmporiaVueComponent::log_spi_summary_(uint32_t now) {
+  const uint32_t elapsed_ms = now - this->spi_summary_last_ms_;
+  const uint32_t valid_frames = this->spi_rx_valid_frames_;
+  const float rate = elapsed_ms == 0 ? 0.0f
+                                     : static_cast<float>(valid_frames - this->spi_summary_last_valid_frames_) *
+                                           1000.0f / static_cast<float>(elapsed_ms);
+  ESP_LOGI(TAG,
+           "SAMD09 SPI link: %.1f valid frames/s over %" PRIu32 " s; frame_errors=%" PRIu32 " samd_overruns=%" PRIu32
+           " adc_overruns=%" PRIu32 " seq_gaps=%" PRIu32 " recoveries=%" PRIu32 " hard_faults=%" PRIu32,
+           rate, elapsed_ms / 1000, this->spi_rx_sync_errors_ + this->spi_rx_crc_errors_, this->spi_rx_samd_overruns_,
+           this->spi_rx_adc_overruns_, this->spi_rx_frame_gaps_, this->spi_rx_recoveries_, this->spi_rx_hard_faults_);
+  this->spi_summary_last_ms_ = now;
+  this->spi_summary_last_valid_frames_ = valid_frames;
+}
+
 void EmporiaVueComponent::log_spi_receiver_status_(bool force) {
 #ifdef USE_ESP32
   const uint32_t now = millis();
@@ -2159,6 +2228,13 @@ void EmporiaVueComponent::process_spi_receiver_() {
   }
 
   this->log_spi_receiver_status_();
+  // A one-line summary every minute, so a healthy quiet link is distinguishable from a silent log.
+  if (this->spi_summary_last_ms_ == 0) {
+    this->spi_summary_last_ms_ = now;
+    this->spi_summary_last_valid_frames_ = this->spi_rx_valid_frames_;
+  } else if (now - this->spi_summary_last_ms_ >= SPI_STATUS_SUMMARY_INTERVAL_MS) {
+    this->log_spi_summary_(now);
+  }
   if (this->diagnostics_interval_ms_ != 0 &&
       now - this->spi_last_diagnostics_publish_ms_ >= this->diagnostics_interval_ms_) {
     this->spi_last_diagnostics_publish_ms_ = now;

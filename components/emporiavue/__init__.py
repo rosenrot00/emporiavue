@@ -126,6 +126,9 @@ CONF_DIAG_FRAME_ERRORS = "diag_frame_errors"
 CONF_DIAG_TRANSFER_ERRORS = "diag_transfer_errors"
 CONF_DIAG_FRAME_OVERRUNS = "diag_frame_overruns"
 CONF_DIAG_ADC_OVERRUNS = "diag_adc_overruns"
+CONF_DIAG_FRAME_GAPS = "diag_frame_gaps"
+CONF_DIAG_VALID_FRAME_RATE = "diag_valid_frame_rate"
+CONF_DIAG_HARD_FAULTS = "diag_hard_faults"
 CONF_DIAG_VOLTAGE_TELEGRAMS = "diag_voltage_telegrams"
 CONF_DIAG_VOLTAGE_UART_ERRORS = "diag_voltage_uart_errors"
 CONF_DIAG_VOLTAGE_REJECTED_TELEGRAMS = "diag_voltage_rejected_telegrams"
@@ -405,6 +408,9 @@ DIAGNOSTIC_ENTITY_NAMES = {
 SPI_RUNTIME_DIAGNOSTIC_ENTITY_NAMES = {
     CONF_DIAG_TRANSFER_ERRORS: "ESP SPI Transfer Errors",
     CONF_DIAG_ADC_OVERRUNS: "SAMD ADC Overruns",
+    CONF_DIAG_FRAME_GAPS: "SAMD Frame Gaps",
+    CONF_DIAG_VALID_FRAME_RATE: "SAMD Valid Frame Rate",
+    CONF_DIAG_HARD_FAULTS: "SAMD Hard Faults",
     CONF_DIAG_HEAP_FREE: "ESP Free Heap",
     CONF_DIAG_HEAP_MINIMUM: "ESP Minimum Free Heap",
     CONF_DIAG_LOOP_STACK_FREE: "ESP Loop Minimum Free Stack",
@@ -2853,6 +2859,25 @@ EMPORIAVUE_SCHEMA = cv.Schema(
             accuracy_decimals=0,
             entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
         ),
+        cv.Optional(CONF_DIAG_FRAME_GAPS): sensor.sensor_schema(
+            icon="mdi:timeline-alert-outline",
+            state_class=STATE_CLASS_MEASUREMENT,
+            accuracy_decimals=0,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(CONF_DIAG_VALID_FRAME_RATE): sensor.sensor_schema(
+            unit_of_measurement="frames/s",
+            icon="mdi:speedometer",
+            state_class=STATE_CLASS_MEASUREMENT,
+            accuracy_decimals=1,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
+        cv.Optional(CONF_DIAG_HARD_FAULTS): sensor.sensor_schema(
+            icon="mdi:chip",
+            state_class=STATE_CLASS_MEASUREMENT,
+            accuracy_decimals=0,
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        ),
         cv.Optional(CONF_DIAG_VOLTAGE_TELEGRAMS): sensor.sensor_schema(
             icon="mdi:counter",
             state_class=STATE_CLASS_MEASUREMENT,
@@ -3232,6 +3257,15 @@ async def to_code(config):
     if diag_adc_overruns_config := config.get(CONF_DIAG_ADC_OVERRUNS):
         sens = await sensor.new_sensor(diag_adc_overruns_config)
         cg.add(var.set_diag_adc_overruns_sensor(sens))
+    if diag_frame_gaps_config := config.get(CONF_DIAG_FRAME_GAPS):
+        sens = await sensor.new_sensor(diag_frame_gaps_config)
+        cg.add(var.set_diag_frame_gaps_sensor(sens))
+    if diag_valid_frame_rate_config := config.get(CONF_DIAG_VALID_FRAME_RATE):
+        sens = await sensor.new_sensor(diag_valid_frame_rate_config)
+        cg.add(var.set_diag_valid_frame_rate_sensor(sens))
+    if diag_hard_faults_config := config.get(CONF_DIAG_HARD_FAULTS):
+        sens = await sensor.new_sensor(diag_hard_faults_config)
+        cg.add(var.set_diag_hard_faults_sensor(sens))
     if diag_voltage_telegrams_config := config.get(CONF_DIAG_VOLTAGE_TELEGRAMS):
         sens = await sensor.new_sensor(diag_voltage_telegrams_config)
         cg.add(var.set_diag_voltage_telegrams_sensor(sens))

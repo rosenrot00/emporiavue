@@ -383,6 +383,9 @@ class EmporiaVueComponent : public Component
   void set_diag_transfer_errors_sensor(sensor::Sensor *sensor) { this->diag_transfer_errors_sensor_ = sensor; }
   void set_diag_frame_overruns_sensor(sensor::Sensor *sensor) { this->diag_frame_overruns_sensor_ = sensor; }
   void set_diag_adc_overruns_sensor(sensor::Sensor *sensor) { this->diag_adc_overruns_sensor_ = sensor; }
+  void set_diag_frame_gaps_sensor(sensor::Sensor *sensor) { this->diag_frame_gaps_sensor_ = sensor; }
+  void set_diag_valid_frame_rate_sensor(sensor::Sensor *sensor) { this->diag_valid_frame_rate_sensor_ = sensor; }
+  void set_diag_hard_faults_sensor(sensor::Sensor *sensor) { this->diag_hard_faults_sensor_ = sensor; }
   void set_diag_voltage_telegrams_sensor(sensor::Sensor *sensor) { this->diag_voltage_telegrams_sensor_ = sensor; }
   void set_diag_voltage_uart_errors_sensor(sensor::Sensor *sensor) { this->diag_voltage_uart_errors_sensor_ = sensor; }
   void set_diag_voltage_rejected_telegrams_sensor(sensor::Sensor *sensor) {
@@ -487,6 +490,8 @@ class EmporiaVueComponent : public Component
   static constexpr uint32_t SERCOM1_I2CS_ADDR = 0x42000C24UL;
   static constexpr uint32_t SAMD_BOOT_DIAG_BASE = 0x20000000UL;
   static constexpr uint32_t SAMD_BOOT_DIAG_MAGIC = 0x45565344UL;  // "EVSD"
+  static constexpr uint32_t SAMD_BOOT_STAGE_HARDFAULT = 0xFFUL;
+  static constexpr uint32_t SPI_STATUS_SUMMARY_INTERVAL_MS = 60000;
 
   static constexpr uint32_t BACKUP_MAGIC = 0x45565342UL;   // "EVSB"
   static constexpr uint32_t BACKUP_FOOTER_MAGIC = 0x45565346UL;  // "EVSF"
@@ -943,6 +948,9 @@ class EmporiaVueComponent : public Component
   void setup_spi_receiver_(bool reset_statistics = true);
   bool stop_spi_receiver_();
   void restart_spi_receiver_();
+  // Before a recovery reset, read the SAMD09 boot diagnostics over SWD and report a hard fault.
+  void check_samd_hard_fault_();
+  void log_spi_summary_(uint32_t now);
   void process_spi_receiver_();
   void log_spi_receiver_status_(bool force = false);
 #ifdef USE_ESP32
@@ -1051,6 +1059,9 @@ class EmporiaVueComponent : public Component
   sensor::Sensor *diag_transfer_errors_sensor_{nullptr};
   sensor::Sensor *diag_frame_overruns_sensor_{nullptr};
   sensor::Sensor *diag_adc_overruns_sensor_{nullptr};
+  sensor::Sensor *diag_frame_gaps_sensor_{nullptr};
+  sensor::Sensor *diag_valid_frame_rate_sensor_{nullptr};
+  sensor::Sensor *diag_hard_faults_sensor_{nullptr};
   sensor::Sensor *diag_voltage_telegrams_sensor_{nullptr};
   sensor::Sensor *diag_voltage_uart_errors_sensor_{nullptr};
   sensor::Sensor *diag_voltage_rejected_telegrams_sensor_{nullptr};
@@ -1185,6 +1196,11 @@ class EmporiaVueComponent : public Component
   uint32_t spi_rx_adc_overruns_{0};
   SpiVoltageDiagnostics spi_voltage_diagnostics_{};
   uint32_t spi_rx_frame_gaps_{0};
+  uint32_t spi_rx_hard_faults_{0};
+  uint32_t spi_summary_last_ms_{0};
+  uint32_t spi_summary_last_valid_frames_{0};
+  uint32_t spi_diag_last_valid_frames_{0};
+  uint32_t spi_diag_last_rate_ms_{0};
   uint32_t spi_rx_recoveries_{0};
   uint32_t spi_rx_last_sequence_{0};
   uint32_t spi_rx_last_flags_{0};

@@ -1077,6 +1077,13 @@ With DEBUG logging enabled, the status line also appears immediately before ever
 transfers); `valid_frames` counts frames accepted for metering. Both totals survive automatic recovery, including
 recovery-triggered SAMD resets.
 
+In SPI mode, `SAMD Frame Gaps` counts frames missing from the sequence, `SAMD Valid Frame Rate` is the rate of accepted
+frames over the last diagnostics interval (about 350 frames/s on a healthy Vue 3), and `SAMD Hard Faults` counts SAMD09
+hard faults found before a recovery reset. Before each recovery-triggered SAMD reset the ESP32 reads the SAMD09's boot
+diagnostics over SWD (connect under reset, so SRAM is intact); after a hard fault it logs the faulting PC and LR as a
+warning, which can be matched against a disassembly of the SAMD image. Independently of `diagnostics_interval`, an INFO
+line summarises the link every minute (valid frames/s and the error counters), so a quiet log still shows a healthy link.
+
 ### Saving values and measurement gaps
 
 Keep `preferences: flash_write_interval: never` in your node YAML. It prevents periodic background preference writes,
