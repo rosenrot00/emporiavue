@@ -1,0 +1,32 @@
+# Optional circuit CT-polarity overlay for Vue 3. Include after any Vue 3 topology
+# package, with either I2C or SPI. Only branch CTs are inverted; their line
+# assignments, names and visible entities are inherited unchanged.
+
+emporiavue:
+  # Main CTs default to normal. To correct a reversed main CT, override only
+  # the existing line in your node YAML and change normal to inverted:
+  # mains:
+  #   line_1:
+  #     polarity: normal
+  #   line_2:
+  #     polarity: normal
+  #   line_3:
+  #     polarity: normal
+
+  circuits:
+    cir1:  {polarity: inverted}
+    cir2:  {polarity: inverted}
+    cir3:  {polarity: inverted}
+    cir4:  {polarity: inverted}
+    cir5:  {polarity: inverted}
+    cir6:  {polarity: inverted}
+    cir7:  {polarity: inverted}
+    cir8:  {polarity: inverted}
+    cir9:  {polarity: inverted}
+    cir10: {polarity: inverted}
+    cir11: {polarity: inverted}
+    cir12: {polarity: inverted}
+    cir13: {polarity: inverted}
+    cir14: {polarity: inverted}
+    cir15: {polarity: inverted}
+    cir16: {polarity: inverted}

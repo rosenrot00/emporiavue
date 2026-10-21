@@ -200,6 +200,7 @@ CONF_PHASE_ID = "phase_id"
 CONF_VOLTAGE_CALIBRATION = "voltage_calibration"
 CONF_VOLTAGE_CALIBRATION_NUMBER = "voltage_calibration_number"
 CONF_CURRENT_CALIBRATION = "current_calibration"
+CONF_POLARITY = "polarity"
 CONF_GAIN = "gain"
 CONF_PHASE = "phase"
 CONF_GAIN_NUMBER = "gain_number"
@@ -2226,6 +2227,7 @@ METERING_MAIN_SCHEMA = cv.Schema(
         cv.GenerateID(CONF_CT_ID): cv.declare_id(MeteringCTClampConfig),
         cv.Required(CONF_VOLTAGE_INPUT): cv.one_of(*PHASE_INPUTS.keys(), upper=True),
         cv.Required(CONF_MAIN_CLAMP): cv.one_of("A", "B", "C", upper=True),
+        cv.Optional(CONF_POLARITY, default="normal"): cv.one_of("normal", "inverted", lower=True),
         cv.Optional(CONF_NAME): cv.string_strict,
         cv.Required(CONF_VOLTAGE_CALIBRATION): cv.positive_float,
         cv.Optional(CONF_VOLTAGE_CALIBRATION_NUMBER): VOLTAGE_CALIBRATION_NUMBER_SCHEMA,
@@ -2334,6 +2336,7 @@ METERING_CIRCUIT_SCHEMA = cv.Schema(
         cv.GenerateID(CONF_CT_ID): cv.declare_id(MeteringCTClampConfig),
         cv.Required(CONF_INPUT): cv.one_of(*BRANCH_CT_INPUTS.keys(), upper=True),
         cv.Required(CONF_LINE): _validate_metering_line,
+        cv.Optional(CONF_POLARITY, default="normal"): cv.one_of("normal", "inverted", lower=True),
         cv.Optional(CONF_LINE_SELECT): LINE_SELECT_SCHEMA,
         cv.Optional(CONF_NAME): cv.string_strict,
         cv.Optional(CONF_CURRENT_CALIBRATION): CURRENT_CALIBRATION_SCHEMA,
@@ -2741,6 +2744,7 @@ METERING_CT_CLAMP_SCHEMA = cv.Schema(
     {
         cv.GenerateID(): cv.declare_id(MeteringCTClampConfig),
         cv.Required(CONF_PHASE_ID): cv.use_id(MeteringPhaseConfig),
+        cv.Optional(CONF_POLARITY, default="normal"): cv.one_of("normal", "inverted", lower=True),
         cv.Required(CONF_INPUT): cv.one_of(*CT_INPUTS.keys(), upper=True),
         cv.Optional(CONF_NAME): cv.string_strict,
         cv.Optional(CONF_CURRENT_CALIBRATION): CURRENT_CALIBRATION_SCHEMA,
@@ -3360,6 +3364,7 @@ async def to_code(config):
         phases.append(phase_var)
 
         ct_clamp_var = cg.new_Pvariable(main_config[CONF_CT_ID], MeteringCTClampConfig())
+        cg.add(ct_clamp_var.set_polarity_inverted(main_config[CONF_POLARITY] == "inverted"))
         cg.add(ct_clamp_var.set_config_key(phase_key))
         cg.add(ct_clamp_var.set_phase(phase_var))
         cg.add(
@@ -3392,6 +3397,7 @@ async def to_code(config):
 
     for circuit_key, circuit_config in config.get(CONF_CIRCUITS, {}).items():
         ct_clamp_var = cg.new_Pvariable(circuit_config[CONF_CT_ID], MeteringCTClampConfig())
+        cg.add(ct_clamp_var.set_polarity_inverted(circuit_config[CONF_POLARITY] == "inverted"))
         cg.add(ct_clamp_var.set_config_key(circuit_key))
         line_config = circuit_config[CONF_LINE]
         if isinstance(line_config, list):
@@ -3545,6 +3551,7 @@ async def to_code(config):
 
     for ct_config in config.get(CONF_CT_CLAMPS, []):
         ct_clamp_var = cg.new_Pvariable(ct_config[CONF_ID], MeteringCTClampConfig())
+        cg.add(ct_clamp_var.set_polarity_inverted(ct_config[CONF_POLARITY] == "inverted"))
         cg.add(ct_clamp_var.set_config_key(str(ct_config[CONF_INPUT])))
         phase_var = await cg.get_variable(ct_config[CONF_PHASE_ID])
         cg.add(ct_clamp_var.set_phase(phase_var))

@@ -1550,6 +1550,11 @@ class MeteringCTClampConfig {
   bool is_line_pair() const { return this->line_pair_; }
   void set_input_port(uint8_t input_port) { this->input_port_ = input_port; }
   uint8_t get_input_port() const { return this->input_port_; }
+  // Static CT orientation, independent of positive amplitude gain and phase delay.
+  void set_polarity_inverted(bool inverted) { this->polarity_inverted_ = inverted; }
+  float get_signed_current_gain() const {
+    return this->polarity_inverted_ ? -this->current_gain_ : this->current_gain_;
+  }
   void set_current_gain(float gain) {
     if (std::fabs(this->current_gain_ - gain) > 0.000001f) {
       this->current_gain_ = gain;
@@ -1731,6 +1736,7 @@ class MeteringCTClampConfig {
   MeteringPhaseConfig *line_pair_phase_b_{nullptr};
   bool line_pair_{false};
   uint8_t input_port_{0};
+  bool polarity_inverted_{false};
   float current_gain_{1.0f};
   float current_phase_correction_degrees_{0.0f};
   MeteringCurrentGainNumber *current_gain_number_{nullptr};

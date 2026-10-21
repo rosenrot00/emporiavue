@@ -578,8 +578,9 @@ bool EmporiaVueComponent::calculate_ct_fundamental_phasors_(
   }
 
   const float current_scalar = port < 3 ? (775.0f / 42624.0f) : (775.0f / 170496.0f);
-  *current_i = frame.clamps[port].current_fundamental_i_raw * current_scalar * ct_clamp->get_current_gain();
-  *current_q = frame.clamps[port].current_fundamental_q_raw * current_scalar * ct_clamp->get_current_gain();
+  const float signed_gain = ct_clamp->get_signed_current_gain();
+  *current_i = frame.clamps[port].current_fundamental_i_raw * current_scalar * signed_gain;
+  *current_q = frame.clamps[port].current_fundamental_q_raw * current_scalar * signed_gain;
   if (apply_phase_correction && ct_clamp->get_current_phase_correction() != 0.0f) {
     constexpr float degrees_to_radians = 3.14159265358979323846f / 180.0f;
     const float angle = ct_clamp->get_current_phase_correction() * degrees_to_radians;
@@ -613,6 +614,7 @@ bool EmporiaVueComponent::calculate_ct_physical_power_(const MeteringFrame &fram
   }
 
   const float correction_factor = port < 3 ? 5.5f : 22.0f;
+  const float signed_gain = ct_clamp->get_signed_current_gain();
   float corrected_power = 0.0f;
   if (ct_clamp->is_line_pair()) {
     const MeteringPhaseConfig *phase_b = ct_clamp->get_line_pair_phase_b();
@@ -628,10 +630,10 @@ bool EmporiaVueComponent::calculate_ct_physical_power_(const MeteringFrame &fram
     const int32_t raw_power_b = clamp.power_raw_by_phase[phase_b_input];
     const float power_a = raw_power_a * phase->get_calibration() / correction_factor;
     const float power_b = raw_power_b * phase_b->get_calibration() / correction_factor;
-    corrected_power = (power_a - power_b) * ct_clamp->get_current_gain();
+    corrected_power = (power_a - power_b) * signed_gain;
   } else {
     const int32_t raw_power = clamp.power_raw_by_phase[phase_a_input];
-    corrected_power = raw_power * phase->get_calibration() / correction_factor * ct_clamp->get_current_gain();
+    corrected_power = raw_power * phase->get_calibration() / correction_factor * signed_gain;
   }
 
   if (frame.transport == MeteringTransport::SPI && ct_clamp->get_current_phase_correction() != 0.0f) {
@@ -1019,6 +1021,7 @@ void EmporiaVueComponent::update_line_detection_(const MeteringFrame &frame, Met
 
   const float correction_factor = port < 3 ? 5.5f : 22.0f;
   std::array<float, 3> sample_scores{0.0f, 0.0f, 0.0f};
+  const float signed_gain = ct_clamp->get_signed_current_gain();
   uint8_t valid_line_mask = 0;
   uint8_t valid_candidates = 0;
   for (const auto &candidate : candidates) {
@@ -1031,7 +1034,7 @@ void EmporiaVueComponent::update_line_detection_(const MeteringFrame &frame, Met
     }
     const int32_t raw_power = frame.clamps[port].power_raw_by_phase[input];
     sample_scores[candidate.line - 1] = raw_power * candidate.phase->get_calibration() /
-                                        correction_factor * ct_clamp->get_current_gain();
+                                        correction_factor * signed_gain;
     valid_line_mask |= static_cast<uint8_t>(1U << (candidate.line - 1));
     valid_candidates++;
   }

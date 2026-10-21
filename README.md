@@ -7,6 +7,7 @@ or use the ESPHome SPI path when you specifically want synchronized raw-waveform
 
 | Version | Changes |
 |---|---|
+| 2026.10.4 | Added per-CT polarity correction for I2C and SPI and an optional Vue 3 branch-inversion package. No SAMD firmware update required. |
 | 2026.10.3 | Internal SPI firmware RAM optimization for Vue 2 (v1.1) and Vue 3 (v1.2), an enforced 800-byte stack-reserve budget, a polling main loop instead of CPU `WFI` (Vue 3 hard faults on wake-up, #9) and a table-based SPI frame CRC. Sampling, measurement processing and the SPI wire format remain unchanged. SAMD version numbers are unchanged in the corrected rebuild: manually use **Flash SAMD Bundled Firmware** after the ESPHome update. No YAML changes required. |
 | 2026.10.2 | Added a lightweight C++ per-metering-frame callback hook for external components, before aggregation and publication, on both I2C and SPI. Added the GPLv3 project license and third-party notices. No YAML changes or SAMD firmware update required. |
 | 2026.10.1 | Added optional SPI `analysis_interval` for duration-weighted P1/Q1 analysis of fundamental reactive power, power factor and displacement angle. Improved daily-energy precision and date-aware restore, stable energy/demand storage keys, acquisition-timed SPI aggregation, fractional RMS and Vue 3 UART reception/diagnostics. **One-time reset:** saved daily energy and daily demand maxima use a new storage format/key. Internal power filters no longer affect apparent power or physical PF. No required YAML changes. |
@@ -1199,6 +1200,33 @@ current phasor and corrects the fundamental contribution to active power, keepin
 consistent. Stored values follow the main or circuit key such as `line_1` or `cir2`; names and subdevice assignments can
 change without resetting them. Leave the defaults unchanged without a trusted meter and a suitable reference load.
 
+### CT polarity
+
+Mains and circuits accept `polarity: normal` (default) or `polarity: inverted` on both Vue models, with I2C or SPI.
+Use `inverted` when a CT reports the opposite power direction despite a verified line assignment:
+
+```yaml
+emporiavue:
+  mains:
+    line_1:
+      polarity: normal  # Use inverted for a reversed main CT.
+  circuits:
+    cir1:
+      polarity: inverted
+```
+
+Polarity consistently corrects active power, SPI current phasors/reactive power/displacement angle, line detection,
+and downstream groups, directional energy and power demand. RMS/fundamental current magnitudes, apparent power,
+peak, crest factor and THD do not change. Positive RMS current alongside negative watts is normal for a reversed CT.
+This does not correct a wrong `line:` assignment or retroactively change saved energy/demand history.
+Remove any existing `multiply: -1` used for the same CT correction to avoid double inversion.
+
+If all Vue 3 branch CTs need inversion but the main CTs are correct, add
+`packages/vue3-cir-inverted.yaml` after the chosen `vue3-1phase.yaml`, `vue3-2phase.yaml` or
+`vue3-3phase.yaml` topology package. This optional overlay inverts `cir1` through `cir16` without adding entities or
+changing line assignments; it works with I2C or SPI. Mains are unchanged, with commented examples in the overlay.
+Override an individual circuit with `polarity: normal` in your node YAML if necessary.
+
 ### Metering corrections
 
 `filters` directly under a circuit are internal active-power corrections used by power, energy, and groups:
@@ -1206,7 +1234,7 @@ change without resetting them. Leave the defaults unchanged without a trusted me
 ```yaml
 cir1:
   filters:
-    - multiply: -1
+    - multiply: 1.01
   power:
 ```
 
@@ -1418,6 +1446,7 @@ omitted if you do not want the status LEDs.
 | `packages/vue3-1phase.yaml` | Vue 3 one-line topology |
 | `packages/vue3-2phase.yaml` | Vue 3 two-line/split-phase topology |
 | `packages/vue3-3phase.yaml` | Vue 3 three-phase-with-neutral topology |
+| `packages/vue3-cir-inverted.yaml` | Optional overlay: invert all 16 Vue 3 branch CTs; mains unchanged |
 | `packages/vue3-gpios.yaml` | Optional Vue 3 status GPIO helpers |
 
 ### C++ metering-frame hook
@@ -1437,6 +1466,7 @@ instantaneous display is skipped. Invalid or expired frames are not delivered. T
 or raw SPI-packet callback; the normal measurement window is approximately 220 ms.
 
 `MeteringFrame` contains transport-normalized **raw statistics**, not calibrated W/var or complete waveforms.
+CT `polarity` and calibration are applied downstream; the hook still receives uncorrected raw statistics.
 Use its validity flags and phase masks; optional fundamental/THD data are present only when enabled by the
 configuration and supported by the transport. Registering a callback does not enable extra calculations.
 For SPI acquisition timing use `timestamp_ms` and `duration_ms`, not callback delivery time; check `sequence`

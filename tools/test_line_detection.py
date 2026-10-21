@@ -33,6 +33,8 @@ struct MeteringCTClampConfig {
   uint8_t get_input_port() const {return 3;}
   const std::vector<Candidate>& get_line_detection_candidates() const {return candidates;}
   float get_current_gain() const {return 1.f;}
+  float get_signed_current_gain() const {return inverted ? -1.f : 1.f;}
+  bool inverted{false};
   float get_current_phase_correction() const {return correction;}
   text_sensor::TextSensor *get_line_detection_sensor() {return diagnostic_enabled ? &sensor : nullptr;}
   bool is_auto_line_detection_active() const {return auto_active;}
@@ -91,9 +93,10 @@ int main() {
   // Keep the original scoring and transition behavior; only the reported
   // result is retained after confirmation until another line is confirmed.
   for (auto transport : {MeteringTransport::I2C,MeteringTransport::SPI})
-  for (bool exported : {false,true}) for (uint8_t line : {1,2,3}) {
-    const float direction=exported ? -1.f : 1.f;
+  for (bool exported : {false,true}) for (bool inverted : {false,true}) for (uint8_t line : {1,2,3}) {
+    const float direction=(exported ? -1.f : 1.f)*(inverted ? -1.f : 1.f);
     Fixture rising(exported); rising.frame.transport=transport;
+    rising.ct.inverted=inverted;
     rising.window(0,0,0,line);
     rising.window(direction*230,0,1,line); assert(rising.ct.selected==0);
     rising.window(direction*230,0,1,line);
@@ -101,19 +104,23 @@ int main() {
     rising.window(direction*230,0,1,line);
     assert(rising.ct.selected==line && rising.ct.assignments==1);
     Fixture falling(exported); falling.frame.transport=transport;
+    falling.ct.inverted=inverted;
     falling.window(direction*230,0,1,line);
     falling.hold(0,0,0,4,line); assert(falling.ct.selected==line);
     for(float q : {-150.f,150.f}) {
       Fixture moderate(exported); moderate.frame.transport=transport;
+      moderate.ct.inverted=inverted;
       moderate.window(0,0,0,line);
       moderate.hold(direction*200,direction*q,250.f/230.f,4,line);
       assert(moderate.ct.selected==line); // PF=.8: negative alternatives do not veto.
     }
     Fixture ratio(exported); ratio.frame.transport=transport;
+    ratio.ct.inverted=inverted;
     ratio.window(0,0,0,line);
     ratio.hold(direction*150,direction*210,1.2f,6,line);
     assert(ratio.ct.selected==0); // Two positive candidates, ratio below 1.5.
     Fixture diagnostic(exported); diagnostic.frame.transport=transport;
+    diagnostic.ct.inverted=inverted;
     diagnostic.ct.auto_active=false;
     diagnostic.frame.clamps[3].current_fundamental_valid=false;
     for(auto &phase : diagnostic.frame.phases) phase.voltage_fundamental_valid=false;
@@ -130,6 +137,7 @@ int main() {
     assert(diagnostic.ct.sensor.state=="L"+std::to_string(line));
 
     Fixture replacement(exported); replacement.frame.transport=transport;
+    replacement.ct.inverted=inverted;
     replacement.window(0,0,0,line); replacement.hold(direction*230,0,1,4,line);
     replacement.hold(0,0,0,4,line);
     const uint8_t other_line=line%3+1;

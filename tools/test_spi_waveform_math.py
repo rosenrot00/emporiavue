@@ -46,6 +46,7 @@ struct MeteringCTClampConfig {
   const MeteringPhaseConfig *get_line_pair_phase_b() const {return b;}
   bool is_line_pair() const {return b!=nullptr;}
   float get_current_gain() const {return gain;}
+  float get_signed_current_gain() const {return gain;}
   float get_current_phase_correction() const {return correction;}
   float apply_power_filters(float x) const {return filter(x);}
   uint32_t get_analysis_interval() const {return 0;}
